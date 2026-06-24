@@ -1,0 +1,14 @@
+{
+  "name": "@sentinel/cli",
+  "version": "0.1.0",
+  "description": "Sentinel CLI: pre-install audit verdicts and registry-redirected npm/npx.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "bin": { "sentinel": "./dist/index.js" },
+  "dependencies": {
+    "@sentinel/core": "0.1.0",
+    "commander": "^15.0.0"
+  },
+  "devDependencies": { "@types/node": "^24.13.2" }
+}

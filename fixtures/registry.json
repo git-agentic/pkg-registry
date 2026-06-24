@@ -1,0 +1,68 @@
+{
+  "packages": {
+    "leftpad-lite": {
+      "name": "leftpad-lite",
+      "author": "Jane Dev <jane@example.com>",
+      "versions": {
+        "1.0.0": {
+          "version": "1.0.0",
+          "author": "Jane Dev <jane@example.com>",
+          "license": "MIT",
+          "hasInstallScripts": false,
+          "signatureStatus": "signed",
+          "dist": {
+            "tarballFile": "leftpad-lite-1.0.0.tgz",
+            "integrity": "sha512-UABlEEgon4lPb9MnLNJHfEZUNI+fe4I2u6qEnHbRKew5ksCO8iFKGt1QcpT0DzqRhwg9f5aJVYEa2HCzSgXg2w==",
+            "unpackedSize": 693,
+            "fileCount": 2
+          }
+        },
+        "1.0.1": {
+          "version": "1.0.1",
+          "author": "Jane Dev <jane@example.com>",
+          "license": "MIT",
+          "hasInstallScripts": false,
+          "signatureStatus": "signed",
+          "dist": {
+            "tarballFile": "leftpad-lite-1.0.1.tgz",
+            "integrity": "sha512-4aAlS3YCmBYlYfTcj886QmQqJinD2HrKZmu9PqCN9VEShADLKPvLMqMPkaYOxmv/9jPniAz0xr/srynfvn4qew==",
+            "unpackedSize": 873,
+            "fileCount": 2
+          }
+        }
+      }
+    },
+    "color-stream": {
+      "name": "color-stream",
+      "author": "om-maintainer <om@example.com>",
+      "versions": {
+        "1.4.0": {
+          "version": "1.4.0",
+          "author": "om-maintainer <om@example.com>",
+          "license": "MIT",
+          "hasInstallScripts": false,
+          "signatureStatus": "signed",
+          "dist": {
+            "tarballFile": "color-stream-1.4.0.tgz",
+            "integrity": "sha512-YgLmyEEv7YIGVbagMlgM/BdqlpC+lOKEfpUFDwXQnKXfBTqi3z8v3Rg3S+FUvfTF9lEw7Ap9Rm6dOeZa24nXKw==",
+            "unpackedSize": 713,
+            "fileCount": 2
+          }
+        },
+        "1.4.1": {
+          "version": "1.4.1",
+          "author": "om-maintainer <om@example.com>",
+          "license": "MIT",
+          "hasInstallScripts": true,
+          "signatureStatus": "unsigned",
+          "dist": {
+            "tarballFile": "color-stream-1.4.1.tgz",
+            "integrity": "sha512-1WYUPlL9rKqk92WFD3SsaWHI8VpcP9I36V/TnSDR0qxgjIEBe/vVe9FAI4qaTOJyPKwDMRRCYBTCI2irMRW/bA==",
+            "unpackedSize": 3068,
+            "fileCount": 3
+          }
+        }
+      }
+    }
+  }
+}

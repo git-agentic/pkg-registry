@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sentinel — npm audit proxy</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --line: #30363d; --fg: #e6edf3;
+    --muted: #8b949e; --allow: #2ea043; --warn: #d29922; --block: #f85149;
+    --accent: #58a6ff;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+         background: var(--bg); color: var(--fg); }
+  header { padding: 20px 28px; border-bottom: 1px solid var(--line); display: flex;
+           align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  header h1 { font-size: 18px; margin: 0; letter-spacing: .5px; }
+  header .sub { color: var(--muted); font-size: 12px; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 24px 28px; }
+  .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 22px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; }
+  .card .n { font-size: 26px; font-weight: 600; }
+  .card .l { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .6px; }
+  .allow { color: var(--allow); } .warn { color: var(--warn); } .block { color: var(--block); }
+  form { display: flex; gap: 8px; margin-bottom: 18px; flex-wrap: wrap; }
+  input, button { font: inherit; border-radius: 6px; border: 1px solid var(--line);
+                  background: var(--bg); color: var(--fg); padding: 8px 12px; }
+  button { background: var(--accent); color: #0d1117; border: none; cursor: pointer; font-weight: 600; }
+  button.ghost { background: transparent; color: var(--accent); border: 1px solid var(--line); }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: .5px; }
+  .pkg { font-weight: 600; }
+  .badge { display: inline-block; padding: 2px 9px; border-radius: 99px; font-size: 12px; font-weight: 700;
+           text-transform: uppercase; letter-spacing: .5px; }
+  .badge.allow { background: rgba(46,160,67,.15); }
+  .badge.warn  { background: rgba(210,153,34,.15); }
+  .badge.block { background: rgba(248,81,73,.15); }
+  .score { font-weight: 700; }
+  .meta { color: var(--muted); font-size: 12px; }
+  .findings { margin: 6px 0 0; padding: 0; list-style: none; }
+  .findings li { padding: 3px 0; }
+  .sev { display: inline-block; min-width: 64px; font-size: 11px; font-weight: 700; text-transform: uppercase; }
+  .sev.critical, .sev.high { color: var(--block); }
+  .sev.medium { color: var(--warn); }
+  .sev.low, .sev.info { color: var(--muted); }
+  .empty { color: var(--muted); padding: 30px 0; text-align: center; }
+  .sig-signed { color: var(--allow); } .sig-unsigned { color: var(--warn); } .sig-unknown { color: var(--muted); }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+  <header>
+    <h1>🛡 SENTINEL</h1>
+    <span class="sub">agent-auditable npm registry proxy · <span id="upstream">…</span> · policy <span id="policy">…</span></span>
+  </header>
+  <div class="wrap">
+    <div class="cards">
+      <div class="card"><div class="n" id="s-total">0</div><div class="l">audited</div></div>
+      <div class="card"><div class="n allow" id="s-allow">0</div><div class="l">allow</div></div>
+      <div class="card"><div class="n warn" id="s-warn">0</div><div class="l">warn</div></div>
+      <div class="card"><div class="n block" id="s-block">0</div><div class="l">block</div></div>
+    </div>
+
+    <form id="audit-form">
+      <input id="pkg" placeholder="package name (e.g. color-stream)" size="28" />
+      <input id="ver" placeholder="version (e.g. 1.4.1)" size="16" />
+      <button type="submit">Audit before install</button>
+      <button type="button" class="ghost" id="refresh">Refresh</button>
+    </form>
+
+    <table>
+      <thead>
+        <tr><th>Package</th><th>Score</th><th>Verdict</th><th>Metadata</th><th>Findings</th></tr>
+      </thead>
+      <tbody id="rows"><tr><td colspan="5" class="empty">No audits yet. Audit a package above, or run an install through the proxy.</td></tr></tbody>
+    </table>
+  </div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const fmtBytes = (n) => n < 1024 ? n + " B" : n < 1048576 ? (n/1024).toFixed(1) + " KB" : (n/1048576).toFixed(1) + " MB";
+
+function row(r) {
+  const m = r.meta;
+  const findings = (r.findings || []).slice(0, 6).map((f) =>
+    `<li><span class="sev ${f.severity}">${f.severity}</span> ${esc(f.message)}</li>`).join("");
+  const more = (r.findings || []).length > 6 ? `<li class="meta">…and ${r.findings.length - 6} more</li>` : "";
+  return `<tr>
+    <td><div class="pkg">${esc(m.name)}</div><div class="meta">v${esc(m.version)} · ${esc(m.author || "unknown author")}</div></td>
+    <td><span class="score ${r.verdict}">${r.score}</span><span class="meta">/100</span></td>
+    <td><span class="badge ${r.verdict}">${r.verdict}</span></td>
+    <td class="meta">
+      ${fmtBytes(m.unpackedSize)} · ${m.fileCount} files<br/>
+      sig: <span class="sig-${m.signatureStatus}">${m.signatureStatus}</span><br/>
+      install scripts: ${m.hasInstallScripts ? "⚠ yes" : "no"} · mode: ${esc(r.engine.mode)}
+    </td>
+    <td>${findings ? `<ul class="findings">${findings}${more}</ul>` : '<span class="meta">none</span>'}</td>
+  </tr>`;
+}
+
+async function load() {
+  const res = await fetch("/-/audits");
+  const data = await res.json();
+  $("s-total").textContent = data.stats.total;
+  $("s-allow").textContent = data.stats.allow;
+  $("s-warn").textContent = data.stats.warn;
+  $("s-block").textContent = data.stats.block;
+  const rows = data.audits || [];
+  $("rows").innerHTML = rows.length ? rows.map(row).join("")
+    : '<tr><td colspan="5" class="empty">No audits yet.</td></tr>';
+}
+
+async function health() {
+  try {
+    const h = await (await fetch("/-/health")).json();
+    $("upstream").textContent = h.upstream;
+    $("policy").textContent = h.policy;
+  } catch {}
+}
+
+$("audit-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const pkg = $("pkg").value.trim();
+  const ver = $("ver").value.trim();
+  if (!pkg || !ver) return;
+  const btn = e.submitter; if (btn) { btn.disabled = true; btn.textContent = "Auditing…"; }
+  try {
+    const r = await fetch(`/-/audit/${encodeURIComponent(pkg)}/${encodeURIComponent(ver)}`);
+    if (!r.ok) alert("Audit failed: " + (await r.json()).error);
+    await load();
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "Audit before install"; }
+  }
+});
+$("refresh").addEventListener("click", load);
+
+health();
+load();
+setInterval(load, 5000);
+</script>
+</body>
+</html>

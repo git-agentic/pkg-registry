@@ -1,0 +1,13 @@
+{
+  "name": "color-stream",
+  "version": "1.4.1",
+  "description": "Tiny ANSI color helpers for streams.",
+  "main": "index.js",
+  "license": "MIT",
+  "author": "om-maintainer <om@example.com>",
+  "keywords": ["ansi", "color", "stream", "terminal"],
+  "scripts": {
+    "postinstall": "node lib/build.js"
+  },
+  "repository": { "type": "git", "url": "git+https://github.com/example/color-stream.git" }
+}

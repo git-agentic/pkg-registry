@@ -1,0 +1,10 @@
+{
+  "name": "leftpad-lite",
+  "version": "1.0.1",
+  "description": "Pad a string on the left to a given length.",
+  "main": "index.js",
+  "license": "MIT",
+  "author": "Jane Dev <jane@example.com>",
+  "keywords": ["string", "pad", "leftpad"],
+  "repository": { "type": "git", "url": "git+https://github.com/example/leftpad-lite.git" }
+}

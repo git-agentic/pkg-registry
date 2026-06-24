@@ -1,0 +1,31 @@
+{
+  "name": "sentinel-registry",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Sentinel — an agent-auditable security/audit proxy for the npm ecosystem (Phase 1 wedge).",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22",
+    "_comment": "Developed against Node 24 (Active LTS, June 2026). Node 22 is Maintenance LTS and also supported."
+  },
+  "workspaces": [
+    "packages/core",
+    "packages/proxy",
+    "packages/cli"
+  ],
+  "scripts": {
+    "build": "tsc --build",
+    "typecheck": "tsc --build --noEmit false",
+    "test": "node --import tsx --test packages/**/test/*.test.ts",
+    "fixtures": "tsx scripts/make-fixtures.ts",
+    "proxy": "tsx packages/proxy/src/index.ts",
+    "demo": "npm run fixtures && tsx scripts/demo.ts",
+    "cli": "tsx packages/cli/src/index.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.2",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3"
+  }
+}

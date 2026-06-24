@@ -1,0 +1,6 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.sentinel-store.json
+fixtures/**/*.tgz
+.env
