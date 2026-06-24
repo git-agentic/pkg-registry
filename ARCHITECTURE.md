@@ -121,6 +121,16 @@ multiplier — a `postinstall` that exfiltrates secrets is far more alarming whe
 pattern) than when it was there from day one. Full-content audit is the default;
 diff mode is layered on top.
 
+### 3.3 Approval gate (Phase 2.1, ADR-0011/0013)
+
+Under the `block` policy the proxy also gates on capability approval: a tarball
+with unapproved new capability atoms returns `403 approval required`. Approval is
+recorded per `(name, version, integrity)` in `ApprovalStore` and inherited across
+versions whose capability set is unchanged. Endpoints: `GET /-/manifest/:pkg/:ver`,
+`POST /-/approvals` (single or batch), `GET /-/approvals`, `DELETE /-/approvals/:integrity`.
+A dependency tree is cleared via `sentinel preflight` (resolve → preflight → batch
+approve → install), because npm aborts on the first `403`.
+
 ---
 
 ## 4. The audit engine (`@sentinel/core`)
@@ -208,17 +218,26 @@ interface PackageMeta {
   unpackedSize: number; fileCount: number;
 }
 
+type CapabilityKind = 'network' | 'filesystem' | 'process' | 'native';
+interface Capability { kind: CapabilityKind; target: string; evidence: Evidence[]; }
+interface CapabilityDelta { added: Capability[]; removed: Capability[]; }
+
 interface AuditReport {
-  schema: 1;
+  schema: 2;
   meta: PackageMeta;
   score: number;                  // 0–100 (100 = safe)
   verdict: Verdict;
   findings: Finding[];
+  capabilities: Capability[];
+  capabilityDelta: CapabilityDelta | null;
   engine: { version: string; rules: string[]; llm: string | null; mode: 'full' | 'diff' };
   llmSummary: string | null;
   auditedAt: string;              // ISO-8601
   durationMs: number;
 }
+// AuditReport is schema 2: adds `capabilities: Capability[]` and
+// `capabilityDelta: CapabilityDelta | null`. Approval state is NOT in the report —
+// it is mutable proxy state in ApprovalStore, keyed by integrity (see ADR-0011/0013).
 ```
 
 Storage in Phase 1 is a pluggable `AuditStore` (in-memory + JSON-file impl). The

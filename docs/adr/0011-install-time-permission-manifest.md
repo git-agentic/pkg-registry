@@ -1,6 +1,6 @@
 # ADR-0011: Install-time permission manifest with human/agent approval
 
-**Status:** Proposed
+**Status:** Accepted (stage B) — superseded options A/C deferred
 **Date:** 2026-06-24
 **Deciders:** Founder/Eng, Security lead, Design partner (enterprise)
 **Phase:** 2
