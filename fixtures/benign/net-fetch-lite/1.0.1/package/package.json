@@ -1,0 +1,8 @@
+{
+  "name": "net-fetch-lite",
+  "version": "1.0.1",
+  "description": "Tiny helper that fetches a config blob.",
+  "main": "index.js",
+  "license": "MIT",
+  "author": "nfl-maintainer <nfl@example.com>"
+}
