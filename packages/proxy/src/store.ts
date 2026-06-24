@@ -22,7 +22,10 @@ export class AuditStore {
     if (file && existsSync(file)) {
       try {
         const rows = JSON.parse(readFileSync(file, "utf8")) as StoredAudit[];
-        for (const r of rows) this.index(r.report.meta.integrity ?? r.key, r);
+        for (const r of rows) {
+          if (r.report?.schema !== 2) continue; // re-audit anything older
+          this.index(r.report.meta.integrity ?? r.key, r);
+        }
       } catch {
         /* start empty on a corrupt log */
       }
