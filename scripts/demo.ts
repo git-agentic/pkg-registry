@@ -9,6 +9,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer } from "../packages/proxy/src/server.js";
 import { AuditStore } from "../packages/proxy/src/store.js";
+import { ApprovalStore } from "../packages/proxy/src/approvals.js";
 import { LocalFixtureUpstream } from "../packages/proxy/src/upstream.js";
 import { formatReport } from "../packages/cli/src/format.js";
 import type { AuditReport } from "../packages/core/src/index.js";
@@ -19,6 +20,7 @@ async function main(): Promise<void> {
   const app = createServer({
     upstream: new LocalFixtureUpstream(join(ROOT, "fixtures")),
     store: new AuditStore(),
+    approvals: new ApprovalStore(),
     policy: "block",
   });
   const server = app.listen(0);
