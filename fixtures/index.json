@@ -9,6 +9,15 @@
         "1.0.1": { "signatureStatus": "signed" }
       }
     },
+    "net-fetch-lite": {
+      "class": "benign",
+      "expect": { "verdict": "allow" },
+      "versions": {
+        "1.0.0": { "signatureStatus": "signed" },
+        "1.0.1": { "signatureStatus": "signed" },
+        "1.0.2": { "signatureStatus": "signed" }
+      }
+    },
     "color-stream": {
       "class": "malicious",
       "expect": { "1.4.0": "allow", "1.4.1": "block" },

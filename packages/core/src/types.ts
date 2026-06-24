@@ -36,6 +36,26 @@ export interface Finding {
   evidence: Evidence[];
 }
 
+export type CapabilityKind = "network" | "filesystem" | "process" | "native";
+
+/**
+ * One concrete thing a package can do. The (kind, target) pair is the "atom"
+ * diffed across versions. `target` is normalized; "*" means the target is
+ * dynamic/uncomputable (so it can't churn the delta).
+ */
+export interface Capability {
+  kind: CapabilityKind;
+  target: string;
+  evidence: Evidence[];
+}
+
+export interface CapabilityDelta {
+  /** Atoms present in this version, absent in the prior published version. */
+  added: Capability[];
+  /** Atoms present in the prior published version, gone now (informational). */
+  removed: Capability[];
+}
+
 export interface PackageMeta {
   name: string;
   version: string;
@@ -52,12 +72,16 @@ export interface PackageMeta {
 }
 
 export interface AuditReport {
-  schema: 1;
+  schema: 2;
   meta: PackageMeta;
   /** 0–100, where 100 is "no detected risk". */
   score: number;
   verdict: Verdict;
   findings: Finding[];
+  /** Complete requested-capability inventory (NOT risk-thresholded). */
+  capabilities: Capability[];
+  /** Atoms added/removed vs the prior published version; null in 'full' mode. */
+  capabilityDelta: CapabilityDelta | null;
   engine: {
     version: string;
     rules: string[];

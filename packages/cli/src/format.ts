@@ -1,4 +1,4 @@
-import type { AuditReport, Severity, Verdict } from "@sentinel/core";
+import type { AuditReport, Capability, CapabilityKind, Severity, Verdict } from "@sentinel/core";
 
 const C = {
   reset: "\x1b[0m", bold: "\x1b[1m", dim: "\x1b[2m",
@@ -68,4 +68,46 @@ export function formatReport(r: AuditReport): string {
 
 export function verdictExitCode(v: Verdict): number {
   return v === "block" ? 2 : v === "warn" ? 1 : 0;
+}
+
+export interface Manifest {
+  meta: { name: string; version: string; integrity: string };
+  verdict: string;
+  approvalState: string;
+  capabilities: Capability[];
+  approvalRequired: Capability[];
+  inheritedFrom: string | null;
+}
+
+const stateColor: Record<string, string> = {
+  approved: C.green, inherited: C.green, required: C.yellow, denied: C.red, "n-a": C.gray,
+};
+
+export function formatManifest(m: Manifest): string {
+  const L: string[] = [];
+  L.push("");
+  L.push(c(C.bold, `  ${m.meta.name}@${m.meta.version}`));
+  L.push(c(C.gray, `  ${"─".repeat(56)}`));
+  L.push(`  verdict    ${c(C.bold + (verdictColor[m.verdict as Verdict] ?? C.gray), m.verdict.toUpperCase())}`);
+  L.push(`  approval   ${c(C.bold + (stateColor[m.approvalState] ?? C.gray), m.approvalState.toUpperCase())}` +
+    (m.inheritedFrom ? c(C.gray, ` (inherited from ${m.inheritedFrom})`) : ""));
+  const byKind = new Map<CapabilityKind, string[]>();
+  for (const cap of m.capabilities) {
+    const list = byKind.get(cap.kind) ?? [];
+    list.push(cap.target);
+    byKind.set(cap.kind, list);
+  }
+  L.push("");
+  L.push(c(C.bold, `  capabilities (${m.capabilities.length})`));
+  if (m.capabilities.length === 0) L.push(c(C.gray, "  none"));
+  for (const [kind, targets] of byKind) {
+    L.push(`  ${kind.padEnd(11)}${c(C.gray, [...new Set(targets)].join(", "))}`);
+  }
+  if (m.approvalRequired.length) {
+    L.push("");
+    L.push(c(C.yellow, `  requires approval (${m.approvalRequired.length} new):`));
+    for (const cap of m.approvalRequired) L.push(`  ${c(C.yellow, "›")} ${cap.kind}: ${cap.target}`);
+  }
+  L.push("");
+  return L.join("\n");
 }

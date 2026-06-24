@@ -76,6 +76,12 @@
       </thead>
       <tbody id="rows"><tr><td colspan="5" class="empty">No audits yet. Audit a package above, or run an install through the proxy.</td></tr></tbody>
     </table>
+
+    <h2 style="font-size:14px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin:28px 0 8px">Approvals</h2>
+    <table>
+      <thead><tr><th>Package</th><th>Decision</th><th>Actor</th><th>Capabilities</th><th></th></tr></thead>
+      <tbody id="approval-rows"><tr><td colspan="5" class="empty">No approvals recorded.</td></tr></tbody>
+    </table>
   </div>
 
 <script>
@@ -113,6 +119,30 @@ async function load() {
     : '<tr><td colspan="5" class="empty">No audits yet.</td></tr>';
 }
 
+function approvalRow(a) {
+  const caps = (a.approvedCapabilities || []).map((c) => `${c.kind}:${c.target}`).join(", ") || "none";
+  return `<tr>
+    <td><div class="pkg">${esc(a.name)}</div><div class="meta">v${esc(a.version)}</div></td>
+    <td><span class="badge ${a.decision === "approved" ? "allow" : "block"}">${esc(a.decision)}</span></td>
+    <td class="meta">${esc(a.actor ? a.actor.type + ":" + a.actor.id : "—")}</td>
+    <td class="meta">${esc(caps)}</td>
+    <td><button class="ghost" data-revoke="${esc(a.integrity)}">Revoke</button></td>
+  </tr>`;
+}
+
+async function loadApprovals() {
+  const data = await (await fetch("/-/approvals")).json();
+  const rows = data.approvals || [];
+  $("approval-rows").innerHTML = rows.length ? rows.map(approvalRow).join("")
+    : '<tr><td colspan="5" class="empty">No approvals recorded.</td></tr>';
+  for (const btn of document.querySelectorAll("[data-revoke]")) {
+    btn.addEventListener("click", async () => {
+      await fetch(`/-/approvals/${encodeURIComponent(btn.getAttribute("data-revoke"))}`, { method: "DELETE" });
+      await loadApprovals();
+    });
+  }
+}
+
 async function health() {
   try {
     const h = await (await fetch("/-/health")).json();
@@ -139,7 +169,8 @@ $("refresh").addEventListener("click", load);
 
 health();
 load();
-setInterval(load, 5000);
+loadApprovals();
+setInterval(() => { load(); loadApprovals(); }, 5000);
 </script>
 </body>
 </html>

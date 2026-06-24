@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { Command } from "commander";
 import { auditTarball, type AuditReport } from "@sentinel/core";
-import { formatReport, verdictExitCode } from "./format.js";
+import { formatReport, formatManifest, verdictExitCode, type Manifest } from "./format.js";
 
 const DEFAULT_PROXY = process.env.SENTINEL_PROXY ?? "http://localhost:4873";
 
@@ -67,7 +67,104 @@ program
   .argument("[args...]", "arguments passed straight to npx")
   .action((args: string[], opts: { proxy: string }) => runBin("npx", args, opts.proxy));
 
-program.parseAsync();
+program
+  .command("manifest")
+  .description("Show a package's requested capabilities and approval state (no install).")
+  .argument("<package>")
+  .argument("[version]")
+  .option("-p, --proxy <url>", "Sentinel proxy base URL", DEFAULT_PROXY)
+  .option("--json", "emit raw JSON", false)
+  .action(async (pkg: string, version: string | undefined, opts: { proxy: string; json: boolean }) => {
+    try {
+      const v = version ?? (await resolveLatest(opts.proxy, pkg));
+      const m = await fetchManifest(opts.proxy, pkg, v);
+      console.log(opts.json ? JSON.stringify(m, null, 2) : formatManifest(m));
+    } catch (err) {
+      fail(err, opts.proxy);
+    }
+  });
+
+program
+  .command("approve")
+  .description("Record an approval (or denial) for a package version's capabilities.")
+  .argument("<package>")
+  .argument("<version>")
+  .option("-p, --proxy <url>", "Sentinel proxy base URL", DEFAULT_PROXY)
+  .option("--deny", "record a denial instead of an approval", false)
+  .option("--reason <reason>", "optional rationale recorded with the decision")
+  .action(async (pkg: string, version: string, opts: { proxy: string; deny: boolean; reason?: string }) => {
+    try {
+      const m = await fetchManifest(opts.proxy, pkg, version);
+      await postApproval(opts.proxy, [{ name: m.meta.name, version: m.meta.version, integrity: m.meta.integrity }], !opts.deny, opts.reason);
+      console.log(`${opts.deny ? "denied" : "approved"} ${pkg}@${version}`);
+    } catch (err) {
+      fail(err, opts.proxy);
+    }
+  });
+
+program
+  .command("preflight")
+  .description("Resolve a package's tree, show capabilities needing approval, and optionally approve them.")
+  .argument("<package>")
+  .argument("[version]")
+  .option("-p, --proxy <url>", "Sentinel proxy base URL", DEFAULT_PROXY)
+  .option("--approve", "approve every capability the tree requires", false)
+  .action(async (pkg: string, version: string | undefined, opts: { proxy: string; approve: boolean }) => {
+    try {
+      const v = version ?? (await resolveLatest(opts.proxy, pkg));
+      const manifests = [await fetchManifest(opts.proxy, pkg, v)];
+      for (const m of manifests) console.log(formatManifest(m));
+      const plan = planApprovals(manifests);
+      if (plan.length === 0) {
+        console.log("Nothing to approve — all capabilities are inherited or already approved.");
+        return;
+      }
+      if (opts.approve) {
+        await postApproval(opts.proxy, plan, true);
+        console.log(`approved ${plan.length} package version(s).`);
+      } else {
+        console.log(`\n${plan.length} package version(s) need approval. Re-run with --approve, or use \`sentinel approve\`.`);
+      }
+    } catch (err) {
+      fail(err, opts.proxy);
+    }
+  });
+
+if (process.argv[1]?.endsWith("index.ts") || process.argv[1]?.endsWith("index.js")) program.parseAsync();
+
+// ---------------------------------------------------------------------------
+
+export function planApprovals(manifests: Manifest[]): { name: string; version: string; integrity: string }[] {
+  return manifests
+    .filter((m) => m.approvalState === "required")
+    .map((m) => ({ name: m.meta.name, version: m.meta.version, integrity: m.meta.integrity }));
+}
+
+async function fetchManifest(proxy: string, pkg: string, version: string): Promise<Manifest> {
+  const res = await fetch(`${proxy}/-/manifest/${encodeURIComponent(pkg)}/${encodeURIComponent(version)}`);
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `manifest failed: ${res.status}`);
+  }
+  return (await res.json()) as Manifest;
+}
+
+async function postApproval(
+  proxy: string,
+  decision: { name: string; version: string; integrity: string }[],
+  approved: boolean,
+  reason?: string,
+): Promise<void> {
+  const res = await fetch(`${proxy}/-/approvals`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(decision.map((d) => ({
+      ...d, decision: approved ? "approved" : "denied",
+      actor: { type: "agent", id: process.env.USER ?? "cli" }, reason,
+    }))),
+  });
+  if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? `approval failed: ${res.status}`);
+}
 
 // ---------------------------------------------------------------------------
 

@@ -12,7 +12,7 @@
           "signatureStatus": "signed",
           "dist": {
             "tarballFile": "leftpad-lite-1.0.0.tgz",
-            "integrity": "sha512-UABlEEgon4lPb9MnLNJHfEZUNI+fe4I2u6qEnHbRKew5ksCO8iFKGt1QcpT0DzqRhwg9f5aJVYEa2HCzSgXg2w==",
+            "integrity": "sha512-V5haJFW/bmwij+AAymTae+bWv28MrilbNn+vTlJDdXfzYTsIp/LfdmPHRWZloyD6XOImsUzByGFi8JHrAJ4iRg==",
             "unpackedSize": 693,
             "fileCount": 2
           }
@@ -25,8 +25,53 @@
           "signatureStatus": "signed",
           "dist": {
             "tarballFile": "leftpad-lite-1.0.1.tgz",
-            "integrity": "sha512-4aAlS3YCmBYlYfTcj886QmQqJinD2HrKZmu9PqCN9VEShADLKPvLMqMPkaYOxmv/9jPniAz0xr/srynfvn4qew==",
+            "integrity": "sha512-1ZZ1G4mP55aXi4eZ1O96cf33vvoW3uCHDdA1EVUe+GGHPG76JZeDtOkklAPk1inEzebdPZgY/9iMUfLX8zbxTg==",
             "unpackedSize": 873,
+            "fileCount": 2
+          }
+        }
+      }
+    },
+    "net-fetch-lite": {
+      "name": "net-fetch-lite",
+      "author": "nfl-maintainer <nfl@example.com>",
+      "versions": {
+        "1.0.0": {
+          "version": "1.0.0",
+          "author": "nfl-maintainer <nfl@example.com>",
+          "license": "MIT",
+          "hasInstallScripts": false,
+          "signatureStatus": "signed",
+          "dist": {
+            "tarballFile": "net-fetch-lite-1.0.0.tgz",
+            "integrity": "sha512-5lO68lZvUkDYEoM+ydAH+4jx3oBZbeqXdM9Un6/bwSdXIgpAqfcsM/+ZEq+KSatmm66NE/FVHCLREt1dz8hTsQ==",
+            "unpackedSize": 676,
+            "fileCount": 2
+          }
+        },
+        "1.0.1": {
+          "version": "1.0.1",
+          "author": "nfl-maintainer <nfl@example.com>",
+          "license": "MIT",
+          "hasInstallScripts": false,
+          "signatureStatus": "signed",
+          "dist": {
+            "tarballFile": "net-fetch-lite-1.0.1.tgz",
+            "integrity": "sha512-2WXpDztY7YfYRKEEsxy0dYJ1zoh/q1rva1/XtqE++jZl9FOhB9Xf0Af+1fkOl2Z84V9l9N2QwF55Lkhz5TXXNA==",
+            "unpackedSize": 770,
+            "fileCount": 2
+          }
+        },
+        "1.0.2": {
+          "version": "1.0.2",
+          "author": "nfl-maintainer <nfl@example.com>",
+          "license": "MIT",
+          "hasInstallScripts": false,
+          "signatureStatus": "signed",
+          "dist": {
+            "tarballFile": "net-fetch-lite-1.0.2.tgz",
+            "integrity": "sha512-izoNyAyL5TkTbnEm6XxFTkZXupH81zhUuh/VsafDCriIOM2AcmSSCTjqlz0zeoFb4LlMpTYzyvb+cEKsCq/Kgw==",
+            "unpackedSize": 826,
             "fileCount": 2
           }
         }
@@ -44,7 +89,7 @@
           "signatureStatus": "signed",
           "dist": {
             "tarballFile": "color-stream-1.4.0.tgz",
-            "integrity": "sha512-YgLmyEEv7YIGVbagMlgM/BdqlpC+lOKEfpUFDwXQnKXfBTqi3z8v3Rg3S+FUvfTF9lEw7Ap9Rm6dOeZa24nXKw==",
+            "integrity": "sha512-87giknCoa7qirdEUuqkAIF/tHr9glJHxmpbxavgN4CRB6Xku6UuFe28KXMjORWpRgjJpzeKoWwHNm3OKjUUW9g==",
             "unpackedSize": 713,
             "fileCount": 2
           }
@@ -57,7 +102,7 @@
           "signatureStatus": "unsigned",
           "dist": {
             "tarballFile": "color-stream-1.4.1.tgz",
-            "integrity": "sha512-1WYUPlL9rKqk92WFD3SsaWHI8VpcP9I36V/TnSDR0qxgjIEBe/vVe9FAI4qaTOJyPKwDMRRCYBTCI2irMRW/bA==",
+            "integrity": "sha512-V2p+cP8A6vrbzcMplyoUn3UkqccT0+aR/nzN1iGU6YyBtjnQdpM2FUmDhXbdukXr8F+1INNHa5UyHVwvvR70cw==",
             "unpackedSize": 3068,
             "fileCount": 3
           }

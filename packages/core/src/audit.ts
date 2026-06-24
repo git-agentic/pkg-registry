@@ -1,10 +1,12 @@
 import { Buffer } from "node:buffer";
 import { baselineFrom, extractTarball, integrityOf } from "./extract.js";
+import { extractCapabilities, diffCapabilities } from "./capabilities.js";
 import { RULES } from "./rules/index.js";
 import { scoreFindings, verdictFor } from "./score.js";
 import type {
   AuditInput,
   AuditReport,
+  Capability,
   Finding,
   PackageFile,
   PackageMeta,
@@ -28,20 +30,29 @@ export function runRules(input: AuditInput): Finding[] {
 export function buildReport(
   meta: PackageMeta,
   files: PackageFile[],
-  opts: { mode: "full" | "diff"; durationMs: number; llmSummary?: string | null } = {
-    mode: "full",
-    durationMs: 0,
-  },
+  opts: {
+    mode: "full" | "diff";
+    durationMs: number;
+    llmSummary?: string | null;
+    baselineCapabilities?: Capability[];
+  } = { mode: "full", durationMs: 0 },
 ): AuditReport {
-  const findings = runRules({ meta, files, mode: opts.mode });
+  const input: AuditInput = { meta, files, mode: opts.mode };
+  const findings = runRules(input);
   const score = scoreFindings(findings);
   const verdict = verdictFor(score, findings);
+  const capabilities = extractCapabilities(input);
+  const capabilityDelta = opts.baselineCapabilities
+    ? diffCapabilities(capabilities, opts.baselineCapabilities)
+    : null;
   return {
-    schema: 1,
+    schema: 2,
     meta,
     score,
     verdict,
     findings: findings.sort((a, b) => b.weight - a.weight),
+    capabilities,
+    capabilityDelta,
     engine: {
       version: ENGINE_VERSION,
       rules: RULES.map((r) => r.id),
@@ -73,9 +84,11 @@ export async function auditTarball(input: AuditTarballInput): Promise<AuditRepor
   const mode: "full" | "diff" = input.baselineTarball ? "diff" : "full";
 
   let baseline: Map<string, string> | undefined;
+  let baselineCapabilities: Capability[] | undefined;
   if (input.baselineTarball) {
     const prev = await extractTarball(input.baselineTarball);
     baseline = baselineFrom(prev.files);
+    baselineCapabilities = extractCapabilities({ meta: input.meta as PackageMeta, files: prev.files, mode: "diff" });
   }
 
   const extracted = await extractTarball(input.tarball, baseline);
@@ -90,6 +103,7 @@ export async function auditTarball(input: AuditTarballInput): Promise<AuditRepor
   return buildReport(meta, extracted.files, {
     mode,
     durationMs: Date.now() - started,
+    baselineCapabilities,
   });
 }
 
