@@ -8,6 +8,7 @@ import {
 } from "@sentinel/core";
 import { AuditStore } from "./store.js";
 import {
+  cmpSemver,
   HttpError,
   previousVersion,
   type Upstream,
@@ -73,7 +74,12 @@ export function createServer(opts: ServerOptions) {
 
   function reconcile(report: AuditReport) {
     const explicit = approvals.get(report.meta.integrity);
-    const priorApproved = approvals.latestApprovedFor(report.meta.name);
+    let priorApproved = approvals.latestApprovedFor(report.meta.name);
+    // Discard prior approval if it is for a version >= the one being reconciled
+    // to prevent forward inheritance (a newer approval must not cover older versions).
+    if (priorApproved && cmpSemver(priorApproved.version, report.meta.version) >= 0) {
+      priorApproved = undefined;
+    }
     return reconcileApproval({ capabilities: report.capabilities, explicit, priorApproved });
   }
 
@@ -122,15 +128,16 @@ export function createServer(opts: ServerOptions) {
     const recorded: Approval[] = [];
     try {
       for (const d of body) {
-        if (!d?.name || !d?.version || !d?.integrity || (d.decision !== "approved" && d.decision !== "denied")) {
-          return res.status(400).json({ error: "each approval needs name, version, integrity, decision(approved|denied)" });
+        if (!d?.integrity || (d.decision !== "approved" && d.decision !== "denied")) {
+          return res.status(400).json({ error: "each approval needs integrity and decision(approved|denied)" });
         }
         const audited = store.get(d.integrity);
         if (!audited) {
           return res.status(400).json({ error: `audit ${d.name}@${d.version} first (no report for that integrity)` });
         }
         recorded.push(approvals.put({
-          name: d.name, version: d.version, integrity: d.integrity, decision: d.decision,
+          name: audited.report.meta.name, version: audited.report.meta.version,
+          integrity: d.integrity, decision: d.decision,
           approvedCapabilities: audited.report.capabilities,
           actor: d.actor ?? { type: "human", id: "unknown" },
           reason: d.reason,

@@ -194,4 +194,101 @@ describe("approval gate (block policy, local fixtures)", () => {
     assert.equal(res.headers.get("x-sentinel-verdict"), "block");
     assert.match((await res.json()).error, /blocked by Sentinel/i);
   });
+
+  test("GET /-/approvals lists a recorded approval", async () => {
+    // Approve 1.0.2 via API (note: 1.0.0 was revoked in a prior test so store only has
+    // color-stream approved; we approve 1.0.2 fresh here)
+    const m = await manifest("net-fetch-lite", "1.0.2");
+    const postRes = await fetch(`${base}/-/approvals`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "net-fetch-lite", version: "1.0.2", integrity: m.meta.integrity, decision: "approved", actor: { type: "agent", id: "test" } }),
+    });
+    assert.equal(postRes.status, 200);
+    const listed = await (await fetch(`${base}/-/approvals`)).json() as { approvals: Array<{ integrity: string; decision: string }> };
+    assert.ok(listed.approvals.some((a) => a.integrity === m.meta.integrity && a.decision === "approved"),
+      "GET /-/approvals must list the recorded approval");
+  });
+
+  test("POST array body approves multiple entries", async () => {
+    const m100 = await manifest("net-fetch-lite", "1.0.0");
+    const m101 = await manifest("net-fetch-lite", "1.0.1");
+    const postRes = await fetch(`${base}/-/approvals`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify([
+        { name: "net-fetch-lite", version: "1.0.0", integrity: m100.meta.integrity, decision: "approved", actor: { type: "agent", id: "test" } },
+        { name: "net-fetch-lite", version: "1.0.1", integrity: m101.meta.integrity, decision: "approved", actor: { type: "agent", id: "test" } },
+      ]),
+    });
+    assert.equal(postRes.status, 200);
+    const body = await postRes.json() as { approvals: unknown[] };
+    assert.equal(body.approvals.length, 2, "array POST must return 2 recorded approvals");
+    // Confirm both are now approved
+    const t100 = await fetch(`${base}/net-fetch-lite/-/net-fetch-lite-1.0.0.tgz`);
+    assert.equal(t100.status, 200, "1.0.0 must be served after array approval");
+    const t101 = await fetch(`${base}/net-fetch-lite/-/net-fetch-lite-1.0.1.tgz`);
+    assert.equal(t101.status, 200, "1.0.1 must be served after array approval");
+  });
+
+  test("server-authoritative identity: bogus name in body is ignored", async () => {
+    const m = await manifest("net-fetch-lite", "1.0.0");
+    // Submit with a wrong package name but correct integrity
+    const postRes = await fetch(`${base}/-/approvals`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "totally-wrong", version: "1.0.0", integrity: m.meta.integrity, decision: "approved", actor: { type: "agent", id: "test" } }),
+    });
+    assert.equal(postRes.status, 200);
+    const listed = await (await fetch(`${base}/-/approvals`)).json() as { approvals: Array<{ integrity: string; name: string }> };
+    const recorded = listed.approvals.find((a) => a.integrity === m.meta.integrity);
+    assert.ok(recorded, "approval must be stored");
+    assert.equal(recorded!.name, "net-fetch-lite", `stored name must be the audited name, got: ${recorded!.name}`);
+  });
+});
+
+describe("approval gate — no forward inheritance (isolated server)", () => {
+  let server: Server;
+  let base: string;
+
+  before(async () => {
+    ensureFixtures();
+    const app = createServer({
+      upstream: new LocalFixtureUpstream(FIXTURES),
+      store: new AuditStore(),
+      approvals: new ApprovalStore(),
+      policy: "block",
+    });
+    await new Promise<void>((resolve) => {
+      server = app.listen(0, () => {
+        base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+        resolve();
+      });
+    });
+  });
+  after(() => server?.close());
+
+  async function manifest(pkg: string, version: string) {
+    return (await fetch(`${base}/-/manifest/${pkg}/${version}`)).json();
+  }
+
+  test("approving 1.0.2 does NOT grant forward inheritance to 1.0.0", async () => {
+    // Approve the NEWER version (1.0.2) first
+    const m102 = await manifest("net-fetch-lite", "1.0.2");
+    const postRes = await fetch(`${base}/-/approvals`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "net-fetch-lite", version: "1.0.2", integrity: m102.meta.integrity, decision: "approved", actor: { type: "agent", id: "test" } }),
+    });
+    assert.equal(postRes.status, 200);
+
+    // 1.0.0 is OLDER — must not inherit from 1.0.2
+    const m100 = await manifest("net-fetch-lite", "1.0.0");
+    assert.equal(m100.approvalState, "required",
+      "1.0.0 must still require approval — no forward inheritance from 1.0.2");
+
+    const tarball = await fetch(`${base}/net-fetch-lite/-/net-fetch-lite-1.0.0.tgz`);
+    assert.equal(tarball.status, 403, "tarball for 1.0.0 must be gated (no forward inheritance)");
+    assert.equal(tarball.headers.get("x-sentinel-approval"), "required");
+  });
 });
