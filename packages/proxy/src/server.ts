@@ -12,12 +12,15 @@ import {
   previousVersion,
   type Upstream,
 } from "./upstream.js";
+import { ApprovalStore, type Approval } from "./approvals.js";
+import { reconcileApproval, type ApprovalState } from "./reconcile.js";
 
 export type ProxyPolicy = "observe" | "block";
 
 export interface ServerOptions {
   upstream: Upstream;
   store: AuditStore;
+  approvals: ApprovalStore;
   /** `observe` always serves (audits + headers only); `block` 403s on a block verdict. */
   policy?: ProxyPolicy;
   /** Directory containing the dashboard `index.html`. */
@@ -27,10 +30,11 @@ export interface ServerOptions {
 const TARBALL_RE = /^(.+)\/-\/([^/]+\.tgz)$/;
 
 export function createServer(opts: ServerOptions) {
-  const { upstream, store } = opts;
+  const { upstream, store, approvals } = opts;
   const policy: ProxyPolicy = opts.policy ?? "observe";
   const app = express();
   app.disable("x-powered-by");
+  app.use(express.json({ limit: "1mb" }));
 
   /** Audit a specific version, using the verdict cache (integrity-keyed). */
   async function auditVersion(
@@ -67,6 +71,12 @@ export function createServer(opts: ServerOptions) {
     return { report, tarball };
   }
 
+  function reconcile(report: AuditReport) {
+    const explicit = approvals.get(report.meta.integrity);
+    const priorApproved = approvals.latestApprovedFor(report.meta.name);
+    return reconcileApproval({ capabilities: report.capabilities, explicit, priorApproved });
+  }
+
   // ---- internal API (the `/-/` namespace mirrors npm's reserved prefix) ----
 
   app.get("/-/health", (_req, res) => {
@@ -89,6 +99,59 @@ export function createServer(opts: ServerOptions) {
     res.json({ stats: store.stats(), audits: store.recent(50).map((s) => s.report) });
   });
 
+  app.get(/^\/-\/manifest\/(.+)\/([^/]+)$/, async (req, res) => {
+    const pkg = decodeURIComponent(req.params[0] ?? "");
+    const version = req.params[1] ?? "";
+    try {
+      const { report } = await auditVersion(pkg, version);
+      const rec = reconcile(report);
+      res.json({
+        meta: report.meta, score: report.score, verdict: report.verdict,
+        findings: report.findings, capabilities: report.capabilities,
+        capabilityDelta: report.capabilityDelta,
+        approvalRequired: rec.approvalRequired, approvalState: rec.state,
+        inheritedFrom: rec.inheritedFrom,
+      });
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+
+  app.post("/-/approvals", (req, res) => {
+    const body = Array.isArray(req.body) ? req.body : [req.body];
+    const recorded: Approval[] = [];
+    try {
+      for (const d of body) {
+        if (!d?.name || !d?.version || !d?.integrity || (d.decision !== "approved" && d.decision !== "denied")) {
+          return res.status(400).json({ error: "each approval needs name, version, integrity, decision(approved|denied)" });
+        }
+        const audited = store.get(d.integrity);
+        if (!audited) {
+          return res.status(400).json({ error: `audit ${d.name}@${d.version} first (no report for that integrity)` });
+        }
+        recorded.push(approvals.put({
+          name: d.name, version: d.version, integrity: d.integrity, decision: d.decision,
+          approvedCapabilities: audited.report.capabilities,
+          actor: d.actor ?? { type: "human", id: "unknown" },
+          reason: d.reason,
+          decidedAt: new Date().toISOString(),
+        }));
+      }
+    } catch (err) {
+      return sendError(res, err);
+    }
+    res.json({ approvals: recorded });
+  });
+
+  app.get("/-/approvals", (_req, res) => {
+    res.json({ approvals: approvals.recent(50) });
+  });
+
+  app.delete(/^\/-\/approvals\/(.+)$/, (req, res) => {
+    const integrity = decodeURIComponent(req.params[0] ?? "");
+    res.json({ revoked: approvals.remove(integrity) });
+  });
+
   // ---- dashboard ----
   if (opts.publicDir) {
     app.get("/", (_req, res) => res.sendFile("index.html", { root: opts.publicDir }));
@@ -108,17 +171,32 @@ export function createServer(opts: ServerOptions) {
       if (!version) return res.status(400).json({ error: "cannot parse version from tarball name" });
       try {
         const { report, tarball } = await auditVersion(pkg, version);
+        const rec = reconcile(report);
         res.setHeader("x-sentinel-score", String(report.score));
         res.setHeader("x-sentinel-verdict", report.verdict);
         res.setHeader("x-sentinel-findings", String(report.findings.length));
-        if (policy === "block" && report.verdict === "block") {
-          return res.status(403).json({
-            error: "blocked by Sentinel policy",
-            package: `${pkg}@${version}`,
-            score: report.score,
-            verdict: report.verdict,
-            findings: report.findings.map((f) => ({ ruleId: f.ruleId, severity: f.severity, message: f.message })),
-          });
+        res.setHeader("x-sentinel-capabilities", String(report.capabilities.length));
+        res.setHeader("x-sentinel-approval", rec.state);
+        if (policy === "block") {
+          if (report.verdict === "block") {
+            return res.status(403).json({
+              error: "blocked by Sentinel policy",
+              package: `${pkg}@${version}`,
+              score: report.score, verdict: report.verdict,
+              findings: report.findings.map((f) => ({ ruleId: f.ruleId, severity: f.severity, message: f.message })),
+            });
+          }
+          if (rec.state === "denied") {
+            return res.status(403).json({ error: "approval denied by Sentinel policy", package: `${pkg}@${version}` });
+          }
+          if (rec.state === "required") {
+            return res.status(403).json({
+              error: "approval required by Sentinel policy",
+              package: `${pkg}@${version}`,
+              approvalRequired: rec.approvalRequired,
+              findings: report.findings.map((f) => ({ ruleId: f.ruleId, severity: f.severity, message: f.message })),
+            });
+          }
         }
         res.setHeader("content-type", "application/octet-stream");
         return res.send(tarball);

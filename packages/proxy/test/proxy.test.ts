@@ -9,6 +9,7 @@ import type { Server } from "node:http";
 import { createServer } from "../src/server.js";
 import { AuditStore } from "../src/store.js";
 import { LocalFixtureUpstream } from "../src/upstream.js";
+import { ApprovalStore } from "../src/approvals.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, "..", "..", "..");
@@ -25,12 +26,15 @@ function ensureFixtures(): void {
 describe("registry proxy (block policy, local fixtures)", () => {
   let server: Server;
   let base: string;
+  let approvals: ApprovalStore;
 
   before(async () => {
     ensureFixtures();
+    approvals = new ApprovalStore();
     const app = createServer({
       upstream: new LocalFixtureUpstream(FIXTURES),
       store: new AuditStore(),
+      approvals,
       policy: "block",
     });
     await new Promise<void>((resolve) => {
@@ -94,5 +98,100 @@ describe("registry proxy (block policy, local fixtures)", () => {
     assert.ok(data.stats.total >= 2);
     assert.ok(data.stats.block >= 1);
     assert.ok(Array.isArray(data.audits));
+  });
+});
+
+describe("approval gate (block policy, local fixtures)", () => {
+  let server: Server;
+  let base: string;
+  let approvals: ApprovalStore;
+
+  before(async () => {
+    ensureFixtures();
+    approvals = new ApprovalStore();
+    const app = createServer({
+      upstream: new LocalFixtureUpstream(FIXTURES),
+      store: new AuditStore(),
+      approvals,
+      policy: "block",
+    });
+    await new Promise<void>((resolve) => {
+      server = app.listen(0, () => {
+        base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+        resolve();
+      });
+    });
+  });
+  after(() => server?.close());
+
+  async function manifest(pkg: string, version: string) {
+    return (await fetch(`${base}/-/manifest/${pkg}/${version}`)).json();
+  }
+  async function approve(m: { name: string; version: string; integrity: string }) {
+    return fetch(`${base}/-/approvals`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...m, decision: "approved", actor: { type: "agent", id: "test" } }),
+    });
+  }
+
+  test("manifest reports capabilities and 'required' at first sight", async () => {
+    const m = await manifest("net-fetch-lite", "1.0.0");
+    assert.equal(m.verdict, "allow");
+    assert.equal(m.approvalState, "required");
+    assert.ok(m.approvalRequired.some((c: { target: string }) => c.target === "api.example.com"));
+  });
+
+  test("tarball is gated with 403 'approval required' before approval", async () => {
+    const res = await fetch(`${base}/net-fetch-lite/-/net-fetch-lite-1.0.0.tgz`);
+    assert.equal(res.status, 403);
+    assert.equal(res.headers.get("x-sentinel-approval"), "required");
+    assert.match((await res.json()).error, /approval required/i);
+  });
+
+  test("after approval the tarball serves", async () => {
+    const m = await manifest("net-fetch-lite", "1.0.0");
+    const r = await approve({ name: "net-fetch-lite", version: "1.0.0", integrity: m.meta.integrity });
+    assert.equal(r.status, 200);
+    const res = await fetch(`${base}/net-fetch-lite/-/net-fetch-lite-1.0.0.tgz`);
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("x-sentinel-approval"), "approved");
+  });
+
+  test("a later version with the same capabilities is inherited (served, no prompt)", async () => {
+    const m = await manifest("net-fetch-lite", "1.0.1");
+    assert.equal(m.approvalState, "inherited");
+    const res = await fetch(`${base}/net-fetch-lite/-/net-fetch-lite-1.0.1.tgz`);
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("x-sentinel-approval"), "inherited");
+  });
+
+  test("a new capability atom re-gates the install", async () => {
+    const m = await manifest("net-fetch-lite", "1.0.2");
+    assert.equal(m.approvalState, "required");
+    assert.ok(m.approvalRequired.some((c: { target: string }) => c.target === "telemetry.example.com"));
+    const res = await fetch(`${base}/net-fetch-lite/-/net-fetch-lite-1.0.2.tgz`);
+    assert.equal(res.status, 403);
+  });
+
+  test("revoke removes the approval", async () => {
+    const m = await manifest("net-fetch-lite", "1.0.0");
+    const del = await fetch(`${base}/-/approvals/${encodeURIComponent(m.meta.integrity)}`, { method: "DELETE" });
+    assert.equal((await del.json()).revoked, true);
+    const res = await fetch(`${base}/net-fetch-lite/-/net-fetch-lite-1.0.0.tgz`);
+    assert.equal(res.status, 403);
+  });
+
+  test("malicious color-stream is blocked for the VERDICT reason, not approval", async () => {
+    // Pre-approve its capabilities so an approval-required 403 cannot mask the verdict.
+    const m = await manifest("color-stream", "1.4.1");
+    await fetch(`${base}/-/approvals`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "color-stream", version: "1.4.1", integrity: m.meta.integrity, decision: "approved", actor: { type: "agent", id: "test" } }),
+    });
+    const res = await fetch(`${base}/color-stream/-/color-stream-1.4.1.tgz`);
+    assert.equal(res.status, 403);
+    assert.equal(res.headers.get("x-sentinel-verdict"), "block");
+    assert.match((await res.json()).error, /blocked by Sentinel/i);
   });
 });

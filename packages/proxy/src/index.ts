@@ -3,10 +3,12 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer, type ProxyPolicy } from "./server.js";
 import { AuditStore } from "./store.js";
+import { ApprovalStore } from "./approvals.js";
 import { LocalFixtureUpstream, NpmUpstream, type Upstream } from "./upstream.js";
 
 export { createServer } from "./server.js";
 export { AuditStore } from "./store.js";
+export { ApprovalStore } from "./approvals.js";
 export * from "./upstream.js";
 
 function env(name: string, fallback: string): string {
@@ -30,10 +32,11 @@ function main(): void {
   const policy = env("SENTINEL_POLICY", "observe") as ProxyPolicy;
   const upstream = buildUpstream();
   const store = new AuditStore(process.env.SENTINEL_STORE);
+  const approvals = new ApprovalStore(process.env.SENTINEL_APPROVALS);
   // dist/index.js -> ../public ; src is run via tsx with the same relative layout.
   const publicDir = env("SENTINEL_PUBLIC", join(here, "..", "public"));
 
-  const app = createServer({ upstream, store, policy, publicDir });
+  const app = createServer({ upstream, store, approvals, policy, publicDir });
   app.listen(port, () => {
     console.log(`Sentinel proxy listening on http://localhost:${port}`);
     console.log(`  upstream : ${upstream.name}`);
