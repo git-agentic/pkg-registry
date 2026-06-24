@@ -16,6 +16,8 @@ export {
   type ExtractResult,
 } from "./extract.js";
 export { RULES } from "./rules/index.js";
+export { extractCapabilities, diffCapabilities } from "./capabilities.js";
+export { capabilityAtom, scanForCapabilities, normalizeTarget } from "./detect/patterns.js";
 export {
   NoopLlmAdapter,
   AnthropicLlmAdapter,
