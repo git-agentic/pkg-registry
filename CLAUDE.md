@@ -74,7 +74,7 @@ don't downgrade majors without a reason.
 
 ```bash
 npm run build            # tsc --build (project references: core → proxy/cli)
-npm test                 # engine + end-to-end proxy (must be 65/65)
+npm test                 # engine + end-to-end proxy (must be 71/71)
 npm run demo             # offline malware-detection walkthrough
 node packages/proxy/dist/index.js   # run the proxy (see README for env vars)
 ```
@@ -91,7 +91,7 @@ node packages/proxy/dist/index.js   # run the proxy (see README for env vars)
 
 ## Definition of done for a change
 
-`npm run build` clean, `npm test` 65/65, and if you touched rules/scoring, add or
+`npm run build` clean, `npm test` 71/71, and if you touched rules/scoring, add or
 update a test that proves the new behavior — and confirm the malicious fixture is
 still **blocked**. If you changed a design invariant above, update ARCHITECTURE.md
 and the relevant ADR in [docs/adr/](./docs/adr/) — or add a new ADR (never edit an
