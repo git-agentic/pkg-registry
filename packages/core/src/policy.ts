@@ -15,6 +15,8 @@ export interface EnterprisePolicy {
   rules: { disabled: string[] };
   allow: { package: string; rules: string[]; reason?: string }[];
   deny: { package: string; reason?: string }[];
+  /** Names/scopes served authoritatively by the private registry (ADR-0010). */
+  privateNamespaces: string[];
 }
 
 /** Compiled-in default. Equals the historical POLICY so out-of-the-box behavior is unchanged. */
@@ -30,6 +32,7 @@ export const DEFAULT_POLICY: EnterprisePolicy = {
   rules: { disabled: [] },
   allow: [],
   deny: [],
+  privateNamespaces: [],
 };
 
 /** Stable hash of a policy OBJECT (used for the in-code default; external policies hash raw bytes). */
@@ -164,6 +167,13 @@ export function parsePolicy(raw: Buffer): EnterprisePolicy {
     }
   }
 
+  // Validate privateNamespaces if present.
+  if (p.privateNamespaces !== undefined) {
+    if (!Array.isArray(p.privateNamespaces) || !p.privateNamespaces.every((x) => typeof x === "string")) {
+      throw new Error("invalid policy: privateNamespaces must be an array of strings");
+    }
+  }
+
   return {
     schema: 1,
     version: p.version,
@@ -171,6 +181,7 @@ export function parsePolicy(raw: Buffer): EnterprisePolicy {
     rules: { disabled: p.rules?.disabled ?? [] },
     allow: p.allow ?? [],
     deny: p.deny ?? [],
+    privateNamespaces: p.privateNamespaces ?? [],
   };
 }
 

@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { createServer } from "../packages/proxy/src/server.js";
 import { AuditStore } from "../packages/proxy/src/store.js";
 import { ApprovalStore } from "../packages/proxy/src/approvals.js";
+import { PrivatePackageStore } from "../packages/proxy/src/private-store.js";
 import { LocalFixtureUpstream } from "../packages/proxy/src/upstream.js";
 import { formatReport } from "../packages/cli/src/format.js";
 import type { AuditReport } from "../packages/core/src/index.js";
@@ -22,6 +23,7 @@ async function main(): Promise<void> {
     upstream: new LocalFixtureUpstream(join(ROOT, "fixtures")),
     store: new AuditStore(),
     approvals: new ApprovalStore(),
+    privateStore: new PrivatePackageStore(),
     enterprisePolicy: DEFAULT_POLICY,
     policy: "block",
   });

@@ -1,6 +1,6 @@
 # ADR-0010: Private-namespace override to structurally block dependency confusion
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-06-24
 **Deciders:** Founder/Eng, Security lead, Design partner (enterprise)
 **Phase:** 2

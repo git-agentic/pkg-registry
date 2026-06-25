@@ -37,6 +37,9 @@ serve real packages transparently; only attach signal.
    the npm path — it breaks resolution (dependencies, peer deps, etc.).
 6. **Rules fail open individually, the audit never crashes.** `runRules` wraps each
    rule in try/catch. A buggy rule must not take down an install.
+7. **Claimed names are authoritative, not passthrough.** Names matching the signed
+   policy's `privateNamespaces` are served only from the private store and never from
+   public npm (fail-closed). Everything else still passes through (ADR-0010/0015).
 
 ## How to extend
 
@@ -74,7 +77,7 @@ don't downgrade majors without a reason.
 
 ```bash
 npm run build            # tsc --build (project references: core → proxy/cli)
-npm test                 # engine + end-to-end proxy (must be 71/71)
+npm test                 # engine + end-to-end proxy (must be 102/102)
 npm run demo             # offline malware-detection walkthrough
 node packages/proxy/dist/index.js   # run the proxy (see README for env vars)
 ```
@@ -91,7 +94,7 @@ node packages/proxy/dist/index.js   # run the proxy (see README for env vars)
 
 ## Definition of done for a change
 
-`npm run build` clean, `npm test` 71/71, and if you touched rules/scoring, add or
+`npm run build` clean, `npm test` 102/102, and if you touched rules/scoring, add or
 update a test that proves the new behavior — and confirm the malicious fixture is
 still **blocked**. If you changed a design invariant above, update ARCHITECTURE.md
 and the relevant ADR in [docs/adr/](./docs/adr/) — or add a new ADR (never edit an

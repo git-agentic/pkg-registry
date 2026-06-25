@@ -123,3 +123,20 @@ describe("parsePolicy malformed-policy rejection (fail closed at boot)", () => {
     );
   });
 });
+
+describe("privateNamespaces validation", () => {
+  const valid = (over: object) => Buffer.from(JSON.stringify({ ...DEFAULT_POLICY, version: "v", ...over }));
+  test("accepts an array of strings", () => {
+    const p = parsePolicy(valid({ privateNamespaces: ["@acme/*", "acme-config"] }));
+    assert.deepEqual(p.privateNamespaces, ["@acme/*", "acme-config"]);
+  });
+  test("defaults to [] when absent", () => {
+    const body = { ...DEFAULT_POLICY, version: "v" } as Record<string, unknown>;
+    delete body.privateNamespaces;
+    assert.deepEqual(parsePolicy(Buffer.from(JSON.stringify(body))).privateNamespaces, []);
+  });
+  test("throws when present but not an array of strings", () => {
+    assert.throws(() => parsePolicy(valid({ privateNamespaces: "@acme/*" })));
+    assert.throws(() => parsePolicy(valid({ privateNamespaces: [1, 2] })));
+  });
+});
