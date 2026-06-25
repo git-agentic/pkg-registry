@@ -79,7 +79,7 @@ describe("capabilities in the audit report (color-stream fixture)", () => {
       tarball: tarball("color-stream", "1.4.1"),
       baselineTarball: tarball("color-stream", "1.4.0"),
     });
-    assert.equal(r.schema, 2);
+    assert.equal(r.schema, 3);
     const kinds = new Set(r.capabilities.map((c) => c.kind));
     assert.ok(kinds.has("network") && kinds.has("filesystem") && kinds.has("process"));
     assert.ok(r.capabilityDelta);

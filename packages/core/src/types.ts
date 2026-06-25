@@ -31,9 +31,17 @@ export interface Finding {
   category: Category;
   severity: Severity;
   message: string;
-  /** Points deducted from the score (after the diff multiplier). */
-  weight: number;
+  /** True if any cited evidence is in a file added/changed vs the diff baseline. */
+  onChangedFile: boolean;
   evidence: Evidence[];
+}
+
+/** A finding after a policy has been applied (weight computed, waivers resolved). */
+export interface ScoredFinding extends Finding {
+  /** Points deducted (0 when waived). */
+  weight: number;
+  waived: boolean;
+  waivedBy?: string;
 }
 
 export type CapabilityKind = "network" | "filesystem" | "process" | "native";
@@ -71,27 +79,34 @@ export interface PackageMeta {
   fileCount: number;
 }
 
+/** Policy-independent audit: what is cached by integrity. */
+export interface Audit {
+  schema: 3;
+  meta: PackageMeta;
+  findings: Finding[];
+  capabilities: Capability[];
+  capabilityDelta: CapabilityDelta | null;
+  engine: { version: string; rules: string[]; mode: "full" | "diff" };
+  auditedAt: string;
+  durationMs: number;
+}
+
 export interface AuditReport {
-  schema: 2;
+  schema: 3;
   meta: PackageMeta;
   /** 0–100, where 100 is "no detected risk". */
   score: number;
   verdict: Verdict;
-  findings: Finding[];
-  /** Complete requested-capability inventory (NOT risk-thresholded). */
+  findings: ScoredFinding[];
   capabilities: Capability[];
-  /** Atoms added/removed vs the prior published version; null in 'full' mode. */
   capabilityDelta: CapabilityDelta | null;
-  engine: {
-    version: string;
-    rules: string[];
-    llm: string | null;
-    mode: "full" | "diff";
-  };
+  engine: { version: string; rules: string[]; llm: string | null; mode: "full" | "diff" };
   /** Human-readable summary from the LLM adapter, if one ran. */
   llmSummary: string | null;
   auditedAt: string;
   durationMs: number;
+  /** The policy under which this report was scored. */
+  policy: { version: string; hash: string };
 }
 
 /** A single file extracted from a package tarball. */

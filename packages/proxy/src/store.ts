@@ -23,7 +23,7 @@ export class AuditStore {
       try {
         const rows = JSON.parse(readFileSync(file, "utf8")) as StoredAudit[];
         for (const r of rows) {
-          if (r.report?.schema !== 2) continue; // re-audit anything older
+          if (r.report?.schema !== 3) continue; // re-audit anything older
           this.index(r.report.meta.integrity ?? r.key, r);
         }
       } catch {

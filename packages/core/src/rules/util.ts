@@ -1,4 +1,3 @@
-import { POLICY } from "../score.js";
 import type {
   AuditInput,
   Category,
@@ -37,8 +36,9 @@ export function truncate(s: string, n: number): string {
 }
 
 /**
- * Construct a finding, applying the diff multiplier when any cited file is
- * new/changed in this release. Weight is derived deterministically from policy.
+ * Construct a finding. Records whether any cited file is new/changed in this
+ * release (`onChangedFile`); the diff multiplier and severity weight are applied
+ * later in `score()`, not here, so findings stay policy-independent.
  */
 export function mkFinding(args: {
   ruleId: string;
@@ -48,18 +48,14 @@ export function mkFinding(args: {
   evidence: Evidence[];
   files: PackageFile[];
 }): Finding {
-  const changedPaths = new Set(
-    args.files.filter((f) => f.changed).map((f) => f.path),
-  );
-  const touchesChanged = args.evidence.some((e) => changedPaths.has(e.file));
-  const base = POLICY.severityWeight[args.severity];
-  const weight = touchesChanged ? Math.round(base * POLICY.diffMultiplier) : base;
+  const changedPaths = new Set(args.files.filter((f) => f.changed).map((f) => f.path));
+  const onChangedFile = args.evidence.some((e) => changedPaths.has(e.file));
   return {
     ruleId: args.ruleId,
     category: args.category,
     severity: args.severity,
     message: args.message,
-    weight,
+    onChangedFile,
     evidence: args.evidence,
   };
 }

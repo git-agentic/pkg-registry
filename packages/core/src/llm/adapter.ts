@@ -1,8 +1,8 @@
-import type { Finding, PackageFile, PackageMeta } from "../types.js";
+import type { Finding, ScoredFinding, PackageFile, PackageMeta } from "../types.js";
 
 export interface LlmEnrichInput {
   files: PackageFile[];
-  findings: Finding[];
+  findings: ScoredFinding[];
   meta: PackageMeta;
 }
 
