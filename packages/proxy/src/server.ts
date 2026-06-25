@@ -189,11 +189,11 @@ export function createServer(opts: ServerOptions) {
   }
 
   app.put(/^\/(.+)$/, requirePublishAuth, jsonPublish, async (req, res) => {
-    const name = decodeURIComponent(req.params[0] ?? "");
-    if (!isClaimed(name, enterprisePolicy)) {
-      return res.status(403).json({ error: "not a private namespace", package: name });
-    }
     try {
+      const name = decodeURIComponent(req.params[0] ?? "");
+      if (!isClaimed(name, enterprisePolicy)) {
+        return res.status(403).json({ error: "not a private namespace", package: name });
+      }
       const parsed = parsePublishBody(name, req.body);
       const integrity = integrityOf(parsed.tarball);
       if (parsed.declaredIntegrity && parsed.declaredIntegrity !== integrity) {

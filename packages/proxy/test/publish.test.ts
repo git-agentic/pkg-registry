@@ -81,4 +81,11 @@ describe("publish route (PUT /:pkg)", () => {
     assert.match((await res.json()).error, /block/i);
     assert.equal(priv.has("@acme/evil"), false); // not stored
   });
+
+  test("400 on a declared-integrity mismatch", async () => {
+    const body = JSON.parse(publishPayload("@acme/mismatch", "1.0.0", benign()));
+    body.versions["1.0.0"].dist.integrity = "sha512-deadbeef";
+    const res = await put("@acme/mismatch", JSON.stringify(body), { authorization: "Bearer tok-1" });
+    assert.equal(res.status, 400);
+  });
 });
