@@ -1,5 +1,10 @@
 import { Buffer } from "node:buffer";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { matchPackage, type EnterprisePolicy } from "@sentinel/core";
+
+function sha(s: string): Buffer {
+  return createHash("sha256").update(s).digest();
+}
 
 export function isClaimed(name: string, policy: EnterprisePolicy): boolean {
   return (policy.privateNamespaces ?? []).some((p) => matchPackage(p, name));
@@ -37,6 +42,12 @@ export function parsePublishBody(name: string, body: unknown): ParsedPublish {
   if (typeof data !== "string") throw new Error("publish attachment has no base64 data");
   const manifest = (b.versions ?? {})[version];
   if (!manifest) throw new Error(`publish payload missing manifest for version ${version}`);
+  if (manifest.name !== undefined && manifest.name !== name) {
+    throw new Error(`publish manifest name "${String(manifest.name)}" does not match ${name}`);
+  }
+  if (manifest.version !== undefined && manifest.version !== version) {
+    throw new Error(`publish manifest version "${String(manifest.version)}" does not match ${version}`);
+  }
   const dist = manifest.dist as { integrity?: string } | undefined;
   return {
     version,
@@ -49,5 +60,7 @@ export function parsePublishBody(name: string, body: unknown): ParsedPublish {
 export function publishTokenValid(authHeader: string | undefined, tokens: string[]): boolean {
   if (tokens.length === 0) return false; // no tokens configured ⇒ publishing disabled (fail closed)
   const m = /^Bearer\s+(.+)$/i.exec(authHeader ?? "");
-  return Boolean(m) && tokens.includes((m![1] ?? "").trim());
+  if (!m) return false;
+  const candidate = sha((m[1] ?? "").trim());
+  return tokens.some((t) => timingSafeEqual(candidate, sha(t)));
 }

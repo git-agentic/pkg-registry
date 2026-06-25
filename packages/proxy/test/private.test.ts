@@ -64,6 +64,16 @@ describe("parsePublishBody", () => {
     };
     assert.throws(() => parsePublishBody("@acme/x", body));
   });
+  test("throws when manifest name mismatches package name", () => {
+    const body = publishBody("@acme/x", "1.2.3");
+    body.versions["1.2.3"].name = "@evil/x";
+    assert.throws(() => parsePublishBody("@acme/x", body), /does not match/);
+  });
+  test("throws when manifest version mismatches attachment version", () => {
+    const body = publishBody("@acme/x", "1.2.3");
+    body.versions["1.2.3"].version = "9.9.9";
+    assert.throws(() => parsePublishBody("@acme/x", body), /does not match/);
+  });
 });
 
 describe("publishTokenValid", () => {
@@ -72,5 +82,9 @@ describe("publishTokenValid", () => {
     assert.equal(publishTokenValid("Bearer nope", ["tok-1"]), false);
     assert.equal(publishTokenValid(undefined, ["tok-1"]), false);
     assert.equal(publishTokenValid("Bearer tok-1", []), false); // no tokens configured ⇒ publishing disabled
+  });
+  test("valid token returns true, wrong token returns false", () => {
+    assert.equal(publishTokenValid("Bearer correct-token", ["correct-token"]), true);
+    assert.equal(publishTokenValid("Bearer wrong-token", ["correct-token"]), false);
   });
 });
