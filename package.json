@@ -21,7 +21,8 @@
     "fixtures": "tsx scripts/make-fixtures.ts",
     "proxy": "tsx packages/proxy/src/index.ts",
     "demo": "npm run fixtures && tsx scripts/demo.ts",
-    "cli": "tsx packages/cli/src/index.ts"
+    "cli": "tsx packages/cli/src/index.ts",
+    "pretest": "npm run fixtures"
   },
   "devDependencies": {
     "@types/node": "^24.13.2",

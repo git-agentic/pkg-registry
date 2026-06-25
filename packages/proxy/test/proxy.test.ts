@@ -17,7 +17,7 @@ const REPO_ROOT = join(HERE, "..", "..", "..");
 const FIXTURES = join(REPO_ROOT, "fixtures");
 
 function ensureFixtures(): void {
-  if (existsSync(join(FIXTURES, "registry.json"))) return;
+  if (existsSync(join(FIXTURES, "registry.json")) && existsSync(join(FIXTURES, ".tarballs"))) return;
   execFileSync("npx", ["tsx", join(REPO_ROOT, "scripts", "make-fixtures.ts")], {
     cwd: REPO_ROOT,
     stdio: "ignore",
