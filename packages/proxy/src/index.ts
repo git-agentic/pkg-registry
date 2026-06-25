@@ -7,6 +7,7 @@ import { createServer, type ProxyPolicy } from "./server.js";
 import { AuditStore } from "./store.js";
 import { ApprovalStore } from "./approvals.js";
 import { LocalFixtureUpstream, NpmUpstream, type Upstream } from "./upstream.js";
+import { PrivatePackageStore } from "./private-store.js";
 
 export { createServer } from "./server.js";
 export { AuditStore } from "./store.js";
@@ -58,10 +59,11 @@ function main(): void {
   const { policy: enterprisePolicy, hash: policyHash } = resolveEnterprisePolicy();
   const store = new AuditStore(process.env.SENTINEL_STORE, policyHash);
   const approvals = new ApprovalStore(process.env.SENTINEL_APPROVALS);
+  const privateStore = new PrivatePackageStore(process.env.SENTINEL_PRIVATE_STORE);
   // dist/index.js -> ../public ; src is run via tsx with the same relative layout.
   const publicDir = env("SENTINEL_PUBLIC", join(here, "..", "public"));
 
-  const app = createServer({ upstream, store, approvals, enterprisePolicy, policyHash, policy, publicDir });
+  const app = createServer({ upstream, store, approvals, enterprisePolicy, policyHash, policy, publicDir, privateStore });
   app.listen(port, () => {
     console.log(`Sentinel proxy listening on http://localhost:${port}`);
     console.log(`  upstream : ${upstream.name}`);

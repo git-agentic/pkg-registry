@@ -18,6 +18,8 @@ import {
 } from "./upstream.js";
 import { ApprovalStore, type Approval } from "./approvals.js";
 import { reconcileApproval, type ApprovalState } from "./reconcile.js";
+import { PrivatePackageStore } from "./private-store.js";
+import { isClaimed, parsePublishBody, publishTokenValid } from "./private.js";
 
 export type ProxyPolicy = "observe" | "block";
 
@@ -33,6 +35,10 @@ export interface ServerOptions {
   policy?: ProxyPolicy;
   /** Directory containing the dashboard `index.html`. */
   publicDir?: string;
+  /** Authoritative store for published private packages (ADR-0010). */
+  privateStore: PrivatePackageStore;
+  /** Valid bearer tokens for publishing; empty ⇒ publishing disabled. */
+  publishTokens?: string[];
 }
 
 const TARBALL_RE = /^(.+)\/-\/([^/]+\.tgz)$/;
@@ -42,9 +48,13 @@ export function createServer(opts: ServerOptions) {
   const enterprisePolicy = opts.enterprisePolicy;
   const policyHash = opts.policyHash ?? policyHashOf(enterprisePolicy);
   const policy: ProxyPolicy = opts.policy ?? "observe";
+  const privateStore = opts.privateStore;
+  const publishTokens = opts.publishTokens ?? [];
   const app = express();
   app.disable("x-powered-by");
-  app.use(express.json({ limit: "1mb" }));
+  const jsonSmall = express.json({ limit: "1mb" });
+  app.use((req, res, next) => (req.method === "PUT" ? next() : jsonSmall(req, res, next)));
+  const jsonPublish = express.json({ limit: "64mb" });
 
   /** Audit a specific version, using the verdict cache (integrity-keyed). */
   async function auditVersion(
@@ -167,6 +177,51 @@ export function createServer(opts: ServerOptions) {
   app.delete(/^\/-\/approvals\/(.+)$/, (req, res) => {
     const integrity = decodeURIComponent(req.params[0] ?? "");
     res.json({ revoked: approvals.remove(integrity) });
+  });
+
+  // ---- publish (PUT /:pkg) — authoritative private registry write path ----
+  function requirePublishAuth(req: Request, res: Response, next: () => void): void {
+    if (!publishTokenValid(req.headers.authorization, publishTokens)) {
+      res.status(401).json({ error: "authentication required to publish" });
+      return;
+    }
+    next();
+  }
+
+  app.put(/^\/(.+)$/, requirePublishAuth, jsonPublish, async (req, res) => {
+    const name = decodeURIComponent(req.params[0] ?? "");
+    if (!isClaimed(name, enterprisePolicy)) {
+      return res.status(403).json({ error: "not a private namespace", package: name });
+    }
+    try {
+      const parsed = parsePublishBody(name, req.body);
+      const integrity = integrityOf(parsed.tarball);
+      if (parsed.declaredIntegrity && parsed.declaredIntegrity !== integrity) {
+        return res.status(400).json({ error: "integrity mismatch", package: `${name}@${parsed.version}` });
+      }
+      if (privateStore.getVersion(name, parsed.version)) {
+        return res.status(409).json({ error: "version already published", package: `${name}@${parsed.version}` });
+      }
+      const meta = {
+        name, version: parsed.version,
+        author: null, maintainers: [], license: null,
+        hasInstallScripts: false, signatureStatus: "unknown" as const, integrity,
+      };
+      const audit = await runAudit({ meta, tarball: parsed.tarball });
+      const report = score(audit, enterprisePolicy, policyHash);
+      if (report.verdict === "block") {
+        return res.status(403).json({
+          error: "publish blocked by Sentinel policy", package: `${name}@${parsed.version}`,
+          verdict: report.verdict,
+          findings: report.findings.map((f) => ({ ruleId: f.ruleId, severity: f.severity, message: f.message })),
+        });
+      }
+      privateStore.put({ name, version: parsed.version, integrity, manifest: parsed.manifest, tarball: parsed.tarball, audit, actor: "publish-token" });
+      console.log(`[private] published ${name}@${parsed.version} (verdict ${report.verdict})`);
+      return res.status(201).json({ ok: true, id: name, rev: `1-${integrity.slice(7, 19)}` });
+    } catch (err) {
+      return sendError(res, err);
+    }
   });
 
   // ---- dashboard ----
