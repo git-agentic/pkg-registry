@@ -62,6 +62,16 @@ export function createServer(opts: ServerOptions) {
     version: string,
     providedTarball?: Buffer,
   ): Promise<{ report: AuditReport; tarball: Buffer }> {
+    // Claimed names are authoritative private — NEVER consult public upstream.
+    if (isClaimed(pkg, enterprisePolicy)) {
+      const cachedAudit = privateStore.getAudit(pkg, version);
+      const tarball = privateStore.getTarball(pkg, version);
+      if (!cachedAudit || !tarball) throw new HttpError(404, `private package not found ${pkg}@${version}`);
+      const report = score(cachedAudit, enterprisePolicy, policyHash);
+      store.put(report); // populate verdict store so /-/approvals can find the integrity
+      return { report, tarball };
+    }
+
     const pm = await upstream.getPackument(pkg);
     const vmeta = pm.versions[version];
     if (!vmeta) throw new HttpError(404, `unknown version ${pkg}@${version}`);
@@ -266,15 +276,9 @@ export function createServer(opts: ServerOptions) {
       const version = versionFromFilename(pkg, tar[2] ?? "");
       if (!version) return res.status(400).json({ error: "cannot parse version from tarball name" });
       try {
-        if (isClaimed(pkg, enterprisePolicy)) {
-          const audit = privateStore.getAudit(pkg, version);
-          const tarball = privateStore.getTarball(pkg, version);
-          if (!audit || !tarball) return res.status(404).json({ error: "private package not found", package: `${pkg}@${version}` });
-          const report = score(audit, enterprisePolicy, policyHash);
-          return gateAndSend(res, pkg, version, report, tarball, true);
-        }
+        const priv = isClaimed(pkg, enterprisePolicy);
         const { report, tarball } = await auditVersion(pkg, version);
-        return gateAndSend(res, pkg, version, report, tarball, false);
+        return gateAndSend(res, pkg, version, report, tarball, priv);
       } catch (err) {
         return sendError(res, err);
       }

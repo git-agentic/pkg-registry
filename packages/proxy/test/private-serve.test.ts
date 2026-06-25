@@ -68,4 +68,42 @@ describe("private serve routing", () => {
     const doc = await (await fetch(`${base}/leftpad-lite`)).json();
     assert.ok(doc.versions["1.0.1"], "public passthrough unchanged");
   });
+
+  test("/-/audit of a claimed published package returns its report without hitting upstream", async () => {
+    const res = await fetch(`${base}/-/audit/@acme%2fwidget/1.0.0`);
+    assert.equal(res.status, 200);
+    const body = await res.json() as { meta: { name: string }; verdict: string };
+    assert.equal(body.meta.name, "@acme/widget");
+    assert.ok(body.verdict, "verdict should be present");
+  });
+
+  test("/-/manifest of a claimed published package works", async () => {
+    const res = await fetch(`${base}/-/manifest/@acme%2fwidget/1.0.0`);
+    assert.equal(res.status, 200);
+    const body = await res.json() as { meta: { name: string }; approvalState: string };
+    assert.equal(body.meta.name, "@acme/widget");
+    assert.ok(body.approvalState !== undefined, "approvalState should be present");
+  });
+
+  test("/-/audit of a claimed UNPUBLISHED name → 404 (fail-closed, no upstream)", async () => {
+    const res = await fetch(`${base}/-/audit/@acme%2fmissing/1.0.0`);
+    assert.equal(res.status, 404);
+  });
+
+  test("approval round-trip for a claimed package", async () => {
+    // First fetch manifest to populate the store
+    const manifestRes = await fetch(`${base}/-/manifest/@acme%2fwidget/1.0.0`);
+    assert.equal(manifestRes.status, 200);
+    const manifest = await manifestRes.json() as { meta: { integrity: string } };
+    const integrity = manifest.meta.integrity;
+    assert.ok(integrity, "integrity should be present in manifest");
+
+    // Now POST approval — should succeed (not 400 "audit first")
+    const approvalRes = await fetch(`${base}/-/approvals`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ integrity, decision: "approved", actor: { type: "agent", id: "t" } }),
+    });
+    assert.equal(approvalRes.status, 200, "approval should succeed, not 400 'audit first'");
+  });
 });
