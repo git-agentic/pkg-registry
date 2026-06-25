@@ -36,3 +36,19 @@ hosting requires an npm-compatible publish path and an authoritative serve path.
   names. Deferred: unpublish/deprecate, dist-tags beyond `latest`, GC/durability,
   concurrent-publish locking, access levels, multi-user roles, federation.
 - The transparency invariant (ADR-0005) now has a documented, claim-scoped exception.
+
+## Notes & known asymmetries (from the implementation review)
+- **No diff baseline for private audits.** The public path computes a `previousVersion`
+  baseline so the policy `diffMultiplier` weights changed-file findings; the private
+  publish/serve paths audit each version in isolation, so the multiplier never applies
+  to private packages. A minor leniency on changed-file findings, not a fail-closed gap.
+- **`GET /-/private` is unauthenticated**, consistent with the other read-only `/-/`
+  status routes (`/-/audits`, `/-/approvals`) under ADR-0013's trusted single-tenant
+  posture. It exposes claimed globs + the private inventory to any local caller; gating
+  it (and those routes) behind auth is part of the deferred multi-tenant work.
+- **Concurrent same-version publish is last-write-wins** (the `getVersion` duplicate
+  check and `put` are not atomic) — acceptable for the MVP; concurrent-publish locking
+  is in the deferred list above.
+- The publish token is compared in constant time (`crypto.timingSafeEqual` over
+  digests), and `parsePublishBody` rejects path-traversal versions and a manifest whose
+  `name`/`version` disagree with the publish target.
