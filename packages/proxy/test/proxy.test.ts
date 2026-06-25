@@ -306,6 +306,9 @@ describe("enterprise policy scoring (block policy, local fixtures)", () => {
   }
 
   async function startWith(enterprisePolicy: EnterprisePolicy): Promise<void> {
+    // Close any server from a prior test in this block — otherwise the leaked
+    // listener keeps the event loop alive and node:test never exits.
+    if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
     ensureFixtures();
     const app = createServer({
       upstream: new LocalFixtureUpstream(FIXTURES),

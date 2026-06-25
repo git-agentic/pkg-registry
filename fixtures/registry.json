@@ -44,7 +44,7 @@
           "signatureStatus": "signed",
           "dist": {
             "tarballFile": "net-fetch-lite-1.0.0.tgz",
-            "integrity": "sha512-5lO68lZvUkDYEoM+ydAH+4jx3oBZbeqXdM9Un6/bwSdXIgpAqfcsM/+ZEq+KSatmm66NE/FVHCLREt1dz8hTsQ==",
+            "integrity": "sha512-FrCvH7Qa+R4iQ1KbZlrtX9beyaWKWDLXDVHO7J3ef7jEyITmKhWTfGpH2Lm82OYAzMgDG9pWdqy99frI6kpM9A==",
             "unpackedSize": 676,
             "fileCount": 2
           }
@@ -57,7 +57,7 @@
           "signatureStatus": "signed",
           "dist": {
             "tarballFile": "net-fetch-lite-1.0.1.tgz",
-            "integrity": "sha512-2WXpDztY7YfYRKEEsxy0dYJ1zoh/q1rva1/XtqE++jZl9FOhB9Xf0Af+1fkOl2Z84V9l9N2QwF55Lkhz5TXXNA==",
+            "integrity": "sha512-A1sgHeI7QRnIJ+ltFT52Fhav4GzHfxhs2LF7UrPVnGdxEVtoNdQbCFblxOVF/vMXB4qkrf7NX6FAGAIH939njg==",
             "unpackedSize": 770,
             "fileCount": 2
           }
@@ -70,7 +70,7 @@
           "signatureStatus": "signed",
           "dist": {
             "tarballFile": "net-fetch-lite-1.0.2.tgz",
-            "integrity": "sha512-izoNyAyL5TkTbnEm6XxFTkZXupH81zhUuh/VsafDCriIOM2AcmSSCTjqlz0zeoFb4LlMpTYzyvb+cEKsCq/Kgw==",
+            "integrity": "sha512-537wxcwZXNC7Rj6AiGTuPocX/vCOgmjvGJZMA0mjbgGAtT6YxYmZmLD0+TKezL5++exkXHRaqHN7cIc/36l0Fw==",
             "unpackedSize": 826,
             "fileCount": 2
           }
