@@ -1,6 +1,6 @@
 # ADR-0012: Per-enterprise policy as versioned, signed data
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-06-24
 **Deciders:** Founder/Eng, Security lead
 **Phase:** 2

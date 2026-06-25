@@ -2,8 +2,10 @@ import { Buffer } from "node:buffer";
 import { baselineFrom, extractTarball, integrityOf } from "./extract.js";
 import { extractCapabilities, diffCapabilities } from "./capabilities.js";
 import { RULES } from "./rules/index.js";
-import { scoreFindings, verdictFor } from "./score.js";
+import { score } from "./score.js";
+import { DEFAULT_POLICY } from "./policy.js";
 import type {
+  Audit,
   AuditInput,
   AuditReport,
   Capability,
@@ -26,40 +28,29 @@ export function runRules(input: AuditInput): Finding[] {
   });
 }
 
-/** Assemble a full {@link AuditReport} from metadata + extracted files. */
-export function buildReport(
+/** Assemble the policy-independent {@link Audit} from metadata + extracted files. */
+export function buildAudit(
   meta: PackageMeta,
   files: PackageFile[],
   opts: {
     mode: "full" | "diff";
     durationMs: number;
-    llmSummary?: string | null;
     baselineCapabilities?: Capability[];
   } = { mode: "full", durationMs: 0 },
-): AuditReport {
+): Audit {
   const input: AuditInput = { meta, files, mode: opts.mode };
   const findings = runRules(input);
-  const score = scoreFindings(findings);
-  const verdict = verdictFor(score, findings);
   const capabilities = extractCapabilities(input);
   const capabilityDelta = opts.baselineCapabilities
     ? diffCapabilities(capabilities, opts.baselineCapabilities)
     : null;
   return {
-    schema: 2,
+    schema: 3,
     meta,
-    score,
-    verdict,
-    findings: findings.sort((a, b) => b.weight - a.weight),
+    findings,
     capabilities,
     capabilityDelta,
-    engine: {
-      version: ENGINE_VERSION,
-      rules: RULES.map((r) => r.id),
-      llm: null,
-      mode: opts.mode,
-    },
-    llmSummary: opts.llmSummary ?? null,
+    engine: { version: ENGINE_VERSION, rules: RULES.map((r) => r.id), mode: opts.mode },
     auditedAt: new Date().toISOString(),
     durationMs: opts.durationMs,
   };
@@ -75,11 +66,8 @@ export interface AuditTarballInput {
   baselineTarball?: Buffer;
 }
 
-/**
- * End-to-end audit of a tarball: extract, (optionally) diff against the previous
- * version, run rules, and score. This is the function the proxy and CLI call.
- */
-export async function auditTarball(input: AuditTarballInput): Promise<AuditReport> {
+/** Extract + diff + run rules + capabilities → policy-independent {@link Audit}. */
+export async function runAudit(input: AuditTarballInput): Promise<Audit> {
   const started = Date.now();
   const mode: "full" | "diff" = input.baselineTarball ? "diff" : "full";
 
@@ -100,11 +88,16 @@ export async function auditTarball(input: AuditTarballInput): Promise<AuditRepor
     hasInstallScripts: detectInstallScripts(extracted.files) || input.meta.hasInstallScripts,
   };
 
-  return buildReport(meta, extracted.files, {
-    mode,
-    durationMs: Date.now() - started,
-    baselineCapabilities,
-  });
+  return buildAudit(meta, extracted.files, { mode, durationMs: Date.now() - started, baselineCapabilities });
+}
+
+/**
+ * End-to-end audit scored under the built-in {@link DEFAULT_POLICY}. The proxy
+ * does NOT use this (it scores under the loaded enterprise policy); it is for the
+ * offline CLI `scan` and for tests, and reproduces today's numbers exactly.
+ */
+export async function auditTarball(input: AuditTarballInput): Promise<AuditReport> {
+  return score(await runAudit(input), DEFAULT_POLICY);
 }
 
 function detectInstallScripts(files: PackageFile[]): boolean {

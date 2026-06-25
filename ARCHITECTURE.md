@@ -131,6 +131,15 @@ versions whose capability set is unchanged. Endpoints: `GET /-/manifest/:pkg/:ve
 A dependency tree is cleared via `sentinel preflight` (resolve → preflight → batch
 approve → install), because npm aborts on the first `403`.
 
+### 3.4 Policy loading (Phase 2.2, ADR-0012/0014)
+
+The proxy loads one Ed25519-signed policy at startup from `SENTINEL_POLICY_FILE`
+(+ `SENTINEL_POLICY_SIG`, `SENTINEL_POLICY_PUBKEY`), verifying the raw bytes. An
+invalid policy fails closed (non-zero exit); no policy configured uses the built-in
+default. Every report carries `policy: { version, hash }` and the tarball response
+sets `x-sentinel-policy`. (Distinct from the `SENTINEL_POLICY` env var, which selects
+the `observe`/`block` proxy mode.)
+
 ---
 
 ## 4. The audit engine (`@sentinel/core`)
@@ -175,6 +184,12 @@ override: any `critical` finding forces `block` regardless of score
 Thresholds and weights live in one config object so policy is tunable per-enterprise
 in Phase 2 without code changes.
 
+Scoring is **policy-applied at score time** (ADR-0012/0014). `runAudit` produces
+policy-independent findings (`severity` + `onChangedFile`); `score(audit, policy)`
+applies the enterprise policy's weights, diff multiplier, rule toggles, allow/deny
+waivers, thresholds, and hard-block. A waived finding is excluded from the penalty
+sum and the hard-block check but stays visible.
+
 ### 4.3 LLM adapter
 
 ```ts
@@ -199,13 +214,18 @@ type Verdict = 'allow' | 'warn' | 'block';
 type Severity = 'info' | 'low' | 'medium' | 'high' | 'critical';
 type Category = 'obfuscation' | 'network' | 'secret-exfil' | 'install-script' | 'metadata';
 
-interface Finding {
-  ruleId: string;
-  category: Category;
-  severity: Severity;
-  message: string;
-  weight: number;                 // points deducted (post-multiplier)
-  evidence: { file: string; line?: number; snippet: string }[];
+// Findings are policy-independent (no weight); weight/waiver come from score():
+interface Finding { ruleId; category; severity; message; onChangedFile: boolean; evidence }
+interface ScoredFinding extends Finding { weight: number; waived: boolean; waivedBy?: string }
+interface Audit { schema: 3; meta; findings: Finding[]; capabilities; capabilityDelta; engine; auditedAt; durationMs }
+// AuditReport is schema 3: findings: ScoredFinding[], plus policy: { version, hash }.
+
+interface EnterprisePolicy {           // signed, per-enterprise (ADR-0012/0014)
+  schema: 1; version: string;
+  scoring: { severityWeight; diffMultiplier; thresholds; hardBlockSeverity };
+  rules: { disabled: string[] };
+  allow: { package; rules; reason? }[];   // package: anchored glob; rules: ruleId|category
+  deny:  { package; reason? }[];
 }
 
 interface PackageMeta {
@@ -223,21 +243,22 @@ interface Capability { kind: CapabilityKind; target: string; evidence: Evidence[
 interface CapabilityDelta { added: Capability[]; removed: Capability[]; }
 
 interface AuditReport {
-  schema: 2;
+  schema: 3;
   meta: PackageMeta;
   score: number;                  // 0–100 (100 = safe)
   verdict: Verdict;
-  findings: Finding[];
+  findings: ScoredFinding[];
   capabilities: Capability[];
   capabilityDelta: CapabilityDelta | null;
+  policy: { version: string; hash: string };    // signing/verification (ADR-0012/0014)
   engine: { version: string; rules: string[]; llm: string | null; mode: 'full' | 'diff' };
   llmSummary: string | null;
   auditedAt: string;              // ISO-8601
   durationMs: number;
 }
-// AuditReport is schema 2: adds `capabilities: Capability[]` and
-// `capabilityDelta: CapabilityDelta | null`. Approval state is NOT in the report —
-// it is mutable proxy state in ApprovalStore, keyed by integrity (see ADR-0011/0013).
+// AuditReport is schema 3: findings: ScoredFinding[], plus policy: { version, hash }.
+// Approval state is NOT in the report — it is mutable proxy state in ApprovalStore,
+// keyed by integrity (see ADR-0011/0013).
 ```
 
 Storage in Phase 1 is a pluggable `AuditStore` (in-memory + JSON-file impl). The

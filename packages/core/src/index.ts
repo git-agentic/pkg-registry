@@ -1,11 +1,24 @@
 /** @sentinel/core — deterministic npm package audit engine. */
 
 export * from "./types.js";
-export { POLICY, scoreFindings, verdictFor, severityRank } from "./score.js";
+export { score, severityRank } from "./score.js";
+export {
+  DEFAULT_POLICY,
+  policyHashOf,
+  policyHashOfBytes,
+  matchPackage,
+  generateKeypair,
+  signPolicy,
+  verifyPolicyBytes,
+  parsePolicy,
+  loadPolicy,
+  type EnterprisePolicy,
+} from "./policy.js";
 export {
   ENGINE_VERSION,
   auditTarball,
-  buildReport,
+  buildAudit,
+  runAudit,
   runRules,
   type AuditTarballInput,
 } from "./audit.js";

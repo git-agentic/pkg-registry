@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { after, before, describe, test } from "node:test";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
+import { DEFAULT_POLICY, type EnterprisePolicy } from "@sentinel/core";
 import { createServer } from "../src/server.js";
 import { AuditStore } from "../src/store.js";
 import { LocalFixtureUpstream } from "../src/upstream.js";
@@ -35,6 +36,7 @@ describe("registry proxy (block policy, local fixtures)", () => {
       upstream: new LocalFixtureUpstream(FIXTURES),
       store: new AuditStore(),
       approvals,
+      enterprisePolicy: DEFAULT_POLICY,
       policy: "block",
     });
     await new Promise<void>((resolve) => {
@@ -113,6 +115,7 @@ describe("approval gate (block policy, local fixtures)", () => {
       upstream: new LocalFixtureUpstream(FIXTURES),
       store: new AuditStore(),
       approvals,
+      enterprisePolicy: DEFAULT_POLICY,
       policy: "block",
     });
     await new Promise<void>((resolve) => {
@@ -257,6 +260,7 @@ describe("approval gate — no forward inheritance (isolated server)", () => {
       upstream: new LocalFixtureUpstream(FIXTURES),
       store: new AuditStore(),
       approvals: new ApprovalStore(),
+      enterprisePolicy: DEFAULT_POLICY,
       policy: "block",
     });
     await new Promise<void>((resolve) => {
@@ -290,5 +294,60 @@ describe("approval gate — no forward inheritance (isolated server)", () => {
     const tarball = await fetch(`${base}/net-fetch-lite/-/net-fetch-lite-1.0.0.tgz`);
     assert.equal(tarball.status, 403, "tarball for 1.0.0 must be gated (no forward inheritance)");
     assert.equal(tarball.headers.get("x-sentinel-approval"), "required");
+  });
+});
+
+describe("enterprise policy scoring (block policy, local fixtures)", () => {
+  let server: Server;
+  let base: string;
+
+  function policy(over: Partial<EnterprisePolicy>): EnterprisePolicy {
+    return { ...DEFAULT_POLICY, version: "test", ...over };
+  }
+
+  async function startWith(enterprisePolicy: EnterprisePolicy): Promise<void> {
+    // Close any server from a prior test in this block — otherwise the leaked
+    // listener keeps the event loop alive and node:test never exits.
+    if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
+    ensureFixtures();
+    const app = createServer({
+      upstream: new LocalFixtureUpstream(FIXTURES),
+      store: new AuditStore(),
+      approvals: new ApprovalStore(),
+      enterprisePolicy,
+      policy: "block",
+    });
+    await new Promise<void>((resolve) => {
+      server = app.listen(0, () => {
+        base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+        resolve();
+      });
+    });
+  }
+  after(() => server?.close());
+
+  test("a deny entry blocks an otherwise-clean package and stamps the policy header", async () => {
+    await startWith(policy({ version: "denypol", deny: [{ package: "leftpad-lite", reason: "blocked" }] }));
+    const res = await fetch(`${base}/leftpad-lite/-/leftpad-lite-1.0.1.tgz`);
+    assert.equal(res.status, 403);
+    assert.equal(res.headers.get("x-sentinel-verdict"), "block");
+    assert.equal(res.headers.get("x-sentinel-policy"), "denypol");
+  });
+
+  test("an allow waiver serves an otherwise-blocked package", async () => {
+    await startWith(policy({
+      allow: [{ package: "color-stream", rules: ["secret-exfil", "install-scripts", "network-egress", "obfuscation"], reason: "test" }],
+    }));
+    // Pre-approve capabilities so the approval gate doesn't block (mirroring the
+    // "verdict reason, not approval" sibling test). The waiver flips the verdict
+    // block→allow; the approval gate is a separate, orthogonal check.
+    const m = await (await fetch(`${base}/-/manifest/color-stream/1.4.1`)).json();
+    await fetch(`${base}/-/approvals`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "color-stream", version: "1.4.1", integrity: m.meta.integrity, decision: "approved", actor: { type: "agent", id: "test" } }),
+    });
+    const res = await fetch(`${base}/color-stream/-/color-stream-1.4.1.tgz`);
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("x-sentinel-verdict"), "allow");
   });
 });

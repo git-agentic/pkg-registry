@@ -18,12 +18,13 @@ export class AuditStore {
   private byIntegrity = new Map<string, StoredAudit>();
   private order: string[] = []; // integrity keys, most-recent last
 
-  constructor(private readonly file?: string) {
+  constructor(private readonly file?: string, private readonly activePolicyHash?: string) {
     if (file && existsSync(file)) {
       try {
         const rows = JSON.parse(readFileSync(file, "utf8")) as StoredAudit[];
         for (const r of rows) {
-          if (r.report?.schema !== 2) continue; // re-audit anything older
+          if (r.report?.schema !== 3) continue; // re-audit anything older
+          if (this.activePolicyHash && r.report.policy?.hash !== this.activePolicyHash) continue; // scored under a different policy
           this.index(r.report.meta.integrity ?? r.key, r);
         }
       } catch {

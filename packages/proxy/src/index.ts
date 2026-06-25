@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { dirname, join, resolve } from "node:path";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { loadPolicy, DEFAULT_POLICY, policyHashOf, type EnterprisePolicy } from "@sentinel/core";
 import { createServer, type ProxyPolicy } from "./server.js";
 import { AuditStore } from "./store.js";
 import { ApprovalStore } from "./approvals.js";
@@ -26,23 +28,47 @@ function buildUpstream(): Upstream {
   return new NpmUpstream(env("SENTINEL_REGISTRY", "https://registry.npmjs.org"));
 }
 
+function resolveEnterprisePolicy(): { policy: EnterprisePolicy; hash: string } {
+  const file = process.env.SENTINEL_POLICY_FILE;
+  if (!file) {
+    console.log("  scoring  : built-in default policy");
+    return { policy: DEFAULT_POLICY, hash: policyHashOf(DEFAULT_POLICY) };
+  }
+  const sig = process.env.SENTINEL_POLICY_SIG ?? `${file}.sig`;
+  const pub = process.env.SENTINEL_POLICY_PUBKEY;
+  if (!pub) {
+    console.error("FATAL: SENTINEL_POLICY_PUBKEY is required when SENTINEL_POLICY_FILE is set");
+    process.exit(1);
+  }
+  try {
+    const { policy, hash } = loadPolicy({ file, sig, publicKeyPem: readFileSync(pub, "utf8") });
+    console.log(`  scoring  : signed policy ${policy.version} (${hash.slice(0, 22)}…)`);
+    return { policy, hash };
+  } catch (err) {
+    console.error(`FATAL: ${(err as Error).message}`);
+    process.exit(1);
+  }
+}
+
 function main(): void {
   const here = dirname(fileURLToPath(import.meta.url));
   const port = Number(env("SENTINEL_PORT", "4873"));
   const policy = env("SENTINEL_POLICY", "observe") as ProxyPolicy;
   const upstream = buildUpstream();
-  const store = new AuditStore(process.env.SENTINEL_STORE);
+  const { policy: enterprisePolicy, hash: policyHash } = resolveEnterprisePolicy();
+  const store = new AuditStore(process.env.SENTINEL_STORE, policyHash);
   const approvals = new ApprovalStore(process.env.SENTINEL_APPROVALS);
   // dist/index.js -> ../public ; src is run via tsx with the same relative layout.
   const publicDir = env("SENTINEL_PUBLIC", join(here, "..", "public"));
 
-  const app = createServer({ upstream, store, approvals, policy, publicDir });
+  const app = createServer({ upstream, store, approvals, enterprisePolicy, policyHash, policy, publicDir });
   app.listen(port, () => {
     console.log(`Sentinel proxy listening on http://localhost:${port}`);
     console.log(`  upstream : ${upstream.name}`);
     console.log(`  policy   : ${policy}  (observe = audit+serve, block = 403 on block verdict)`);
     console.log(`  dashboard: http://localhost:${port}/`);
     console.log(`\nPoint npm at it:  npm install --registry http://localhost:${port}`);
+    if (process.env.SENTINEL_BOOT_EXIT) process.exit(0);
   });
 }
 

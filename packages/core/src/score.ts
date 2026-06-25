@@ -1,28 +1,5 @@
-import type { Finding, Severity, Verdict } from "./types.js";
-
-/**
- * Scoring policy. Centralised so Phase 2 can make these per-enterprise tunable
- * without touching rule or proxy code.
- */
-export const POLICY = {
-  /** Points deducted per finding, before any rule/diff multiplier. */
-  severityWeight: {
-    info: 0,
-    low: 4,
-    medium: 12,
-    high: 25,
-    critical: 55,
-  } satisfies Record<Severity, number>,
-
-  /** Files added/changed in this release are weighted more heavily. */
-  diffMultiplier: 1.6,
-
-  /** Verdict thresholds on the 0–100 score. */
-  thresholds: { allow: 80, warn: 50 },
-
-  /** Any finding at/above this severity forces a `block`, ignoring the score. */
-  hardBlockSeverity: "critical" as Severity,
-} as const;
+import type { Audit, AuditReport, ScoredFinding, Severity, Verdict } from "./types.js";
+import { DEFAULT_POLICY, matchPackage, policyHashOf, type EnterprisePolicy } from "./policy.js";
 
 const SEVERITY_ORDER: Severity[] = ["info", "low", "medium", "high", "critical"];
 
@@ -30,21 +7,65 @@ export function severityRank(s: Severity): number {
   return SEVERITY_ORDER.indexOf(s);
 }
 
-/** Deterministically reduce findings to a 0–100 score. */
-export function scoreFindings(findings: Finding[]): number {
-  const penalty = findings.reduce((sum, f) => sum + Math.max(0, f.weight), 0);
-  return clamp(Math.round(100 - penalty), 0, 100);
-}
+/**
+ * Apply an EnterprisePolicy to a policy-independent {@link Audit}, producing the
+ * scored {@link AuditReport}. Pure: same (audit, policy) ⇒ same report. Waived
+ * findings stay visible but are excluded from BOTH the penalty sum and the
+ * hard-block check.
+ */
+export function score(
+  audit: Audit,
+  policy: EnterprisePolicy = DEFAULT_POLICY,
+  hash: string = policyHashOf(policy),
+): AuditReport {
+  const disabled = new Set(policy.rules.disabled);
+  const scored: ScoredFinding[] = audit.findings.map((f) => {
+    let waived = false;
+    let waivedBy: string | undefined;
+    if (disabled.has(f.ruleId)) {
+      waived = true;
+      waivedBy = `rule disabled: ${f.ruleId}`;
+    } else {
+      const allow = policy.allow.find(
+        (a) => matchPackage(a.package, audit.meta.name) && a.rules.some((r) => r === f.ruleId || r === f.category),
+      );
+      if (allow) {
+        waived = true;
+        waivedBy = `allow: ${allow.package}${allow.reason ? ` — ${allow.reason}` : ""}`;
+      }
+    }
+    const base = policy.scoring.severityWeight[f.severity];
+    const weight = waived ? 0 : Math.round(base * (f.onChangedFile ? policy.scoring.diffMultiplier : 1));
+    return { ...f, weight, waived, waivedBy };
+  });
 
-/** Map a score + findings to a verdict, honouring the hard-block override. */
-export function verdictFor(score: number, findings: Finding[]): Verdict {
-  const hardBlock = findings.some(
-    (f) => severityRank(f.severity) >= severityRank(POLICY.hardBlockSeverity),
+  const penalty = scored.reduce((s, f) => s + Math.max(0, f.weight), 0);
+  const value = clamp(Math.round(100 - penalty), 0, 100);
+  const denied = policy.deny.some((d) => matchPackage(d.package, audit.meta.name));
+  const hardBlock = scored.some(
+    (f) => !f.waived && severityRank(f.severity) >= severityRank(policy.scoring.hardBlockSeverity),
   );
-  if (hardBlock) return "block";
-  if (score >= POLICY.thresholds.allow) return "allow";
-  if (score >= POLICY.thresholds.warn) return "warn";
-  return "block";
+
+  let verdict: Verdict;
+  if (denied || hardBlock) verdict = "block";
+  else if (value >= policy.scoring.thresholds.allow) verdict = "allow";
+  else if (value >= policy.scoring.thresholds.warn) verdict = "warn";
+  else verdict = "block";
+
+  return {
+    schema: 3,
+    meta: audit.meta,
+    score: value,
+    verdict,
+    findings: scored.sort((a, b) => b.weight - a.weight),
+    capabilities: audit.capabilities,
+    capabilityDelta: audit.capabilityDelta,
+    engine: { ...audit.engine, llm: null },
+    llmSummary: null,
+    auditedAt: audit.auditedAt,
+    durationMs: audit.durationMs,
+    policy: { version: policy.version, hash },
+  };
 }
 
 function clamp(n: number, lo: number, hi: number): number {

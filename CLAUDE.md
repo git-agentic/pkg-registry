@@ -18,10 +18,10 @@ serve real packages transparently; only attach signal.
 
 ## Non-negotiable invariants
 
-1. **Scoring is deterministic.** The 0–100 score and verdict come *entirely* from
-   the heuristic rules in `packages/core/src/rules/`. Same input ⇒ same score,
-   always. There is a test for this (`scoring is deterministic across runs`) —
-   keep it green.
+1. **Scoring is deterministic given a policy.** The 0–100 score and verdict come
+   *entirely* from the heuristic rules plus the active `EnterprisePolicy`. Same input
+   + same policy ⇒ same score, always. The `scoring is deterministic across runs` test
+   pins the default policy — keep it green.
 2. **The LLM never sets the score.** `LlmAuditAdapter` runs only in the async
    *enrich* phase and may only add `llmSummary` + supplementary findings. A missing
    `ANTHROPIC_API_KEY` or a model outage must never change a verdict. Default is
@@ -74,7 +74,7 @@ don't downgrade majors without a reason.
 
 ```bash
 npm run build            # tsc --build (project references: core → proxy/cli)
-npm test                 # engine + end-to-end proxy (must be 43/43)
+npm test                 # engine + end-to-end proxy (must be 71/71)
 npm run demo             # offline malware-detection walkthrough
 node packages/proxy/dist/index.js   # run the proxy (see README for env vars)
 ```
@@ -91,7 +91,7 @@ node packages/proxy/dist/index.js   # run the proxy (see README for env vars)
 
 ## Definition of done for a change
 
-`npm run build` clean, `npm test` 43/43, and if you touched rules/scoring, add or
+`npm run build` clean, `npm test` 71/71, and if you touched rules/scoring, add or
 update a test that proves the new behavior — and confirm the malicious fixture is
 still **blocked**. If you changed a design invariant above, update ARCHITECTURE.md
 and the relevant ADR in [docs/adr/](./docs/adr/) — or add a new ADR (never edit an
