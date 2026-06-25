@@ -92,6 +92,30 @@ export function createServer(opts: ServerOptions) {
     return { report, tarball };
   }
 
+  function gateAndSend(res: Response, pkg: string, version: string, report: AuditReport, tarball: Buffer, isPrivate: boolean): Response | void {
+    const rec = reconcile(report);
+    res.setHeader("x-sentinel-score", String(report.score));
+    res.setHeader("x-sentinel-verdict", report.verdict);
+    res.setHeader("x-sentinel-findings", String(report.findings.length));
+    res.setHeader("x-sentinel-capabilities", String(report.capabilities.length));
+    res.setHeader("x-sentinel-approval", rec.state);
+    res.setHeader("x-sentinel-policy", report.policy.version);
+    if (isPrivate) res.setHeader("x-sentinel-private", "true");
+    if (policy === "block") {
+      if (report.verdict === "block") {
+        return res.status(403).json({ error: "blocked by Sentinel policy", package: `${pkg}@${version}`,
+          score: report.score, verdict: report.verdict,
+          findings: report.findings.map((f) => ({ ruleId: f.ruleId, severity: f.severity, message: f.message })) });
+      }
+      if (rec.state === "denied") return res.status(403).json({ error: "approval denied by Sentinel policy", package: `${pkg}@${version}` });
+      if (rec.state === "required") return res.status(403).json({ error: "approval required by Sentinel policy",
+        package: `${pkg}@${version}`, approvalRequired: rec.approvalRequired,
+        findings: report.findings.map((f) => ({ ruleId: f.ruleId, severity: f.severity, message: f.message })) });
+    }
+    res.setHeader("content-type", "application/octet-stream");
+    return res.send(tarball);
+  }
+
   function reconcile(report: AuditReport) {
     const explicit = approvals.get(report.meta.integrity);
     let priorApproved = approvals.latestApprovedFor(report.meta.name);
@@ -242,45 +266,33 @@ export function createServer(opts: ServerOptions) {
       const version = versionFromFilename(pkg, tar[2] ?? "");
       if (!version) return res.status(400).json({ error: "cannot parse version from tarball name" });
       try {
-        const { report, tarball } = await auditVersion(pkg, version);
-        const rec = reconcile(report);
-        res.setHeader("x-sentinel-score", String(report.score));
-        res.setHeader("x-sentinel-verdict", report.verdict);
-        res.setHeader("x-sentinel-findings", String(report.findings.length));
-        res.setHeader("x-sentinel-capabilities", String(report.capabilities.length));
-        res.setHeader("x-sentinel-approval", rec.state);
-        res.setHeader("x-sentinel-policy", report.policy.version);
-        if (policy === "block") {
-          if (report.verdict === "block") {
-            return res.status(403).json({
-              error: "blocked by Sentinel policy",
-              package: `${pkg}@${version}`,
-              score: report.score, verdict: report.verdict,
-              findings: report.findings.map((f) => ({ ruleId: f.ruleId, severity: f.severity, message: f.message })),
-            });
-          }
-          if (rec.state === "denied") {
-            return res.status(403).json({ error: "approval denied by Sentinel policy", package: `${pkg}@${version}` });
-          }
-          if (rec.state === "required") {
-            return res.status(403).json({
-              error: "approval required by Sentinel policy",
-              package: `${pkg}@${version}`,
-              approvalRequired: rec.approvalRequired,
-              findings: report.findings.map((f) => ({ ruleId: f.ruleId, severity: f.severity, message: f.message })),
-            });
-          }
+        if (isClaimed(pkg, enterprisePolicy)) {
+          const audit = privateStore.getAudit(pkg, version);
+          const tarball = privateStore.getTarball(pkg, version);
+          if (!audit || !tarball) return res.status(404).json({ error: "private package not found", package: `${pkg}@${version}` });
+          const report = score(audit, enterprisePolicy, policyHash);
+          return gateAndSend(res, pkg, version, report, tarball, true);
         }
-        res.setHeader("content-type", "application/octet-stream");
-        return res.send(tarball);
+        const { report, tarball } = await auditVersion(pkg, version);
+        return gateAndSend(res, pkg, version, report, tarball, false);
       } catch (err) {
         return sendError(res, err);
       }
     }
 
-    // Packument: pass the upstream doc through, rewriting only the tarball URLs.
+    // Packument
     try {
       const base = `${req.protocol}://${req.get("host")}`;
+      if (isClaimed(path, enterprisePolicy)) {
+        const pm = privateStore.packument(path);
+        if (!pm) return res.status(404).json({ error: "private package not found", package: path });
+        for (const [v, manifest] of Object.entries(pm.versions)) {
+          (manifest as { dist?: { tarball?: string } }).dist = { ...(manifest as { dist?: object }).dist, tarball: `${base}/${path}/-/${shortName(path)}-${v}.tgz` };
+        }
+        res.setHeader("content-type", "application/json");
+        res.setHeader("x-sentinel-private", "true");
+        return res.json(pm);
+      }
       const pm = await upstream.getPackument(path);
       for (const [v, manifest] of Object.entries(pm.doc.versions ?? {})) {
         const fileName = `${shortName(path)}-${v}.tgz`;
