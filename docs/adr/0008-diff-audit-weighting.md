@@ -1,6 +1,9 @@
 # ADR-0008: Diff-audit — weight files changed in a release more heavily
 
 **Status:** Accepted
+> **Amended (2026-06-25, ADR-0014):** the diff multiplier is now applied at **score
+> time** in `score(audit, policy)`, not baked into the finding at creation. Findings
+> carry `onChangedFile`; the multiplier value lives in the enterprise policy.
 **Date:** 2026-06-24
 **Deciders:** Founder/Eng, Security lead
 **Phase:** 1
