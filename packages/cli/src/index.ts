@@ -1,9 +1,13 @@
 #!/usr/bin/env node
 import { Buffer } from "node:buffer";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { Command } from "commander";
-import { auditTarball, type AuditReport } from "@sentinel/core";
+import {
+  auditTarball, type AuditReport,
+  loadPolicy, signPolicy, generateKeypair, verifyPolicyBytes, parsePolicy, policyHashOfBytes,
+  type EnterprisePolicy,
+} from "@sentinel/core";
 import { formatReport, formatManifest, verdictExitCode, type Manifest } from "./format.js";
 
 const DEFAULT_PROXY = process.env.SENTINEL_PROXY ?? "http://localhost:4873";
@@ -127,6 +131,64 @@ program
       }
     } catch (err) {
       fail(err, opts.proxy);
+    }
+  });
+
+export function summarizePolicy(p: EnterprisePolicy): string {
+  const t = p.scoring.thresholds;
+  return [
+    `version    ${p.version}`,
+    `thresholds allow ${t.allow} · warn ${t.warn} · hardBlock ${p.scoring.hardBlockSeverity}`,
+    `diffMult   ${p.scoring.diffMultiplier}`,
+    `disabled: ${p.rules.disabled.length ? p.rules.disabled.join(", ") : "(none)"}`,
+    `allow rules: ${p.allow.length}   deny rules: ${p.deny.length}`,
+  ].join("\n  ");
+}
+
+const policyCmd = program.command("policy").description("Author, sign, and verify enterprise scoring policies.");
+
+policyCmd
+  .command("keygen")
+  .description("Generate an Ed25519 keypair (PEM) for signing policies.")
+  .option("--out <prefix>", "write <prefix>.pub.pem and <prefix>.key.pem instead of stdout")
+  .action((opts: { out?: string }) => {
+    const { publicKey, privateKey } = generateKeypair();
+    if (opts.out) {
+      writeFileSync(`${opts.out}.pub.pem`, publicKey);
+      writeFileSync(`${opts.out}.key.pem`, privateKey);
+      console.log(`wrote ${opts.out}.pub.pem and ${opts.out}.key.pem`);
+    } else {
+      console.log(publicKey + "\n" + privateKey);
+    }
+  });
+
+policyCmd
+  .command("sign")
+  .description("Write a detached Ed25519 signature (<file>.sig) over a policy file.")
+  .argument("<file>", "path to the policy JSON")
+  .requiredOption("--key <privkey>", "path to the Ed25519 private key PEM")
+  .action((file: string, opts: { key: string }) => {
+    const raw = readFileSync(file);
+    const sig = signPolicy(raw, readFileSync(opts.key, "utf8"));
+    writeFileSync(`${file}.sig`, sig);
+    console.log(`wrote ${file}.sig  (${policyHashOfBytes(raw)})`);
+  });
+
+policyCmd
+  .command("verify")
+  .description("Verify a policy's signature and print its summary.")
+  .argument("<file>", "path to the policy JSON")
+  .requiredOption("--pubkey <pubkey>", "path to the Ed25519 public key PEM")
+  .option("--sig <sig>", "signature file (defaults to <file>.sig)")
+  .action((file: string, opts: { pubkey: string; sig?: string }) => {
+    const sig = opts.sig ?? `${file}.sig`;
+    try {
+      const { policy, hash } = loadPolicy({ file, sig, publicKeyPem: readFileSync(opts.pubkey, "utf8") });
+      console.log(`✓ signature valid  ${hash}`);
+      console.log("  " + summarizePolicy(policy));
+    } catch (err) {
+      console.error(`✗ ${(err as Error).message}`);
+      process.exit(2);
     }
   });
 
