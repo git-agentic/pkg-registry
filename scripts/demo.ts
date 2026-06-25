@@ -13,6 +13,7 @@ import { ApprovalStore } from "../packages/proxy/src/approvals.js";
 import { LocalFixtureUpstream } from "../packages/proxy/src/upstream.js";
 import { formatReport } from "../packages/cli/src/format.js";
 import type { AuditReport } from "../packages/core/src/index.js";
+import { DEFAULT_POLICY } from "@sentinel/core";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -21,6 +22,7 @@ async function main(): Promise<void> {
     upstream: new LocalFixtureUpstream(join(ROOT, "fixtures")),
     store: new AuditStore(),
     approvals: new ApprovalStore(),
+    enterprisePolicy: DEFAULT_POLICY,
     policy: "block",
   });
   const server = app.listen(0);
