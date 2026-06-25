@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { DEFAULT_POLICY } from "@sentinel/core";
 import { createServer, type ProxyPolicy } from "./server.js";
 import { AuditStore } from "./store.js";
 import { ApprovalStore } from "./approvals.js";
@@ -36,7 +37,7 @@ function main(): void {
   // dist/index.js -> ../public ; src is run via tsx with the same relative layout.
   const publicDir = env("SENTINEL_PUBLIC", join(here, "..", "public"));
 
-  const app = createServer({ upstream, store, approvals, policy, publicDir });
+  const app = createServer({ upstream, store, approvals, enterprisePolicy: DEFAULT_POLICY, policy, publicDir });
   app.listen(port, () => {
     console.log(`Sentinel proxy listening on http://localhost:${port}`);
     console.log(`  upstream : ${upstream.name}`);

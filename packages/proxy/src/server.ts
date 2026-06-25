@@ -1,9 +1,12 @@
 import { Buffer } from "node:buffer";
 import express, { type Request, type Response } from "express";
 import {
-  auditTarball,
+  runAudit,
+  score,
+  policyHashOf,
   integrityOf,
   type AuditReport,
+  type EnterprisePolicy,
   type PackageMeta,
 } from "@sentinel/core";
 import { AuditStore } from "./store.js";
@@ -22,6 +25,10 @@ export interface ServerOptions {
   upstream: Upstream;
   store: AuditStore;
   approvals: ApprovalStore;
+  /** The signed scoring policy this proxy serves under. */
+  enterprisePolicy: EnterprisePolicy;
+  /** Hash of the active policy (raw-bytes for loaded, canonical for default). */
+  policyHash?: string;
   /** `observe` always serves (audits + headers only); `block` 403s on a block verdict. */
   policy?: ProxyPolicy;
   /** Directory containing the dashboard `index.html`. */
@@ -32,6 +39,8 @@ const TARBALL_RE = /^(.+)\/-\/([^/]+\.tgz)$/;
 
 export function createServer(opts: ServerOptions) {
   const { upstream, store, approvals } = opts;
+  const enterprisePolicy = opts.enterprisePolicy;
+  const policyHash = opts.policyHash ?? policyHashOf(enterprisePolicy);
   const policy: ProxyPolicy = opts.policy ?? "observe";
   const app = express();
   app.disable("x-powered-by");
@@ -67,7 +76,8 @@ export function createServer(opts: ServerOptions) {
       integrity,
     };
 
-    const report = await auditTarball({ meta, tarball, baselineTarball });
+    const audit = await runAudit({ meta, tarball, baselineTarball });
+    const report = score(audit, enterprisePolicy, policyHash);
     store.put(report);
     return { report, tarball };
   }
@@ -184,6 +194,7 @@ export function createServer(opts: ServerOptions) {
         res.setHeader("x-sentinel-findings", String(report.findings.length));
         res.setHeader("x-sentinel-capabilities", String(report.capabilities.length));
         res.setHeader("x-sentinel-approval", rec.state);
+        res.setHeader("x-sentinel-policy", report.policy.version);
         if (policy === "block") {
           if (report.verdict === "block") {
             return res.status(403).json({
