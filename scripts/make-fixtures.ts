@@ -63,7 +63,21 @@ function main(): void {
 
       const tarballName = `${name}-${version}.tgz`;
       const tarballPath = join(OUT_DIR, tarballName);
-      tar.create({ gzip: true, cwd: versionDir, file: tarballPath, portable: true, sync: true }, ["package"]);
+      // Deterministic build: `portable` normalizes tar headers (uid/gid/uname/gname),
+      // `gzip.portable` zeroes the gzip mtime/OS bytes, and a fixed `mtime` overrides
+      // per-file timestamps. Without these, every rebuild yields different bytes →
+      // different integrity → registry.json drifts and fixtures fail to verify.
+      tar.create(
+        {
+          gzip: { portable: true },
+          cwd: versionDir,
+          file: tarballPath,
+          portable: true,
+          mtime: new Date("2020-01-01T00:00:00Z"),
+          sync: true,
+        },
+        ["package"],
+      );
 
       const buf = readFileSync(tarballPath);
       const integrity = `sha512-${createHash("sha512").update(buf).digest("base64")}`;

@@ -12,7 +12,7 @@
           "signatureStatus": "signed",
           "dist": {
             "tarballFile": "leftpad-lite-1.0.0.tgz",
-            "integrity": "sha512-V5haJFW/bmwij+AAymTae+bWv28MrilbNn+vTlJDdXfzYTsIp/LfdmPHRWZloyD6XOImsUzByGFi8JHrAJ4iRg==",
+            "integrity": "sha512-AUnRW91NJ6VvjnR2I3zydmncMUlC6CO9FJAtBesGUxFNPcmmYaYPwXrCraVODBYa9H7DW8ycyc6KOXSzVTPXFg==",
             "unpackedSize": 693,
             "fileCount": 2
           }
@@ -25,7 +25,7 @@
           "signatureStatus": "signed",
           "dist": {
             "tarballFile": "leftpad-lite-1.0.1.tgz",
-            "integrity": "sha512-1ZZ1G4mP55aXi4eZ1O96cf33vvoW3uCHDdA1EVUe+GGHPG76JZeDtOkklAPk1inEzebdPZgY/9iMUfLX8zbxTg==",
+            "integrity": "sha512-6MA7wt62DV7bKGweIwhSBtdHm9g8R0JAfTHMtlmV5l07KQwiiMaB+Qcq8JA6x0bwnF/9WFmRQLBGHMA5QeVZng==",
             "unpackedSize": 873,
             "fileCount": 2
           }
@@ -44,7 +44,7 @@
           "signatureStatus": "signed",
           "dist": {
             "tarballFile": "net-fetch-lite-1.0.0.tgz",
-            "integrity": "sha512-FrCvH7Qa+R4iQ1KbZlrtX9beyaWKWDLXDVHO7J3ef7jEyITmKhWTfGpH2Lm82OYAzMgDG9pWdqy99frI6kpM9A==",
+            "integrity": "sha512-huYZKpFT3BBgZjikUFWxTldZF2DR2hJiV7VO4lEEcPpTrtipjwgtFKBxIKZEPWa+2NSOjRvOR2/rdLi1z5XItA==",
             "unpackedSize": 676,
             "fileCount": 2
           }
@@ -57,7 +57,7 @@
           "signatureStatus": "signed",
           "dist": {
             "tarballFile": "net-fetch-lite-1.0.1.tgz",
-            "integrity": "sha512-A1sgHeI7QRnIJ+ltFT52Fhav4GzHfxhs2LF7UrPVnGdxEVtoNdQbCFblxOVF/vMXB4qkrf7NX6FAGAIH939njg==",
+            "integrity": "sha512-CfBxrvG8Cn1RRPWYWJL/cFzKS5tvaPq5mcf8n99XmuXpMV3npliwEixyVyzwRD9YxAIbvRERPGRA7yOmj3tffQ==",
             "unpackedSize": 770,
             "fileCount": 2
           }
@@ -70,7 +70,7 @@
           "signatureStatus": "signed",
           "dist": {
             "tarballFile": "net-fetch-lite-1.0.2.tgz",
-            "integrity": "sha512-537wxcwZXNC7Rj6AiGTuPocX/vCOgmjvGJZMA0mjbgGAtT6YxYmZmLD0+TKezL5++exkXHRaqHN7cIc/36l0Fw==",
+            "integrity": "sha512-BVlVd9sd0i9Y9PEmNPvPF3WsASzvW+ti7AOsRFWmQg84q23CNKCCHcLdhmOr6WaNoKAOPYmp8i+VL8lk0ntNiA==",
             "unpackedSize": 826,
             "fileCount": 2
           }
@@ -89,7 +89,7 @@
           "signatureStatus": "signed",
           "dist": {
             "tarballFile": "color-stream-1.4.0.tgz",
-            "integrity": "sha512-87giknCoa7qirdEUuqkAIF/tHr9glJHxmpbxavgN4CRB6Xku6UuFe28KXMjORWpRgjJpzeKoWwHNm3OKjUUW9g==",
+            "integrity": "sha512-TyoiS3oxx8mF4gbfYCf2Cfeb6n7sSikDITWMBZAcl1EAWTMnP8NSxw4HLS7Dx/sxNeVBV9YVNJp9ag2dE5Ix+g==",
             "unpackedSize": 713,
             "fileCount": 2
           }
@@ -102,7 +102,7 @@
           "signatureStatus": "unsigned",
           "dist": {
             "tarballFile": "color-stream-1.4.1.tgz",
-            "integrity": "sha512-V2p+cP8A6vrbzcMplyoUn3UkqccT0+aR/nzN1iGU6YyBtjnQdpM2FUmDhXbdukXr8F+1INNHa5UyHVwvvR70cw==",
+            "integrity": "sha512-bLXSTGvkeisB9jkQ2M4X5MLmw08uD1+zso4/mjvOgIxs6prRUm2IHqeQkA/dU/+qzWzS3i4rWMGCedwVuv/vmw==",
             "unpackedSize": 3068,
             "fileCount": 3
           }
