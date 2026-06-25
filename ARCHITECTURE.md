@@ -140,6 +140,16 @@ default. Every report carries `policy: { version, hash }` and the tarball respon
 sets `x-sentinel-policy`. (Distinct from the `SENTINEL_POLICY` env var, which selects
 the `observe`/`block` proxy mode.)
 
+### 3.5 Private namespace (Phase 2.3, ADR-0010/0015)
+
+Names matching the signed policy's `privateNamespaces` globs are served
+authoritatively from a `PrivatePackageStore` and NEVER from public npm (fail-closed:
+unpublished claimed name ⇒ 404). `npm publish` (`PUT /:pkg`, bearer-token auth before
+body parse, 64MB limit) is audited + policy-gated (a `block` verdict is rejected).
+Private installs use the same score + approval gate as public, with `x-sentinel-private`.
+Non-claimed names pass through transparently (the scoped exception to ADR-0005).
+`GET /-/private` reports claims + published packages.
+
 ---
 
 ## 4. The audit engine (`@sentinel/core`)
@@ -226,6 +236,7 @@ interface EnterprisePolicy {           // signed, per-enterprise (ADR-0012/0014)
   rules: { disabled: string[] };
   allow: { package; rules; reason? }[];   // package: anchored glob; rules: ruleId|category
   deny:  { package; reason? }[];
+  privateNamespaces: string[];            // glob patterns for claimed names (ADR-0010/0015)
 }
 
 interface PackageMeta {
