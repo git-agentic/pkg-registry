@@ -5,7 +5,7 @@ import { spawn } from "node:child_process";
 import { Command } from "commander";
 import {
   auditTarball, type AuditReport,
-  loadPolicy, signPolicy, generateKeypair, verifyPolicyBytes, parsePolicy, policyHashOfBytes,
+  loadPolicy, signPolicy, generateKeypair, policyHashOfBytes,
   type EnterprisePolicy,
 } from "@sentinel/core";
 import { formatReport, formatManifest, verdictExitCode, type Manifest } from "./format.js";

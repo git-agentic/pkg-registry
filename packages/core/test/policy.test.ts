@@ -50,3 +50,76 @@ describe("policy signing", () => {
     assert.throws(() => loadPolicy({ file, sig: file + ".sig", publicKeyPem: publicKey }), /signature/i);
   });
 });
+
+describe("parsePolicy malformed-policy rejection (fail closed at boot)", () => {
+  function makeValid() {
+    return {
+      schema: 1,
+      version: "test",
+      scoring: {
+        severityWeight: { info: 0, low: 4, medium: 12, high: 25, critical: 55 },
+        diffMultiplier: 1.6,
+        thresholds: { allow: 80, warn: 50 },
+        hardBlockSeverity: "critical",
+      },
+      rules: { disabled: [] },
+      allow: [],
+      deny: [],
+    };
+  }
+
+  test("accepts a fully-valid policy", () => {
+    const policy = makeValid();
+    const parsed = parsePolicy(Buffer.from(JSON.stringify(policy)));
+    assert.equal(parsed.version, "test");
+    assert.equal(parsed.scoring.hardBlockSeverity, "critical");
+  });
+
+  test("accepts a policy that omits allow/deny/rules (defaults to empty)", () => {
+    const { allow: _a, deny: _d, rules: _r, ...minimal } = makeValid();
+    const parsed = parsePolicy(Buffer.from(JSON.stringify(minimal)));
+    assert.deepEqual(parsed.allow, []);
+    assert.deepEqual(parsed.deny, []);
+    assert.deepEqual(parsed.rules.disabled, []);
+  });
+
+  test("(a) throws when severityWeight is missing a key (no critical)", () => {
+    const p = makeValid();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    delete (p.scoring.severityWeight as any).critical;
+    assert.throws(
+      () => parsePolicy(Buffer.from(JSON.stringify(p))),
+      /severityWeight.*critical|critical.*severityWeight/i,
+    );
+  });
+
+  test("(b) throws when an allow entry is missing package", () => {
+    const p = makeValid();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (p as any).allow = [{ rules: ["no-shell"] }];
+    assert.throws(
+      () => parsePolicy(Buffer.from(JSON.stringify(p))),
+      /allow.*package|package.*allow/i,
+    );
+  });
+
+  test("(c) throws when an allow entry's rules is not an array", () => {
+    const p = makeValid();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (p as any).allow = [{ package: "lodash", rules: "no-shell" }];
+    assert.throws(
+      () => parsePolicy(Buffer.from(JSON.stringify(p))),
+      /allow.*rules|rules.*array/i,
+    );
+  });
+
+  test("(d) throws when hardBlockSeverity is not a valid severity", () => {
+    const p = makeValid();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (p as any).scoring.hardBlockSeverity = "catastrophic";
+    assert.throws(
+      () => parsePolicy(Buffer.from(JSON.stringify(p))),
+      /hardBlockSeverity/i,
+    );
+  });
+});

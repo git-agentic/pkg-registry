@@ -82,6 +82,8 @@ export function verifyPolicyBytes(raw: Buffer, sigB64: string, publicKeyPem: str
   }
 }
 
+const SEVERITIES: readonly Severity[] = ["info", "low", "medium", "high", "critical"];
+
 export function parsePolicy(raw: Buffer): EnterprisePolicy {
   const p = JSON.parse(raw.toString("utf8")) as Partial<EnterprisePolicy>;
   if (p?.schema !== 1 || typeof p.version !== "string" || !p.scoring || typeof p.scoring !== "object") {
@@ -91,6 +93,77 @@ export function parsePolicy(raw: Buffer): EnterprisePolicy {
   if (!s.severityWeight || typeof s.diffMultiplier !== "number" || !s.thresholds || !s.hardBlockSeverity) {
     throw new Error("invalid policy: incomplete scoring block");
   }
+
+  // Validate severityWeight has all five severity keys with numeric values.
+  for (const sev of SEVERITIES) {
+    const w = (s.severityWeight as Record<string, unknown>)[sev];
+    if (typeof w !== "number") {
+      throw new Error(`invalid policy: scoring.severityWeight must have a numeric value for "${sev}"`);
+    }
+  }
+
+  // Validate thresholds.
+  if (typeof (s.thresholds as Record<string, unknown>).allow !== "number" ||
+      typeof (s.thresholds as Record<string, unknown>).warn !== "number") {
+    throw new Error("invalid policy: scoring.thresholds must have numeric allow and warn fields");
+  }
+
+  // Validate hardBlockSeverity.
+  if (!(SEVERITIES as readonly string[]).includes(s.hardBlockSeverity as string)) {
+    throw new Error(`invalid policy: scoring.hardBlockSeverity must be one of ${SEVERITIES.join(", ")} (got "${s.hardBlockSeverity}")`);
+  }
+
+  // Validate rules.disabled if present.
+  if (p.rules !== undefined) {
+    const disabled = (p.rules as Record<string, unknown>).disabled;
+    if (disabled !== undefined) {
+      if (!Array.isArray(disabled) || !disabled.every((x) => typeof x === "string")) {
+        throw new Error("invalid policy: rules.disabled must be an array of strings");
+      }
+    }
+  }
+
+  // Validate allow entries if present.
+  if (p.allow !== undefined) {
+    if (!Array.isArray(p.allow)) {
+      throw new Error("invalid policy: allow must be an array");
+    }
+    for (let i = 0; i < p.allow.length; i++) {
+      const entry = p.allow[i] as Record<string, unknown>;
+      if (!entry || typeof entry !== "object") {
+        throw new Error(`invalid policy: allow[${i}] must be an object`);
+      }
+      if (typeof entry.package !== "string") {
+        throw new Error(`invalid policy: allow[${i}] must have a string "package" field`);
+      }
+      if (!Array.isArray(entry.rules) || !(entry.rules as unknown[]).every((r) => typeof r === "string")) {
+        throw new Error(`invalid policy: allow[${i}].rules must be an array of strings`);
+      }
+      if (entry.reason !== undefined && typeof entry.reason !== "string") {
+        throw new Error(`invalid policy: allow[${i}].reason must be a string`);
+      }
+    }
+  }
+
+  // Validate deny entries if present.
+  if (p.deny !== undefined) {
+    if (!Array.isArray(p.deny)) {
+      throw new Error("invalid policy: deny must be an array");
+    }
+    for (let i = 0; i < p.deny.length; i++) {
+      const entry = p.deny[i] as Record<string, unknown>;
+      if (!entry || typeof entry !== "object") {
+        throw new Error(`invalid policy: deny[${i}] must be an object`);
+      }
+      if (typeof entry.package !== "string") {
+        throw new Error(`invalid policy: deny[${i}] must have a string "package" field`);
+      }
+      if (entry.reason !== undefined && typeof entry.reason !== "string") {
+        throw new Error(`invalid policy: deny[${i}].reason must be a string`);
+      }
+    }
+  }
+
   return {
     schema: 1,
     version: p.version,
