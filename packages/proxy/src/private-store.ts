@@ -86,7 +86,7 @@ export class PrivatePackageStore {
   // ---- persistence (best-effort, mirrors AuditStore's style) ----
 
   private dirFor(name: string, version: string): string {
-    return join(this.dir!, encodeURIComponent(name), version);
+    return join(this.dir!, encodeURIComponent(name), encodeURIComponent(version));
   }
 
   private persist(meta: StoredVersion, tarball: Buffer): void {
@@ -108,10 +108,11 @@ export class PrivatePackageStore {
       const pkgDir = join(dir, enc);
       let versionDirs: string[];
       try { versionDirs = readdirSync(pkgDir); } catch { continue; }
-      for (const version of versionDirs) {
+      for (const encVersion of versionDirs) {
         try {
-          const meta = JSON.parse(readFileSync(join(pkgDir, version, "meta.json"), "utf8")) as StoredVersion;
-          const tarball = readFileSync(join(pkgDir, version, "package.tgz"));
+          const version = decodeURIComponent(encVersion);
+          const meta = JSON.parse(readFileSync(join(pkgDir, encVersion, "meta.json"), "utf8")) as StoredVersion;
+          const tarball = readFileSync(join(pkgDir, encVersion, "package.tgz"));
           let versions = this.byName.get(name);
           if (!versions) { versions = new Map(); this.byName.set(name, versions); }
           versions.set(version, { meta, tarball });

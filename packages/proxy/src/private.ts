@@ -30,6 +30,9 @@ export function parsePublishBody(name: string, body: unknown): ParsedPublish {
     throw new Error(`unexpected attachment name ${key} for ${name}`);
   }
   const version = key.slice(prefix.length, key.length - ".tgz".length);
+  if (!/^[A-Za-z0-9][\w.+-]*$/.test(version)) {
+    throw new Error(`invalid version "${version}" in publish payload`);
+  }
   const data = attachments[key]?.data;
   if (typeof data !== "string") throw new Error("publish attachment has no base64 data");
   const manifest = (b.versions ?? {})[version];

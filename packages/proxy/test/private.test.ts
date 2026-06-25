@@ -36,6 +36,34 @@ describe("parsePublishBody", () => {
   test("throws on a body with no _attachments", () => {
     assert.throws(() => parsePublishBody("@acme/x", { versions: {} }));
   });
+  test("throws on path-traversal version", () => {
+    const body = {
+      versions: {},
+      _attachments: { "@acme/x-../evil.tgz": { data: Buffer.from("x").toString("base64") } },
+    };
+    assert.throws(() => parsePublishBody("@acme/x", body));
+  });
+  test("throws on bad attachment key (wrong prefix)", () => {
+    const body = {
+      versions: { "1.0.0": { name: "other", version: "1.0.0" } },
+      _attachments: { "other.tgz": { data: Buffer.from("x").toString("base64") } },
+    };
+    assert.throws(() => parsePublishBody("@acme/x", body));
+  });
+  test("throws on missing data in attachment", () => {
+    const body = {
+      versions: { "1.0.0": {} },
+      _attachments: { "@acme/x-1.0.0.tgz": { content_type: "x" } },
+    };
+    assert.throws(() => parsePublishBody("@acme/x", body));
+  });
+  test("throws on missing manifest for the version", () => {
+    const body = {
+      versions: {},
+      _attachments: { "@acme/x-1.0.0.tgz": { data: Buffer.from("x").toString("base64") } },
+    };
+    assert.throws(() => parsePublishBody("@acme/x", body));
+  });
 });
 
 describe("publishTokenValid", () => {
