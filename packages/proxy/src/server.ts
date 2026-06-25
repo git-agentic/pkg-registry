@@ -213,6 +213,13 @@ export function createServer(opts: ServerOptions) {
     res.json({ revoked: approvals.remove(integrity) });
   });
 
+  app.get("/-/private", (_req, res) => {
+    res.json({
+      claims: enterprisePolicy.privateNamespaces ?? [],
+      packages: privateStore.names().map((name) => ({ name, versions: privateStore.versions(name) })),
+    });
+  });
+
   // ---- publish (PUT /:pkg) — authoritative private registry write path ----
   function requirePublishAuth(req: Request, res: Response, next: () => void): void {
     if (!publishTokenValid(req.headers.authorization, publishTokens)) {

@@ -12,6 +12,7 @@ import { PrivatePackageStore } from "./private-store.js";
 export { createServer } from "./server.js";
 export { AuditStore } from "./store.js";
 export { ApprovalStore } from "./approvals.js";
+export { PrivatePackageStore } from "./private-store.js";
 export * from "./upstream.js";
 
 function env(name: string, fallback: string): string {
@@ -60,15 +61,18 @@ function main(): void {
   const store = new AuditStore(process.env.SENTINEL_STORE, policyHash);
   const approvals = new ApprovalStore(process.env.SENTINEL_APPROVALS);
   const privateStore = new PrivatePackageStore(process.env.SENTINEL_PRIVATE_STORE);
+  const publishTokens = (process.env.SENTINEL_PUBLISH_TOKENS ?? "").split(",").map((t) => t.trim()).filter(Boolean);
   // dist/index.js -> ../public ; src is run via tsx with the same relative layout.
   const publicDir = env("SENTINEL_PUBLIC", join(here, "..", "public"));
 
-  const app = createServer({ upstream, store, approvals, enterprisePolicy, policyHash, policy, publicDir, privateStore });
+  const app = createServer({ upstream, store, approvals, enterprisePolicy, policyHash, policy, publicDir, privateStore, publishTokens });
   app.listen(port, () => {
     console.log(`Sentinel proxy listening on http://localhost:${port}`);
     console.log(`  upstream : ${upstream.name}`);
     console.log(`  policy   : ${policy}  (observe = audit+serve, block = 403 on block verdict)`);
     console.log(`  dashboard: http://localhost:${port}/`);
+    const claims = enterprisePolicy.privateNamespaces ?? [];
+    console.log(`  private  : ${claims.length ? claims.join(", ") : "none"}  (publish ${publishTokens.length ? "enabled" : "disabled"})`);
     console.log(`\nPoint npm at it:  npm install --registry http://localhost:${port}`);
     if (process.env.SENTINEL_BOOT_EXIT) process.exit(0);
   });

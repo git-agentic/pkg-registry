@@ -106,4 +106,10 @@ describe("private serve routing", () => {
     });
     assert.equal(approvalRes.status, 200, "approval should succeed, not 400 'audit first'");
   });
+
+  test("GET /-/private lists claims and published packages", async () => {
+    const data = await (await fetch(`${base}/-/private`)).json();
+    assert.deepEqual(data.claims, ["@acme/*"]);
+    assert.ok(data.packages.some((p: { name: string }) => p.name === "@acme/widget"));
+  });
 });
