@@ -5,7 +5,13 @@ export { score, severityRank } from "./score.js";
 export {
   DEFAULT_POLICY,
   policyHashOf,
+  policyHashOfBytes,
   matchPackage,
+  generateKeypair,
+  signPolicy,
+  verifyPolicyBytes,
+  parsePolicy,
+  loadPolicy,
   type EnterprisePolicy,
 } from "./policy.js";
 export {
