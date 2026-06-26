@@ -93,6 +93,10 @@ sentinel npx     [args…]         npx routed through the proxy
 
 The exit codes make `sentinel audit` usable as an agent tool or a CI gate.
 
+### Sandbox (Phase 3, macOS)
+
+On macOS, `sentinel run-scripts <package-dir> [--approve network:host …]` runs the package's lifecycle scripts under a Seatbelt sandbox generated from its approved capabilities; un-approved credential reads / network egress are denied by the kernel.
+
 ---
 
 ## How the malware demo works (and why it's synthetic)

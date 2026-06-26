@@ -150,6 +150,18 @@ Private installs use the same score + approval gate as public, with `x-sentinel-
 Non-claimed names pass through transparently (the scoped exception to ADR-0005).
 `GET /-/private` reports claims + published packages.
 
+### 3.6 Sandbox enforcement (Phase 3, ADR-0011/0016)
+
+`@sentinel/sandbox` turns an *approved* capability set into *enforced* runtime
+least-privilege on macOS: `generateProfile(approved, {homeDir})` emits an allow-default +
+deny-sensitive Seatbelt (SBPL) profile (deny credential reads from the shared
+`SENSITIVE_PATHS`, deny network egress), each relaxed by an approved capability; the
+`SeatbeltSandbox` runs each lifecycle script under it via `sandbox-exec` (failing closed
+off-darwin). `sentinel run-scripts <dir>` ties it together and, on a loud failure, reports
+the detected-but-unapproved capabilities (inferred, best-effort). Network is all-or-nothing
+at the sandbox layer; per-host fidelity lives on the proxy. Children/native inherit the
+sandbox. Full `npm install --enforce` orchestration is deferred.
+
 ---
 
 ## 4. The audit engine (`@sentinel/core`)

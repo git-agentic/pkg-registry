@@ -12,6 +12,10 @@ Sentinel is an **agent-auditable security layer for npm**. Phase 1 (built) is a
 transparent **auditing proxy** in front of `registry.npmjs.org` that scores every
 tarball and attaches a verdict before install-time code can run. Phase 2 (designed,
 not built) adds private-namespace override and an install-time permission manifest.
+Phase 3 adds **`@sentinel/sandbox`** — a macOS Seatbelt runner that enforces a package's
+approved capability manifest at install time (`sentinel run-scripts`). Synthetic malware
+fixtures are still scored-as-text and **never executed**; enforcement is tested with
+benign probe packages.
 
 We are the Socket/Chainguard wedge: **do not** try to replace npm. Resolve and
 serve real packages transparently; only attach signal.
@@ -77,7 +81,7 @@ don't downgrade majors without a reason.
 
 ```bash
 npm run build            # tsc --build (project references: core → proxy/cli)
-npm test                 # engine + end-to-end proxy (must be 102/102)
+npm test                 # engine + end-to-end proxy (must be 116/116)
 npm run demo             # offline malware-detection walkthrough
 node packages/proxy/dist/index.js   # run the proxy (see README for env vars)
 ```
@@ -94,7 +98,7 @@ node packages/proxy/dist/index.js   # run the proxy (see README for env vars)
 
 ## Definition of done for a change
 
-`npm run build` clean, `npm test` 102/102, and if you touched rules/scoring, add or
+`npm run build` clean, `npm test` 116/116, and if you touched rules/scoring, add or
 update a test that proves the new behavior — and confirm the malicious fixture is
 still **blocked**. If you changed a design invariant above, update ARCHITECTURE.md
 and the relevant ADR in [docs/adr/](./docs/adr/) — or add a new ADR (never edit an
