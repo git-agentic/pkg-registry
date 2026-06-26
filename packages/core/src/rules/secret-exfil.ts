@@ -1,16 +1,15 @@
 import type { AuditInput, Finding, Rule } from "../types.js";
 import { codeFiles, mkFinding, scanLines } from "./util.js";
+import { SENSITIVE_PATHS } from "../sensitive-paths.js";
 
-/** Reads of sensitive material. */
-const SECRET_READS = [
+/** Reads of sensitive material: env-var detections here + file-path detections from SENSITIVE_PATHS. */
+const SECRET_READS: { re: RegExp; what: string }[] = [
   { re: /process\.env\s*\[/, what: "dynamic environment-variable enumeration" },
   { re: /\b(AWS_SECRET_ACCESS_KEY|AWS_ACCESS_KEY_ID|AWS_SESSION_TOKEN)\b/, what: "AWS credentials" },
   { re: /\b(NPM_TOKEN|GITHUB_TOKEN|GH_TOKEN|GITLAB_TOKEN)\b/, what: "CI/registry tokens" },
-  { re: /\.npmrc|_authToken/, what: "npm auth token (~/.npmrc)" },
-  { re: /\.aws\/credentials|\.aws\\credentials/, what: "AWS credentials file" },
-  { re: /\.ssh\/id_|id_rsa|id_ed25519/, what: "SSH private keys" },
-  { re: /\/etc\/passwd|\/etc\/shadow/, what: "system account files" },
   { re: /process\.env\.(\w*?(SECRET|TOKEN|KEY|PASS|CREDENTIAL)\w*)/i, what: "secret-named env var" },
+  // file-path detections shared with the sandbox deny-list (no drift):
+  ...SENSITIVE_PATHS.filter((p) => p.detectRe).map((p) => ({ re: p.detectRe!, what: p.label })),
 ];
 
 /** Network sinks that could carry stolen data out. */

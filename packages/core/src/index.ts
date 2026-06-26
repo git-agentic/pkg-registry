@@ -29,6 +29,7 @@ export {
   type ExtractResult,
 } from "./extract.js";
 export { RULES } from "./rules/index.js";
+export { SENSITIVE_PATHS, type SensitivePath } from "./sensitive-paths.js";
 export { extractCapabilities, diffCapabilities } from "./capabilities.js";
 export { capabilityAtom, scanForCapabilities, normalizeTarget } from "./detect/patterns.js";
 export {
