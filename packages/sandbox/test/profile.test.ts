@@ -32,4 +32,10 @@ describe("generateProfile", () => {
   test("deterministic for the same inputs", () => {
     assert.equal(generateProfile([net("x")], { homeDir: HOME }), generateProfile([net("x")], { homeDir: HOME }));
   });
+
+  test("approving one path in a multi-path group still denies the others", () => {
+    const p = generateProfile([fs("/etc/passwd")], { homeDir: HOME });
+    assert.doesNotMatch(p, /literal "\/etc\/passwd"/);   // approved path no longer denied
+    assert.match(p, /deny file-read\* \(literal "\/etc\/shadow"\)/); // sibling still denied
+  });
 });
