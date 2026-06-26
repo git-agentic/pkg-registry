@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { Buffer } from "node:buffer";
-import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { lstatSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, relative } from "node:path";
 import { spawn } from "node:child_process";
@@ -268,12 +268,25 @@ export function unapprovedAtoms(detected: Capability[], approved: Capability[]):
 }
 
 /** Read a package dir into PackageFile[] using the npm `package/<path>` convention. */
-function readPackageFiles(dir: string): PackageFile[] {
-  const walk = (d: string): string[] =>
-    readdirSync(d).flatMap((n) => {
+export function readPackageFiles(dir: string): PackageFile[] {
+  const walk = (d: string, depth = 0): string[] => {
+    if (depth > 50) return [];
+    let entries: string[];
+    try {
+      entries = readdirSync(d);
+    } catch {
+      return [];
+    }
+    return entries.flatMap((n) => {
       const p = join(d, n);
-      return statSync(p).isDirectory() ? walk(p) : [p];
+      // lstatSync does NOT follow symlinks; a symlink is not isDirectory() here
+      try {
+        return lstatSync(p).isDirectory() ? walk(p, depth + 1) : [p];
+      } catch {
+        return [];
+      }
     });
+  };
   return walk(dir).map((p) => ({
     path: "package/" + relative(dir, p),
     content: safeRead(p),

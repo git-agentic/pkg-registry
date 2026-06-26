@@ -10,8 +10,10 @@ for how to run things.
 
 Sentinel is an **agent-auditable security layer for npm**. Phase 1 (built) is a
 transparent **auditing proxy** in front of `registry.npmjs.org` that scores every
-tarball and attaches a verdict before install-time code can run. Phase 2 (designed,
-not built) adds private-namespace override and an install-time permission manifest.
+tarball and attaches a verdict before install-time code can run. Phase 2 (built) added
+the install-time permission manifest + approval gate, signed per-enterprise policy, and
+private-namespace registry (packages scoped to claimed namespaces are served only from
+the private store).
 Phase 3 adds **`@sentinel/sandbox`** — a macOS Seatbelt runner that enforces a package's
 approved capability manifest at install time (`sentinel run-scripts`). Synthetic malware
 fixtures are still scored-as-text and **never executed**; enforcement is tested with

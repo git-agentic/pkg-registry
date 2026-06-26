@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Sandbox, SandboxResult } from "./types.js";
@@ -13,15 +13,27 @@ export class SeatbeltSandbox implements Sandbox {
     const dir = mkdtempSync(join(tmpdir(), "sentinel-sb-"));
     const profileFile = join(dir, "profile.sb");
     writeFileSync(profileFile, opts.profile);
-    const res = spawnSync("/usr/bin/sandbox-exec", ["-f", profileFile, "/bin/sh", "-c", cmd], {
-      cwd: opts.cwd,
-      env: opts.env ?? process.env,
-      encoding: "utf8",
-    });
-    return {
-      exitCode: res.status ?? (res.signal ? 1 : 0),
-      stdout: res.stdout ?? "",
-      stderr: res.stderr ?? "",
-    };
+    try {
+      const res = spawnSync("/usr/bin/sandbox-exec", ["-f", profileFile, "/bin/sh", "-c", cmd], {
+        cwd: opts.cwd,
+        env: opts.env ?? process.env,
+        encoding: "utf8",
+        maxBuffer: 16 * 1024 * 1024,
+      });
+      if (res.error) {
+        return {
+          exitCode: 127,
+          stdout: "",
+          stderr: res.error.message,
+        };
+      }
+      return {
+        exitCode: res.status ?? (res.signal ? 1 : 0),
+        stdout: res.stdout ?? "",
+        stderr: res.stderr ?? "",
+      };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   }
 }

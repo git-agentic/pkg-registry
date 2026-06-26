@@ -30,3 +30,7 @@ profile is generated from the package's approved capabilities.
   write-confinement; proxy-approval fetch in `run-scripts`.
 - The synthetic-malware fixtures remain scored-as-text and unexecuted; enforcement is
   tested with benign in-test probe packages asserting the protected-resource effect.
+- **Enforced surface is sensitive FILE reads + network egress.** Environment-variable-borne
+  secrets (`NPM_TOKEN`, `AWS_SECRET_ACCESS_KEY`, etc.) are NOT scrubbed — lifecycle scripts
+  inherit `process.env`. Env-var scrubbing is out of scope (deferred); the audit engine's
+  `secret-exfil` rule still detects env reads at audit time.

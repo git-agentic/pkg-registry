@@ -161,6 +161,9 @@ off-darwin). `sentinel run-scripts <dir>` ties it together and, on a loud failur
 the detected-but-unapproved capabilities (inferred, best-effort). Network is all-or-nothing
 at the sandbox layer; per-host fidelity lives on the proxy. Children/native inherit the
 sandbox. Full `npm install --enforce` orchestration is deferred.
+**Scope note:** the enforced surface is sensitive file reads + network egress.
+Environment-variable-borne secrets are NOT scrubbed (lifecycle scripts inherit
+`process.env`); the `secret-exfil` audit rule flags env reads at audit time.
 
 ---
 
