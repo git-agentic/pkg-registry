@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import net from "node:net";
-import { mkdtempSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, test } from "node:test";
@@ -18,7 +18,7 @@ describe("SeatbeltSandbox (fail-closed)", () => {
 
 describe("SeatbeltSandbox enforcement", { skip: darwin ? false : "requires macOS sandbox-exec" }, () => {
   test("a denied file-read leaves the secret unobtained (assert on EFFECT, not exit)", () => {
-    const dir = mkdtempSync(join(tmpdir(), "sb-enf-"));
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "sb-enf-")));
     const secret = join(dir, "secret.txt");
     writeFileSync(secret, "TOPSECRET-XYZ");
     const out = join(dir, "out.txt");
@@ -47,7 +47,7 @@ describe("SeatbeltSandbox enforcement", { skip: darwin ? false : "requires macOS
 
 describe("runLifecycleScripts", { skip: darwin ? false : "requires macOS sandbox-exec" }, () => {
   test("runs present hooks under the profile and a benign script succeeds", () => {
-    const dir = mkdtempSync(join(tmpdir(), "sb-run-"));
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "sb-run-")));
     writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "p", version: "1.0.0", scripts: { postinstall: "echo built > built.txt" } }));
     const profile = generateProfile([], { homeDir: process.env.HOME ?? "/tmp" });
     const r = runLifecycleScripts({ packageDir: dir, profile, sandbox: new SeatbeltSandbox() });

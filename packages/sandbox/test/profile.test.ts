@@ -14,7 +14,7 @@ describe("generateProfile", () => {
     assert.match(p, /\(allow default\)/);
     assert.match(p, /deny file-read\* \(subpath "\/Users\/test\/\.ssh"\)/);
     assert.match(p, /deny file-read\* \(literal "\/Users\/test\/\.npmrc"\)/);
-    assert.match(p, /deny file-read\* \(literal "\/etc\/passwd"\) \(literal "\/etc\/shadow"\)/);
+    assert.match(p, /deny file-read\* \(literal "\/private\/etc\/passwd"\) \(literal "\/private\/etc\/shadow"\)/);
     assert.match(p, /\(deny network\*\)/);
   });
 
@@ -29,13 +29,20 @@ describe("generateProfile", () => {
     assert.match(p, /\.ssh"/);                   // unrelated denies remain
   });
 
+  test("denies the canonical /private form of firmlinked system paths", () => {
+    const p = generateProfile([], { homeDir: HOME });
+    assert.match(p, /\(literal "\/private\/etc\/passwd"\)/);
+    assert.match(p, /\(literal "\/private\/etc\/shadow"\)/);
+    assert.doesNotMatch(p, /\(literal "\/etc\/passwd"\)/);  // the un-canonical alias is NOT used
+  });
+
   test("deterministic for the same inputs", () => {
     assert.equal(generateProfile([net("x")], { homeDir: HOME }), generateProfile([net("x")], { homeDir: HOME }));
   });
 
   test("approving one path in a multi-path group still denies the others", () => {
     const p = generateProfile([fs("/etc/passwd")], { homeDir: HOME });
-    assert.doesNotMatch(p, /literal "\/etc\/passwd"/);   // approved path no longer denied
-    assert.match(p, /deny file-read\* \(literal "\/etc\/shadow"\)/); // sibling still denied
+    assert.doesNotMatch(p, /literal "\/private\/etc\/passwd"/);   // approved path no longer denied
+    assert.match(p, /deny file-read\* \(literal "\/private\/etc\/shadow"\)/); // sibling still denied
   });
 });
