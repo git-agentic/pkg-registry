@@ -45,4 +45,15 @@ describe("generateProfile", () => {
     assert.doesNotMatch(p, /literal "\/private\/etc\/passwd"/);   // approved path no longer denied
     assert.match(p, /deny file-read\* \(literal "\/private\/etc\/shadow"\)/); // sibling still denied
   });
+
+  test("filesystem coverage is path-segment-anchored, not substring", () => {
+    // a loose substring like "ssh" must NOT cancel the ~/.ssh deny
+    assert.match(generateProfile([fs("ssh")], { homeDir: HOME }), /\/\.ssh"/);
+    // the dynamic "*" target covers nothing
+    const star = generateProfile([fs("*")], { homeDir: HOME });
+    assert.match(star, /\/\.ssh"/);
+    assert.match(star, /\/\.npmrc"/);
+    // an exact path segment DOES cancel its own deny
+    assert.doesNotMatch(generateProfile([fs(".ssh")], { homeDir: HOME }), /\/\.ssh"/);
+  });
 });

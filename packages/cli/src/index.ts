@@ -220,6 +220,9 @@ program
     }
     const detected = extractCapabilities({ meta: {} as never, files: readPackageFiles(dir), mode: "full" });
     const approved = parseApprovals(opts.approve);
+    if (approved.some((c) => c.kind === "network")) {
+      console.error("\x1b[33mNote: network approval is all-or-nothing — approving any host grants the script ALL network egress (the sandbox cannot host-filter; per-host fidelity is enforced at the proxy, not here).\x1b[0m");
+    }
     const profile = generateProfile(approved, { homeDir: homedir() });
     const { results, failed } = runLifecycleScripts({ packageDir: dir, profile, sandbox: new SeatbeltSandbox() });
 
