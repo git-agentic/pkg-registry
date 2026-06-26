@@ -1,6 +1,11 @@
 # ADR-0011: Install-time permission manifest with human/agent approval
 
 **Status:** Accepted (stage B) — superseded options A/C deferred
+
+> **Stage A (partial, 2026-06-26, ADR-0016):** a macOS Seatbelt runner now ENFORCES the
+> approved capability set at install time (`sentinel run-scripts`). Linux + full
+> `npm install --enforce` orchestration remain deferred.
+
 **Date:** 2026-06-24
 **Deciders:** Founder/Eng, Security lead, Design partner (enterprise)
 **Phase:** 2

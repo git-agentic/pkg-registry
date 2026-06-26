@@ -3,6 +3,7 @@
   "references": [
     { "path": "packages/core" },
     { "path": "packages/proxy" },
+    { "path": "packages/sandbox" },
     { "path": "packages/cli" }
   ]
 }

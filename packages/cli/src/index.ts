@@ -1,13 +1,17 @@
 #!/usr/bin/env node
 import { Buffer } from "node:buffer";
-import { readFileSync, writeFileSync } from "node:fs";
+import { lstatSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, relative } from "node:path";
 import { spawn } from "node:child_process";
 import { Command } from "commander";
 import {
   auditTarball, type AuditReport,
   loadPolicy, signPolicy, generateKeypair, policyHashOfBytes,
   type EnterprisePolicy,
+  extractCapabilities, capabilityAtom, type Capability, type PackageFile,
 } from "@sentinel/core";
+import { generateProfile, SeatbeltSandbox, runLifecycleScripts } from "@sentinel/sandbox";
 import { formatReport, formatManifest, verdictExitCode, type Manifest } from "./format.js";
 
 const DEFAULT_PROXY = process.env.SENTINEL_PROXY ?? "http://localhost:4873";
@@ -192,6 +196,49 @@ policyCmd
     }
   });
 
+program
+  .command("run-scripts")
+  .description("Run a package's lifecycle scripts under a sandbox derived from its approved capabilities (macOS).")
+  .argument("<package-dir>", "path to an unpacked package directory")
+  .option("--approve <cap...>", "approved capabilities as kind:target (e.g. network:api.example.com)", [])
+  .action((dir: string, opts: { approve: string[] }) => {
+    if (process.platform !== "darwin") {
+      console.error("\x1b[31msentinel: sandbox enforcement is only available on macOS\x1b[0m");
+      process.exit(2);
+    }
+    let scripts: Record<string, string> = {};
+    try {
+      scripts = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"))?.scripts ?? {};
+    } catch {
+      console.error(`\x1b[31msentinel: cannot read ${join(dir, "package.json")}\x1b[0m`);
+      process.exit(2);
+    }
+    const hooks = ["preinstall", "install", "postinstall"].filter((h) => scripts[h]);
+    if (hooks.length === 0) {
+      console.log("No lifecycle scripts — nothing to enforce.");
+      return;
+    }
+    const detected = extractCapabilities({ meta: {} as never, files: readPackageFiles(dir), mode: "full" });
+    const approved = parseApprovals(opts.approve);
+    const profile = generateProfile(approved, { homeDir: homedir() });
+    const { results, failed } = runLifecycleScripts({ packageDir: dir, profile, sandbox: new SeatbeltSandbox() });
+
+    for (const r of results) {
+      console.log(`  ${r.hook}: \`${r.command}\` -> exit ${r.exitCode}`);
+    }
+    if (failed) {
+      const unapproved = unapprovedAtoms(detected, approved);
+      console.error("\x1b[33mA lifecycle script failed under sandbox enforcement.\x1b[0m");
+      if (unapproved.length) {
+        console.error("Detected, un-approved capabilities (likely cause — inferred from static analysis):");
+        for (const a of unapproved) console.error(`  › ${a}`);
+        console.error("Approve them (--approve <kind:target>) and retry, or treat the package as malicious.");
+      }
+      process.exit(1);
+    }
+    console.log(`Ran ${results.length} lifecycle script(s) under enforcement; no denied capability needed.`);
+  });
+
 if (process.argv[1]?.endsWith("index.ts") || process.argv[1]?.endsWith("index.js")) program.parseAsync();
 
 // ---------------------------------------------------------------------------
@@ -200,6 +247,56 @@ export function planApprovals(manifests: Manifest[]): { name: string; version: s
   return manifests
     .filter((m) => m.approvalState === "required")
     .map((m) => ({ name: m.meta.name, version: m.meta.version, integrity: m.meta.integrity }));
+}
+
+export function parseApprovals(flags: string[]): Capability[] {
+  const out: Capability[] = [];
+  for (const f of flags) {
+    const i = f.indexOf(":");
+    if (i <= 0) continue;
+    const kind = f.slice(0, i);
+    const target = f.slice(i + 1);
+    if (!["network", "filesystem", "process", "native"].includes(kind) || !target) continue;
+    out.push({ kind: kind as Capability["kind"], target, evidence: [] });
+  }
+  return out;
+}
+
+export function unapprovedAtoms(detected: Capability[], approved: Capability[]): string[] {
+  const approvedSet = new Set(approved.map(capabilityAtom));
+  return detected.map(capabilityAtom).filter((a) => !approvedSet.has(a));
+}
+
+/** Read a package dir into PackageFile[] using the npm `package/<path>` convention. */
+export function readPackageFiles(dir: string): PackageFile[] {
+  const walk = (d: string, depth = 0): string[] => {
+    if (depth > 50) return [];
+    let entries: string[];
+    try {
+      entries = readdirSync(d);
+    } catch {
+      return [];
+    }
+    return entries.flatMap((n) => {
+      const p = join(d, n);
+      // lstatSync does NOT follow symlinks; a symlink is not isDirectory() here
+      try {
+        return lstatSync(p).isDirectory() ? walk(p, depth + 1) : [p];
+      } catch {
+        return [];
+      }
+    });
+  };
+  return walk(dir).map((p) => ({
+    path: "package/" + relative(dir, p),
+    content: safeRead(p),
+    size: 0,
+    changed: false,
+  }));
+}
+
+function safeRead(p: string): string {
+  try { return readFileSync(p, "utf8"); } catch { return ""; }
 }
 
 async function fetchManifest(proxy: string, pkg: string, version: string): Promise<Manifest> {
