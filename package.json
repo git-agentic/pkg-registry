@@ -12,6 +12,7 @@
   "workspaces": [
     "packages/core",
     "packages/proxy",
+    "packages/sandbox",
     "packages/cli"
   ],
   "scripts": {
