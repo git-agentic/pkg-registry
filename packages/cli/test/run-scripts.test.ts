@@ -16,6 +16,11 @@ describe("parseApprovals", () => {
   test("ignores malformed flags", () => {
     assert.deepEqual(parseApprovals(["garbage"]), []);
   });
+  test("parseApprovals accepts env:<NAME>", () => {
+    const caps = parseApprovals(["env:NPM_TOKEN", "network:x", "bogus:y"]);
+    assert.ok(caps.some((c) => c.kind === "env" && c.target === "NPM_TOKEN"));
+    assert.ok(!caps.some((c) => c.kind === ("bogus" as never)));
+  });
 });
 
 describe("unapprovedAtoms", () => {

@@ -40,6 +40,11 @@ export const CAPABILITY_MATCHERS: CapMatcher[] = [
 
   // native
   { kind: "native", re: /require\(\s*['"]([^'"]+\.node)['"]\s*\)/gi, group: 1 },
+
+  // env — credential-shaped env-var reads; the NAME is the target. Detection feeds the
+  // report; enforcement is the fail-closed ENV_ALLOWLIST (sandbox), not this list.
+  { kind: "env", re: /process\.env\.([A-Z][A-Z0-9_]*(?:TOKEN|SECRET|KEY|PASSWORD|PASSWD|AUTH|CREDENTIALS?)[A-Z0-9_]*)\b/g, group: 1 },
+  { kind: "env", re: /process\.env\[\s*['"]([A-Z][A-Z0-9_]*(?:TOKEN|SECRET|KEY|PASSWORD|PASSWD|AUTH|CREDENTIALS?)[A-Z0-9_]*)['"]\s*\]/g, group: 1 },
 ];
 
 export function normalizeTarget(kind: CapabilityKind, raw: string): string {

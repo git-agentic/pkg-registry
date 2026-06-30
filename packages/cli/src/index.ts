@@ -223,8 +223,13 @@ program
     if (approved.some((c) => c.kind === "network")) {
       console.error("\x1b[33mNote: network approval is all-or-nothing — approving any host grants the script ALL network egress (the sandbox cannot host-filter; per-host fidelity is enforced at the proxy, not here).\x1b[0m");
     }
+    if (approved.some((c) => c.kind === "env")) {
+      console.error("\x1b[33mNote: credential-shaped env-vars are scrubbed; approved env capabilities are passed through.\x1b[0m");
+    } else {
+      console.error("\x1b[33mNote: credential-shaped env-vars are scrubbed by default (fail-closed). Grant one with --approve env:NAME.\x1b[0m");
+    }
     const profile = generateProfile(approved, { homeDir: homedir() });
-    const { results, failed } = runLifecycleScripts({ packageDir: dir, profile, sandbox: new SeatbeltSandbox() });
+    const { results, failed } = runLifecycleScripts({ packageDir: dir, profile, sandbox: new SeatbeltSandbox(), approved });
 
     for (const r of results) {
       console.log(`  ${r.hook}: \`${r.command}\` -> exit ${r.exitCode}`);
@@ -259,7 +264,7 @@ export function parseApprovals(flags: string[]): Capability[] {
     if (i <= 0) continue;
     const kind = f.slice(0, i);
     const target = f.slice(i + 1);
-    if (!["network", "filesystem", "process", "native"].includes(kind) || !target) continue;
+    if (!["network", "filesystem", "process", "native", "env"].includes(kind) || !target) continue;
     out.push({ kind: kind as Capability["kind"], target, evidence: [] });
   }
   return out;

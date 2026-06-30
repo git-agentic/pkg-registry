@@ -56,4 +56,28 @@ describe("generateProfile", () => {
     // an exact path segment DOES cancel its own deny
     assert.doesNotMatch(generateProfile([fs(".ssh")], { homeDir: HOME }), /\/\.ssh"/);
   });
+
+  test("emits file-write* denies for write-mode entries (persistence + credentials)", () => {
+    const p = generateProfile([], { homeDir: HOME });
+    assert.match(p, /deny file-write\* \(subpath "\/Users\/test\/Library\/LaunchAgents"\)/);
+    assert.match(p, /deny file-write\* \(literal "\/Users\/test\/\.zshrc"\)/);
+    assert.match(p, /deny file-write\* \(literal "\/Users\/test\/\.npmrc"\)/); // credential: read AND write
+  });
+
+  test("write denies are firmlink-canonicalized", () => {
+    const p = generateProfile([], { homeDir: HOME });
+    assert.match(p, /deny file-write\* \(subpath "\/private\/var\/at\/tabs"\)/);
+    assert.doesNotMatch(p, /file-write\* \(subpath "\/var\/at\/tabs"\)/); // un-canonical alias not used
+  });
+
+  test("a filesystem approval omits BOTH the read and write deny for that path", () => {
+    const p = generateProfile([fs(".npmrc")], { homeDir: HOME });
+    assert.doesNotMatch(p, /file-read\* \(literal "\/Users\/test\/\.npmrc"\)/);
+    assert.doesNotMatch(p, /file-write\* \(literal "\/Users\/test\/\.npmrc"\)/);
+  });
+
+  test("read-only behavior unchanged: write-only entries emit NO read deny", () => {
+    const p = generateProfile([], { homeDir: HOME });
+    assert.doesNotMatch(p, /file-read\* \(literal "\/Users\/test\/\.zshrc"\)/); // .zshrc is write-only
+  });
 });
