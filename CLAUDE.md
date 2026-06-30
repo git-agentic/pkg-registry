@@ -89,12 +89,13 @@ don't downgrade majors without a reason.
 
 ```bash
 npm run build            # tsc --build (project references: core → proxy/cli)
-npm test                 # engine + end-to-end proxy: 156 tests on this host (155 pass, 1 skipped).
-                         # Skips are platform-gated enforcement: the macOS Seatbelt effect-tests
-                         # skip in Linux CI ("non-darwin throws" is skipped on darwin because the
-                         # test verifies darwin-only behaviour); the BubblewrapSandbox enforcement
-                         # suite (7 tests) skips as a describe-level block on darwin ("requires Linux")
-                         # and those tests are not counted in the 156 total. Each platform's
+npm test                 # engine + end-to-end proxy: 157 tests on this host (155 pass, 2 skipped on darwin).
+                         # Skips are platform-gated enforcement: "non-darwin throws" skips on darwin
+                         # (it verifies darwin-only behaviour), and the "no silent skip" CI guard skips
+                         # off-CI. The BubblewrapSandbox enforcement suite (7 tests) skips as a
+                         # describe-level block on darwin ("requires Linux") and is not in the 157 count.
+                         # In Linux CI it is the reverse: 158 tests, 157 pass, 1 skip (Seatbelt enforcement
+                         # skips; bwrap enforcement + the no-silent-skip guard run). Each platform's
                          # enforcement is verified on that platform (macOS dev host / ubuntu-latest CI).
 npm run demo             # offline malware-detection walkthrough
 node packages/proxy/dist/index.js   # run the proxy (see README for env vars)
