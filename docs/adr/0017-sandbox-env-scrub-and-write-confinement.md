@@ -53,8 +53,8 @@ will matter.
 
 **`NODE` vars are enumerated exactly** — not a `NODE*` prefix — to avoid inadvertently
 passing `NODE_AUTH_TOKEN` (a registry auth token used by some npm toolchains). The
-allowlist contains `NODE`, `NODE_ENV`, `NODE_PATH`, `NODE_NO_WARNINGS`, and
-`NODE_OPTIONS` individually. Separately: modern npm does NOT leak registry credentials
+allowlist contains `NODE`, `NODE_OPTIONS`, `NODE_PATH`, and `NODE_ENV` individually.
+Separately: modern npm does NOT leak registry credentials
 into the `npm_config_` namespace (probed; confirmed absent in the env dump), so
 `npm_config_registry` or `npm_config_//registry.npmjs.org/:_authToken` are not an
 active concern for the current `run-scripts` path.
