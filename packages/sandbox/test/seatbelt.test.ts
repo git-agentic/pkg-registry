@@ -7,6 +7,7 @@ import { describe, test } from "node:test";
 import { SeatbeltSandbox } from "../src/seatbelt.js";
 import { runLifecycleScripts } from "../src/runner.js";
 import { generateProfile } from "../src/profile.js";
+import { scrubEnv } from "../src/env.js";
 
 const darwin = process.platform === "darwin";
 
@@ -42,6 +43,33 @@ describe("SeatbeltSandbox enforcement", { skip: darwin ? false : "requires macOS
     await new Promise((r) => setTimeout(r, 200));
     server.close();
     assert.equal(got.length, 0, "the sandboxed connection must not have reached the listener");
+  });
+
+  test("an unapproved credential env-var never reaches the script (assert on EFFECT)", () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "sb-env-")));
+    const out = join(dir, "leak.txt");
+    // The probe script writes whatever it sees in the credential var.
+    const cmd = `node -e "require('fs').writeFileSync('${out}', String(process.env.SECRET_API_KEY||''))"`;
+    const env = scrubEnv({ ...process.env, SECRET_API_KEY: "TOPSECRET-ENV" }, []); // no approval
+    const profile = `(version 1)\n(allow default)\n`;
+    new SeatbeltSandbox().run(cmd, { cwd: dir, profile, env });
+    const got = existsSync(out) ? readFileSync(out, "utf8") : "";
+    assert.ok(!got.includes("TOPSECRET-ENV"), "the credential env-var must not have reached the script");
+
+    // With the approval, the same var IS available:
+    const env2 = scrubEnv({ ...process.env, SECRET_API_KEY: "TOPSECRET-ENV" }, [{ kind: "env", target: "SECRET_API_KEY", evidence: [] }]);
+    new SeatbeltSandbox().run(cmd, { cwd: dir, profile, env: env2 });
+    assert.ok(readFileSync(out, "utf8").includes("TOPSECRET-ENV"), "an approved env var is passed through");
+  });
+
+  test("an unapproved write to a sensitive path is denied (planted file unchanged)", () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "sb-write-")));
+    const planted = join(dir, "rc");      // stand-in for a shell rc / persistence file
+    writeFileSync(planted, "ORIGINAL");
+    // deny writes to this exact file; script swallows the EPERM like real malware
+    const profile = `(version 1)\n(allow default)\n(deny file-write* (literal "${planted}"))\n`;
+    new SeatbeltSandbox().run(`echo PWNED >> "${planted}" 2>/dev/null || true`, { cwd: dir, profile });
+    assert.equal(readFileSync(planted, "utf8"), "ORIGINAL", "the planted file must be unchanged");
   });
 });
 
