@@ -1,4 +1,4 @@
-import { SENSITIVE_PATHS, type Capability } from "@sentinel/core";
+import { sensitivePathsFor, type Capability } from "@sentinel/core";
 import { pathCovers } from "./path-cover.js";
 
 /**
@@ -25,7 +25,7 @@ export function generateProfile(approved: Capability[], opts: { homeDir: string 
 
   const lines = ["(version 1)", "(allow default)"];
   const denyFor = (mode: "read" | "write", op: "file-read*" | "file-write*") => {
-    for (const sp of SENSITIVE_PATHS) {
+    for (const sp of sensitivePathsFor("darwin")) {
       if (!sp.modes.includes(mode)) continue;
       const uncovered = sp.denyPaths.filter((dp) => !approvedFs.some((t) => pathCovers(t, dp)));
       if (uncovered.length === 0) continue;

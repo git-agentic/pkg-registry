@@ -14,6 +14,8 @@ export interface SensitivePath {
   modes: ("read" | "write")[];
   /** Code-detection regex for `secret-exfil`; omit for deny-only paths. */
   detectRe?: RegExp;
+  /** Which OS this entry applies to; absent ⇒ both. Backends filter via sensitivePathsFor(). */
+  platforms?: ("darwin" | "linux")[];
 }
 
 export const SENSITIVE_PATHS: SensitivePath[] = [
@@ -35,10 +37,18 @@ export const SENSITIVE_PATHS: SensitivePath[] = [
   { label: "shell rc (~/.bashrc)", denyPaths: ["~/.bashrc"], denyKind: "literal", modes: ["write"] },
   { label: "shell rc (~/.bash_profile)", denyPaths: ["~/.bash_profile"], denyKind: "literal", modes: ["write"] },
   { label: "shell rc (~/.profile)", denyPaths: ["~/.profile"], denyKind: "literal", modes: ["write"] },
-  { label: "user LaunchAgents", denyPaths: ["~/Library/LaunchAgents"], denyKind: "subpath", modes: ["write"] },
-  { label: "user LaunchDaemons", denyPaths: ["~/Library/LaunchDaemons"], denyKind: "subpath", modes: ["write"] },
-  { label: "system LaunchAgents", denyPaths: ["/Library/LaunchAgents"], denyKind: "subpath", modes: ["write"] },
-  { label: "system LaunchDaemons", denyPaths: ["/Library/LaunchDaemons"], denyKind: "subpath", modes: ["write"] },
-  { label: "XDG autostart", denyPaths: ["~/.config/autostart"], denyKind: "subpath", modes: ["write"] },
-  { label: "crontab spool", denyPaths: ["/var/at/tabs"], denyKind: "subpath", modes: ["write"] },
+  { label: "XDG autostart", denyPaths: ["~/.config/autostart"], denyKind: "subpath", modes: ["write"], platforms: ["linux"] },
+  { label: "systemd user units (~/.config/systemd/user)", denyPaths: ["~/.config/systemd/user"], denyKind: "subpath", modes: ["write"], platforms: ["linux"] },
+  { label: "systemd user units (~/.local/share/systemd/user)", denyPaths: ["~/.local/share/systemd/user"], denyKind: "subpath", modes: ["write"], platforms: ["linux"] },
+  { label: "crontab spool (Linux)", denyPaths: ["/var/spool/cron/crontabs"], denyKind: "subpath", modes: ["write"], platforms: ["linux"] },
+  { label: "user LaunchAgents", denyPaths: ["~/Library/LaunchAgents"], denyKind: "subpath", modes: ["write"], platforms: ["darwin"] },
+  { label: "user LaunchDaemons", denyPaths: ["~/Library/LaunchDaemons"], denyKind: "subpath", modes: ["write"], platforms: ["darwin"] },
+  { label: "system LaunchAgents", denyPaths: ["/Library/LaunchAgents"], denyKind: "subpath", modes: ["write"], platforms: ["darwin"] },
+  { label: "system LaunchDaemons", denyPaths: ["/Library/LaunchDaemons"], denyKind: "subpath", modes: ["write"], platforms: ["darwin"] },
+  { label: "crontab spool (macOS)", denyPaths: ["/var/at/tabs"], denyKind: "subpath", modes: ["write"], platforms: ["darwin"] },
 ];
+
+/** SENSITIVE_PATHS applicable to `platform` (entries with no `platforms` tag apply to both). */
+export function sensitivePathsFor(platform: "darwin" | "linux"): SensitivePath[] {
+  return SENSITIVE_PATHS.filter((sp) => !sp.platforms || sp.platforms.includes(platform));
+}

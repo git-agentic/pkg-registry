@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { SENSITIVE_PATHS } from "../src/index.js";
+import { SENSITIVE_PATHS, sensitivePathsFor } from "../src/index.js";
 
 describe("SENSITIVE_PATHS", () => {
   test("covers the key credential locations with valid shapes", () => {
@@ -41,5 +41,28 @@ describe("SENSITIVE_PATHS", () => {
     const zsh = SENSITIVE_PATHS.find((p) => p.denyPaths.includes("~/.zshrc"));
     assert.deepEqual(zsh?.modes, ["write"]);
     assert.equal(zsh?.denyKind, "literal");
+  });
+});
+
+const labels = (platform: "darwin" | "linux") => sensitivePathsFor(platform).map((s) => s.label);
+
+describe("sensitivePathsFor", () => {
+  test("shared credential paths appear on both platforms", () => {
+    for (const p of ["darwin", "linux"] as const) {
+      assert.ok(labels(p).includes("SSH private keys"));
+      assert.ok(labels(p).includes("npm auth token (~/.npmrc)"));
+    }
+  });
+  test("macOS-only persistence paths appear only on darwin", () => {
+    assert.ok(labels("darwin").includes("user LaunchAgents"));
+    assert.ok(!labels("linux").includes("user LaunchAgents"));
+  });
+  test("Linux-only persistence paths appear only on linux", () => {
+    assert.ok(labels("linux").includes("systemd user units (~/.config/systemd/user)"));
+    assert.ok(labels("linux").includes("crontab spool (Linux)"));
+    assert.ok(!labels("darwin").includes("systemd user units (~/.config/systemd/user)"));
+  });
+  test("shell rc files are shared (both platforms)", () => {
+    for (const p of ["darwin", "linux"] as const) assert.ok(labels(p).includes("shell rc (~/.bashrc)"));
   });
 });

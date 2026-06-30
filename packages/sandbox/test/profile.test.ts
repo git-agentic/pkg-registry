@@ -80,4 +80,11 @@ describe("generateProfile", () => {
     const p = generateProfile([], { homeDir: HOME });
     assert.doesNotMatch(p, /file-read\* \(literal "\/Users\/test\/\.zshrc"\)/); // .zshrc is write-only
   });
+
+  test("emits darwin persistence paths but NOT linux-only ones (pinned to darwin set)", () => {
+    const p = generateProfile([], { homeDir: HOME });
+    assert.match(p, /LaunchAgents/);                         // darwin entry present
+    assert.doesNotMatch(p, /systemd\/user/);                 // linux-only entry absent
+    assert.doesNotMatch(p, /spool\/cron/);                   // linux-only entry absent
+  });
 });
