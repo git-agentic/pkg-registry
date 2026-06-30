@@ -44,14 +44,17 @@ export function generateProfile(approved: Capability[], opts: { homeDir: string 
   const hasNetwork = approved.some((c) => c.kind === "network");
 
   const lines = ["(version 1)", "(allow default)"];
-  for (const sp of SENSITIVE_PATHS) {
-    // Build the set of denyPaths not covered by approved filesystem targets
-    // (path-segment-anchored, never substring).
-    const uncovered = sp.denyPaths.filter((dp) => !approvedFs.some((t) => pathCovers(t, dp)));
-    if (uncovered.length === 0) continue;
-    const items = uncovered.map((dp) => `(${sp.denyKind} "${canonicalizeMacPath(expand(dp))}")`).join(" ");
-    lines.push(`(deny file-read* ${items})`);
-  }
+  const denyFor = (mode: "read" | "write", op: "file-read*" | "file-write*") => {
+    for (const sp of SENSITIVE_PATHS) {
+      if (!sp.modes.includes(mode)) continue;
+      const uncovered = sp.denyPaths.filter((dp) => !approvedFs.some((t) => pathCovers(t, dp)));
+      if (uncovered.length === 0) continue;
+      const items = uncovered.map((dp) => `(${sp.denyKind} "${canonicalizeMacPath(expand(dp))}")`).join(" ");
+      lines.push(`(deny ${op} ${items})`);
+    }
+  };
+  denyFor("read", "file-read*");
+  denyFor("write", "file-write*");
   if (!hasNetwork) lines.push("(deny network*)");
   return lines.join("\n") + "\n";
 }
