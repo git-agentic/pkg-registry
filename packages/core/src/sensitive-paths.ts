@@ -37,10 +37,14 @@ export const SENSITIVE_PATHS: SensitivePath[] = [
   { label: "shell rc (~/.bashrc)", denyPaths: ["~/.bashrc"], denyKind: "literal", modes: ["write"] },
   { label: "shell rc (~/.bash_profile)", denyPaths: ["~/.bash_profile"], denyKind: "literal", modes: ["write"] },
   { label: "shell rc (~/.profile)", denyPaths: ["~/.profile"], denyKind: "literal", modes: ["write"] },
+  // Linux persistence vectors are home-based: an unprivileged install script cannot write to the
+  // system cron spool (/var/spool/cron/crontabs is root-owned mode 1730), and bwrap cannot create
+  // that root-owned mountpoint unprivileged — attempting to do so aborts the sandbox with
+  // "Can't mkdir parents … Permission denied". The meaningful Linux persistence vectors are all
+  // home-dir paths (XDG autostart, systemd user units), which bwrap mounts without issue.
   { label: "XDG autostart", denyPaths: ["~/.config/autostart"], denyKind: "subpath", modes: ["write"], platforms: ["linux"] },
   { label: "systemd user units (~/.config/systemd/user)", denyPaths: ["~/.config/systemd/user"], denyKind: "subpath", modes: ["write"], platforms: ["linux"] },
   { label: "systemd user units (~/.local/share/systemd/user)", denyPaths: ["~/.local/share/systemd/user"], denyKind: "subpath", modes: ["write"], platforms: ["linux"] },
-  { label: "crontab spool (Linux)", denyPaths: ["/var/spool/cron/crontabs"], denyKind: "subpath", modes: ["write"], platforms: ["linux"] },
   { label: "user LaunchAgents", denyPaths: ["~/Library/LaunchAgents"], denyKind: "subpath", modes: ["write"], platforms: ["darwin"] },
   { label: "user LaunchDaemons", denyPaths: ["~/Library/LaunchDaemons"], denyKind: "subpath", modes: ["write"], platforms: ["darwin"] },
   { label: "system LaunchAgents", denyPaths: ["/Library/LaunchAgents"], denyKind: "subpath", modes: ["write"], platforms: ["darwin"] },

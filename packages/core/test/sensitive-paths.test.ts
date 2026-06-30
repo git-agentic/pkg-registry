@@ -59,7 +59,9 @@ describe("sensitivePathsFor", () => {
   });
   test("Linux-only persistence paths appear only on linux", () => {
     assert.ok(labels("linux").includes("systemd user units (~/.config/systemd/user)"));
-    assert.ok(labels("linux").includes("crontab spool (Linux)"));
+    // The /var/spool/cron/crontabs entry was removed: bwrap cannot create that root-owned
+    // mountpoint unprivileged, aborting the sandbox. macOS keeps its own crontab spool entry.
+    assert.ok(!labels("linux").includes("crontab spool (Linux)"), "Linux cron spool entry was removed (bwrap-unmountable)");
     assert.ok(!labels("darwin").includes("systemd user units (~/.config/systemd/user)"));
   });
   test("shell rc files are shared (both platforms)", () => {

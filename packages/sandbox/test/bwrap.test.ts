@@ -23,7 +23,8 @@ describe("generateBwrapArgs", () => {
   test("includes Linux persistence paths, not macOS ones", () => {
     const a = argv([]);
     assert.match(a, /--tmpfs \/home\/test\/\.config\/systemd\/user/);
-    assert.match(a, /--tmpfs \/var\/spool\/cron\/crontabs/);
+    // /var/spool/cron/crontabs was removed (bwrap cannot create root-owned mountpoint unprivileged)
+    assert.doesNotMatch(a, /\/var\/spool\/cron\/crontabs/);
     assert.doesNotMatch(a, /LaunchAgents/);
     assert.doesNotMatch(a, /var\/at\/tabs/);
   });
