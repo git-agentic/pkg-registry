@@ -32,7 +32,10 @@ platform via `createSandbox()` (darwin→Seatbelt, linux→Bubblewrap, else thro
   `platforms` tag; `sensitivePathsFor(platform)` filters. Credential + shell-rc paths are
   shared; LaunchAgents/LaunchDaemons/`/var/at/tabs` are darwin; systemd-user units
   (`~/.config/systemd/user`, `~/.local/share/systemd/user`) and XDG autostart
-  (`~/.config/autostart`) are linux — all HOME-based. The system cron spool
+  (`~/.config/autostart`) are linux — all HOME-based. Note: XDG autostart was previously
+  untagged (applying to both platforms) and was emitted into the macOS Seatbelt profile;
+  Phase 5 moved it to linux-only because it is a freedesktop convention with no macOS
+  equivalent (macOS uses LaunchAgents for the same persistence vector). The system cron spool
   (`/var/spool/cron/crontabs`) is intentionally NOT bwrap-denied: it is root-owned
   (mode 1730) and OS-protected against unprivileged writes, and bwrap cannot create that
   root-owned mountpoint unprivileged — it would abort the sandbox with "Can't mkdir

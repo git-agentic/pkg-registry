@@ -86,5 +86,6 @@ describe("generateProfile", () => {
     assert.match(p, /LaunchAgents/);                         // darwin entry present
     assert.doesNotMatch(p, /systemd\/user/);                 // linux-only entry absent
     assert.doesNotMatch(p, /spool\/cron/);                   // linux-only entry absent
+    assert.doesNotMatch(p, /\.config\/autostart/);           // XDG autostart is linux-only (moved off darwin in Phase 5)
   });
 });

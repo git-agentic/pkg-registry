@@ -7,7 +7,8 @@ export function segments(p: string): string[] {
  * Path-segment-anchored coverage: true iff an approved filesystem target and a deny
  * path share a full segment prefix up to the shorter (one is an ancestor-or-equal of
  * the other). Deliberately NOT a substring match — `ssh` does not cover `.ssh`, and
- * the dynamic `*` capability target covers nothing.
+ * the dynamic `*` capability target covers nothing — so an over-broad/loose approval
+ * can't silently cancel an unrelated credential deny.
  *
  * NOTE — descendant-covers-ancestor side-effect: an approval for a path INSIDE a
  * `subpath` deny (e.g. `--approve filesystem:.ssh/config`) currently cancels the

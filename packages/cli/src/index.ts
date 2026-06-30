@@ -224,14 +224,15 @@ program
     } else {
       console.error("\x1b[33mNote: credential-shaped env-vars are scrubbed by default (fail-closed). Grant one with --approve env:NAME.\x1b[0m");
     }
-    let sandbox;
+    let results: ReturnType<typeof runLifecycleScripts>["results"];
+    let failed: boolean;
     try {
-      sandbox = createSandbox();
+      const sandbox = createSandbox();
+      ({ results, failed } = runLifecycleScripts({ packageDir: dir, sandbox, approved, homeDir: homedir() }));
     } catch (e) {
       console.error(`\x1b[31msentinel: ${(e as Error).message}\x1b[0m`);
       process.exit(2);
     }
-    const { results, failed } = runLifecycleScripts({ packageDir: dir, sandbox, approved, homeDir: homedir() });
 
     for (const r of results) {
       console.log(`  ${r.hook}: \`${r.command}\` -> exit ${r.exitCode}`);

@@ -19,6 +19,12 @@ const skip = process.platform !== "linux"
   ? "requires Linux"
   : (bwrapWorks ? false : "bwrap cannot create namespaces here (see ci.yml: apparmor_restrict_unprivileged_userns=0)");
 
+test("Linux CI must actually run bwrap enforcement (no silent skip)", {
+  skip: process.env.CI && process.platform === "linux" ? false : "only enforced in Linux CI",
+}, () => {
+  assert.ok(bwrapWorks, "bwrap cannot create user namespaces in CI — the Linux enforcement tests would silently skip. Check the ci.yml userns mitigation (kernel.apparmor_restrict_unprivileged_userns).");
+});
+
 describe("BubblewrapSandbox enforcement", { skip }, () => {
   test("a denied credential read leaves the secret unobtained (EFFECT)", () => {
     const home = realpathSync(mkdtempSync(join(tmpdir(), "bw-read-")));
