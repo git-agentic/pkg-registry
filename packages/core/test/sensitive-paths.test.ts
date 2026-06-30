@@ -23,4 +23,23 @@ describe("SENSITIVE_PATHS", () => {
     assert.ok(hits("/etc/passwd"));
     assert.ok(!hits("just some normal code"));
   });
+
+  test("every entry declares non-empty access modes", () => {
+    for (const p of SENSITIVE_PATHS) {
+      assert.ok(Array.isArray(p.modes) && p.modes.length > 0, `${p.label} missing modes`);
+      for (const m of p.modes) assert.ok(m === "read" || m === "write", `${p.label} bad mode ${m}`);
+    }
+  });
+
+  test("credential entries are read+write; persistence targets are write-only", () => {
+    const npmrc = SENSITIVE_PATHS.find((p) => p.denyPaths.includes("~/.npmrc"));
+    assert.deepEqual(npmrc?.modes.slice().sort(), ["read", "write"]);
+    const launch = SENSITIVE_PATHS.find((p) => p.denyPaths.includes("~/Library/LaunchAgents"));
+    assert.ok(launch, "LaunchAgents persistence entry must exist");
+    assert.deepEqual(launch?.modes, ["write"]);
+    assert.equal(launch?.denyKind, "subpath"); // a dir we block creation WITHIN
+    const zsh = SENSITIVE_PATHS.find((p) => p.denyPaths.includes("~/.zshrc"));
+    assert.deepEqual(zsh?.modes, ["write"]);
+    assert.equal(zsh?.denyKind, "literal");
+  });
 });
