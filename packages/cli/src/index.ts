@@ -11,7 +11,7 @@ import {
   type EnterprisePolicy,
   extractCapabilities, capabilityAtom, type Capability, type PackageFile,
 } from "@sentinel/core";
-import { generateProfile, SeatbeltSandbox, runLifecycleScripts } from "@sentinel/sandbox";
+import { createSandbox, runLifecycleScripts } from "@sentinel/sandbox";
 import { formatReport, formatManifest, verdictExitCode, type Manifest } from "./format.js";
 
 const DEFAULT_PROXY = process.env.SENTINEL_PROXY ?? "http://localhost:4873";
@@ -198,14 +198,10 @@ policyCmd
 
 program
   .command("run-scripts")
-  .description("Run a package's lifecycle scripts under a sandbox derived from its approved capabilities (macOS).")
+  .description("Run a package's lifecycle scripts under a sandbox derived from its approved capabilities (macOS Seatbelt / Linux bubblewrap).")
   .argument("<package-dir>", "path to an unpacked package directory")
   .option("--approve <cap...>", "approved capabilities as kind:target (e.g. network:api.example.com)", [])
   .action((dir: string, opts: { approve: string[] }) => {
-    if (process.platform !== "darwin") {
-      console.error("\x1b[31msentinel: sandbox enforcement is only available on macOS\x1b[0m");
-      process.exit(2);
-    }
     let scripts: Record<string, string> = {};
     try {
       scripts = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"))?.scripts ?? {};
@@ -228,8 +224,14 @@ program
     } else {
       console.error("\x1b[33mNote: credential-shaped env-vars are scrubbed by default (fail-closed). Grant one with --approve env:NAME.\x1b[0m");
     }
-    const profile = generateProfile(approved, { homeDir: homedir() });
-    const { results, failed } = runLifecycleScripts({ packageDir: dir, profile, sandbox: new SeatbeltSandbox(), approved });
+    let sandbox;
+    try {
+      sandbox = createSandbox();
+    } catch (e) {
+      console.error(`\x1b[31msentinel: ${(e as Error).message}\x1b[0m`);
+      process.exit(2);
+    }
+    const { results, failed } = runLifecycleScripts({ packageDir: dir, sandbox, approved, homeDir: homedir() });
 
     for (const r of results) {
       console.log(`  ${r.hook}: \`${r.command}\` -> exit ${r.exitCode}`);
