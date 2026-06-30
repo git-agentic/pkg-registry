@@ -802,7 +802,11 @@ describe("BubblewrapSandbox enforcement", { skip }, () => {
     await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
     const port = (server.address() as net.AddressInfo).port;
     const home = realpathSync(mkdtempSync(join(tmpdir(), "bw-net-")));
-    new BubblewrapSandbox().run(`getent hosts 127.0.0.1 >/dev/null 2>&1; (exec 3<>/dev/tcp/127.0.0.1/${port}) 2>/dev/null || true`, { cwd: home, approved: [], homeDir: home });
+    // Connect via node, not a /dev/tcp bashism — BubblewrapSandbox runs `/bin/sh -c`, which is
+    // dash on Ubuntu (no /dev/tcp). Under --unshare-net the sandbox has its own netns, so this
+    // 127.0.0.1 cannot reach the host listener; the assertion is on the listener side (EFFECT).
+    const connect = `node -e "const s=require('net').connect(${port},'127.0.0.1');s.on('connect',()=>s.end());s.on('error',()=>{});setTimeout(()=>process.exit(0),400)"`;
+    new BubblewrapSandbox().run(connect, { cwd: home, approved: [], homeDir: home });
     await new Promise((r) => setTimeout(r, 200));
     server.close();
     assert.equal(got.length, 0, "the sandboxed connection must not have reached the listener");
