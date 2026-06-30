@@ -8,7 +8,7 @@ import type { Sandbox, SandboxResult } from "../src/types.js";
 import type { Capability } from "@sentinel/core";
 
 function fakeSandbox(captured: NodeJS.ProcessEnv[]): Sandbox {
-  return { run(_cmd, opts: { cwd: string; profile: string; env?: NodeJS.ProcessEnv }): SandboxResult {
+  return { run(_cmd, opts: { cwd: string; approved: Capability[]; homeDir: string; env?: NodeJS.ProcessEnv }): SandboxResult {
     captured.push(opts.env ?? {});
     return { exitCode: 0, stdout: "", stderr: "" };
   } };
@@ -22,13 +22,13 @@ describe("runLifecycleScripts env scrubbing", () => {
     const captured: NodeJS.ProcessEnv[] = [];
     const approved: Capability[] = [{ kind: "env", target: "SENTINEL_TEST_SECRET_TOKEN", evidence: [] }];
     try {
-      runLifecycleScripts({ packageDir: dir, profile: "(version 1)\n(allow default)\n", sandbox: fakeSandbox(captured), approved });
+      runLifecycleScripts({ packageDir: dir, sandbox: fakeSandbox(captured), approved, homeDir: "/home/test" });
       const env = captured[0]!;
       assert.equal(env.SENTINEL_TEST_SECRET_TOKEN, "LEAK", "approved env var passes through");
       assert.ok(env.PATH !== undefined, "allowlisted PATH kept");
       // and without the approval it is dropped:
       const captured2: NodeJS.ProcessEnv[] = [];
-      runLifecycleScripts({ packageDir: dir, profile: "(version 1)\n(allow default)\n", sandbox: fakeSandbox(captured2), approved: [] });
+      runLifecycleScripts({ packageDir: dir, sandbox: fakeSandbox(captured2), approved: [], homeDir: "/home/test" });
       assert.equal(captured2[0]!.SENTINEL_TEST_SECRET_TOKEN, undefined, "unapproved secret dropped");
     } finally {
       delete process.env.SENTINEL_TEST_SECRET_TOKEN;

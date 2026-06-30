@@ -37,6 +37,14 @@ not yet built · `Superseded` / `Deprecated` — replaced; see the linked succes
 | [0011](./0011-install-time-permission-manifest.md) | Install-time permission manifest | Declare + approve (then sandbox-enforce) fs/network/process capability before execution |
 | [0012](./0012-per-enterprise-policy-as-signed-data.md) | Per-enterprise policy as signed data | Make `POLICY` a versioned, signed, per-customer document; verdicts carry a `policyHash` |
 
+## Phase 3–5 — sandbox enforcement (Accepted, implemented)
+
+| ADR | Title | Decision in one line |
+|-----|-------|----------------------|
+| [0016](./0016-macos-seatbelt-sandbox-runner.md) | Sandbox enforcement (Phase 3) | `@sentinel/sandbox` enforces approved capabilities on macOS via Seatbelt; defers non-macOS |
+| [0017](./0017-sandbox-env-scrub-and-write-confinement.md) | Sandbox hardening (Phase 4) | Fail-closed env scrubbing + write-confinement; `SENSITIVE_PATHS.modes` split |
+| [0018](./0018-cross-platform-sandbox-backends.md) | Cross-platform sandbox backends (Phase 5) | `createSandbox()` selects Seatbelt (darwin) or bubblewrap (linux); same model, same deny paths |
+
 ## Conventions
 
 - One decision per record; number sequentially; never renumber.

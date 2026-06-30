@@ -14,12 +14,16 @@ tarball and attaches a verdict before install-time code can run. Phase 2 (built)
 the install-time permission manifest + approval gate, signed per-enterprise policy, and
 private-namespace registry (packages scoped to claimed namespaces are served only from
 the private store).
-Phase 3 adds **`@sentinel/sandbox`** — a macOS Seatbelt runner that enforces a package's
-approved capability manifest at install time (`sentinel run-scripts`). Synthetic malware
-fixtures are still scored-as-text and **never executed**; enforcement is tested with
-benign probe packages.
+Phase 3 adds **`@sentinel/sandbox`** — a macOS Seatbelt / Linux bubblewrap runner, selected
+by `createSandbox()`, that enforces a package's approved capability manifest at install time
+(`sentinel run-scripts`). Synthetic malware fixtures are still scored-as-text and
+**never executed**; enforcement is tested with benign probe packages.
 Phase 4 hardened the sandbox: fail-closed env-var scrubbing via an `env` capability
 (`--approve env:NAME`) + `file-write*` denies on credential/persistence paths.
+Phase 5 adds **Linux enforcement** via bubblewrap (`bwrap`): `createSandbox()` selects
+the backend by platform; same approved-capability model and `SENSITIVE_PATHS` deny list,
+same fail-closed contract. CI installs `bwrap` and relaxes the Ubuntu 24.04
+unprivileged-userns restriction so the Linux effect-tests run on `ubuntu-latest`.
 
 We are the Socket/Chainguard wedge: **do not** try to replace npm. Resolve and
 serve real packages transparently; only attach signal.
@@ -85,7 +89,14 @@ don't downgrade majors without a reason.
 
 ```bash
 npm run build            # tsc --build (project references: core → proxy/cli)
-npm test                 # engine + end-to-end proxy (must be 136/136: 135 pass, 1 darwin-only test skipped cross-platform)
+npm test                 # engine + end-to-end proxy: 157 tests on this host (155 pass, 2 skipped on darwin).
+                         # Skips are platform-gated enforcement: "non-darwin throws" skips on darwin
+                         # (it verifies darwin-only behaviour), and the "no silent skip" CI guard skips
+                         # off-CI. The BubblewrapSandbox enforcement suite (7 tests) skips as a
+                         # describe-level block on darwin ("requires Linux") and is not in the 157 count.
+                         # In Linux CI it is the reverse: 158 tests, 157 pass, 1 skip (Seatbelt enforcement
+                         # skips; bwrap enforcement + the no-silent-skip guard run). Each platform's
+                         # enforcement is verified on that platform (macOS dev host / ubuntu-latest CI).
 npm run demo             # offline malware-detection walkthrough
 node packages/proxy/dist/index.js   # run the proxy (see README for env vars)
 ```
@@ -102,7 +113,7 @@ node packages/proxy/dist/index.js   # run the proxy (see README for env vars)
 
 ## Definition of done for a change
 
-`npm run build` clean, `npm test` 136/136, and if you touched rules/scoring, add or
+`npm run build` clean, `npm test` green (see count above), and if you touched rules/scoring, add or
 update a test that proves the new behavior — and confirm the malicious fixture is
 still **blocked**. If you changed a design invariant above, update ARCHITECTURE.md
 and the relevant ADR in [docs/adr/](./docs/adr/) — or add a new ADR (never edit an

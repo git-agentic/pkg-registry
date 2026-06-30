@@ -1,3 +1,5 @@
+import type { Capability } from "@sentinel/core";
+
 export interface SandboxResult {
   exitCode: number;
   stdout: string;
@@ -5,6 +7,6 @@ export interface SandboxResult {
 }
 
 export interface Sandbox {
-  /** Run `cmd` (via `sh -c`) under the given SBPL `profile`, in `cwd`. */
-  run(cmd: string, opts: { cwd: string; profile: string; env?: NodeJS.ProcessEnv }): SandboxResult;
+  /** Run `cmd` (via `sh -c`) under a sandbox compiled from the APPROVED capabilities, in `cwd`. */
+  run(cmd: string, opts: { cwd: string; approved: Capability[]; homeDir: string; env?: NodeJS.ProcessEnv }): SandboxResult;
 }

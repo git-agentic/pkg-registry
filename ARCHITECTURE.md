@@ -150,10 +150,10 @@ Private installs use the same score + approval gate as public, with `x-sentinel-
 Non-claimed names pass through transparently (the scoped exception to ADR-0005).
 `GET /-/private` reports claims + published packages.
 
-### 3.6 Sandbox enforcement (Phases 3–4, ADR-0011/0016/0017)
+### 3.6 Sandbox enforcement (Phases 3–5, ADR-0011/0016/0017/0018)
 
 `@sentinel/sandbox` turns an *approved* capability set into *enforced* runtime
-least-privilege on macOS: `generateProfile(approved, {homeDir})` emits an allow-default +
+least-privilege on macOS and Linux: `generateProfile(approved, {homeDir})` emits an allow-default +
 deny-sensitive Seatbelt (SBPL) profile, each deny relaxed by an approved capability; the
 `SeatbeltSandbox` runs each lifecycle script under it via `sandbox-exec` (failing closed
 off-darwin). `sentinel run-scripts <dir>` ties it together and, on a loud failure, reports
@@ -184,6 +184,22 @@ covered by an approved `filesystem` capability, firmlink-canonicalized. A `files
 approval relaxes both the read and write deny for its target; read/write sub-kinds are
 deferred (YAGNI). Firmlink canonicalization is required for write denies too (probed:
 a `/tmp` deny does not match `/private/tmp`).
+
+**Cross-platform backends (Phase 5, ADR-0018).** Enforcement runs on macOS *and* Linux behind
+`createSandbox()`: darwin → `SeatbeltSandbox` (SBPL), linux → `BubblewrapSandbox` (`bwrap`
+argv), any other platform → fail-closed throw. `Sandbox.run` takes the *approved capabilities*
++ `homeDir`; each backend compiles its own profile, so the runner/CLI are backend-agnostic.
+The Linux deny model mirrors Seatbelt via bind/overlay: credential **dirs** → `--tmpfs`,
+credential/persistence **files** → `--ro-bind /dev/null`, all-or-nothing network → `--unshare-net`;
+each relaxed by an approved `filesystem`/`network` capability through the shared `pathCovers`
+matcher. Persistence paths are platform-tagged in `SENSITIVE_PATHS` (`sensitivePathsFor`):
+darwin gets LaunchAgents/LaunchDaemons/cron spool; linux gets XDG autostart
+(`~/.config/autostart`) and systemd-user units (`~/.config/systemd/user`,
+`~/.local/share/systemd/user`) — all HOME-based (the system cron spool is OS-protected
+against unprivileged writes and cannot be used as a bwrap mountpoint unprivileged).
+On Ubuntu 24.04, unprivileged user namespaces are AppArmor-restricted by default; CI relaxes
+`kernel.apparmor_restrict_unprivileged_userns`, and the backend fails closed if the kernel
+still refuses.
 
 ---
 
