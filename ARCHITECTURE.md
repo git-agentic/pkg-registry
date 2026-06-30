@@ -150,20 +150,40 @@ Private installs use the same score + approval gate as public, with `x-sentinel-
 Non-claimed names pass through transparently (the scoped exception to ADR-0005).
 `GET /-/private` reports claims + published packages.
 
-### 3.6 Sandbox enforcement (Phase 3, ADR-0011/0016)
+### 3.6 Sandbox enforcement (Phases 3–4, ADR-0011/0016/0017)
 
 `@sentinel/sandbox` turns an *approved* capability set into *enforced* runtime
 least-privilege on macOS: `generateProfile(approved, {homeDir})` emits an allow-default +
-deny-sensitive Seatbelt (SBPL) profile (deny credential reads from the shared
-`SENSITIVE_PATHS`, deny network egress), each relaxed by an approved capability; the
+deny-sensitive Seatbelt (SBPL) profile, each deny relaxed by an approved capability; the
 `SeatbeltSandbox` runs each lifecycle script under it via `sandbox-exec` (failing closed
 off-darwin). `sentinel run-scripts <dir>` ties it together and, on a loud failure, reports
-the detected-but-unapproved capabilities (inferred, best-effort). Network is all-or-nothing
-at the sandbox layer; per-host fidelity lives on the proxy. Children/native inherit the
-sandbox. Full `npm install --enforce` orchestration is deferred.
-**Scope note:** the enforced surface is sensitive file reads + network egress.
-Environment-variable-borne secrets are NOT scrubbed (lifecycle scripts inherit
-`process.env`); the `secret-exfil` audit rule flags env reads at audit time.
+the detected-but-unapproved capabilities (inferred, best-effort). Children/native inherit
+the sandbox. Full `npm install --enforce` orchestration is deferred.
+
+**Enforced surface (Phase 3):** sensitive file reads + network egress. `SENSITIVE_PATHS`
+are deny-listed for reads; network is all-or-nothing (Seatbelt can't host-filter; per-host
+fidelity lives on the proxy). Each deny is relaxed by an approved `filesystem` or `network`
+capability. Path-segment-anchored coverage and firmlink canonicalization
+(`/etc` → `/private/etc`) are applied to all deny paths.
+
+**Env-var scrubbing (Phase 4, ADR-0017):** `scrubEnv(sourceEnv, approvedEnv)` strips the
+spawned process env down to a fail-closed `ENV_ALLOWLIST` (vars npm lifecycle scripts
+genuinely need: `PATH`, `HOME`, `LANG`, `NODE`, `NODE_ENV`, etc.) plus any var explicitly
+named by an approved `env` capability (`--approve env:NAME`). The load-bearing goal is
+dropping operator-shell secrets (`SSH_AUTH_SOCK`, `AWS_*`, `*_TOKEN`, etc.); `npm_*`
+allowlist entries are forward-looking for the deferred `install --enforce` path where npm
+will inject those vars. `NODE` vars are enumerated exactly (not a `NODE*` prefix) to
+prevent passing `NODE_AUTH_TOKEN`. `scrubEnv` is pure and deterministic.
+
+**Write-confinement (Phase 4, ADR-0017):** `SensitivePath` gained `modes: ("read"|"write")[]`.
+Credential paths are `["read","write"]` (block exfil and tamper). New persistence-only
+entries (`~/Library/LaunchAgents`, `LaunchDaemons`, crontab spool, shell rc files,
+`~/.config/autostart`) are `["write"]` only — no `detectRe`, so `secret-exfil` ignores
+them. `generateProfile` emits `(deny file-write* ...)` for each write-mode entry not
+covered by an approved `filesystem` capability, firmlink-canonicalized. A `filesystem`
+approval relaxes both the read and write deny for its target; read/write sub-kinds are
+deferred (YAGNI). Firmlink canonicalization is required for write denies too (probed:
+a `/tmp` deny does not match `/private/tmp`).
 
 ---
 
@@ -264,7 +284,7 @@ interface PackageMeta {
   unpackedSize: number; fileCount: number;
 }
 
-type CapabilityKind = 'network' | 'filesystem' | 'process' | 'native';
+type CapabilityKind = 'network' | 'filesystem' | 'process' | 'native' | 'env';
 interface Capability { kind: CapabilityKind; target: string; evidence: Evidence[]; }
 interface CapabilityDelta { added: Capability[]; removed: Capability[]; }
 

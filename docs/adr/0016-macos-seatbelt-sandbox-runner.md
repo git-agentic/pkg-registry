@@ -34,3 +34,13 @@ profile is generated from the package's approved capabilities.
   secrets (`NPM_TOKEN`, `AWS_SECRET_ACCESS_KEY`, etc.) are NOT scrubbed — lifecycle scripts
   inherit `process.env`. Env-var scrubbing is out of scope (deferred); the audit engine's
   `secret-exfil` rule still detects env reads at audit time.
+
+---
+
+**Annotation (2026-06-30 — Phase 4):** The two deferred gaps noted above are now closed
+by **ADR-0017** (sandbox env-var scrubbing and write-confinement). Env-var scrubbing is
+fail-closed via `scrubEnv` + `ENV_ALLOWLIST`; credential env-vars can be approved with
+`--approve env:NAME` (new `env` capability kind). Write-confinement adds `file-write*`
+denies for credential paths (now `modes: ["read","write"]` in `SensitivePath`) and new
+persistence-only targets (`LaunchAgents/Daemons`, shell rc, crontab spool, autostart).
+The Accepted decision above is unchanged; this note records closure only.

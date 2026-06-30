@@ -18,6 +18,8 @@ Phase 3 adds **`@sentinel/sandbox`** — a macOS Seatbelt runner that enforces a
 approved capability manifest at install time (`sentinel run-scripts`). Synthetic malware
 fixtures are still scored-as-text and **never executed**; enforcement is tested with
 benign probe packages.
+Phase 4 hardened the sandbox: fail-closed env-var scrubbing via an `env` capability
+(`--approve env:NAME`) + `file-write*` denies on credential/persistence paths.
 
 We are the Socket/Chainguard wedge: **do not** try to replace npm. Resolve and
 serve real packages transparently; only attach signal.
@@ -83,7 +85,7 @@ don't downgrade majors without a reason.
 
 ```bash
 npm run build            # tsc --build (project references: core → proxy/cli)
-npm test                 # engine + end-to-end proxy (must be 118/118)
+npm test                 # engine + end-to-end proxy (must be 135/135)
 npm run demo             # offline malware-detection walkthrough
 node packages/proxy/dist/index.js   # run the proxy (see README for env vars)
 ```
@@ -100,7 +102,7 @@ node packages/proxy/dist/index.js   # run the proxy (see README for env vars)
 
 ## Definition of done for a change
 
-`npm run build` clean, `npm test` 118/118, and if you touched rules/scoring, add or
+`npm run build` clean, `npm test` 135/135, and if you touched rules/scoring, add or
 update a test that proves the new behavior — and confirm the malicious fixture is
 still **blocked**. If you changed a design invariant above, update ARCHITECTURE.md
 and the relevant ADR in [docs/adr/](./docs/adr/) — or add a new ADR (never edit an
