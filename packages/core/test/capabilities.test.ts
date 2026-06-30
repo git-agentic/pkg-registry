@@ -48,6 +48,21 @@ describe("extractCapabilities", () => {
     assert.deepEqual(atoms(a), atoms(b));
     assert.equal(atoms(a).filter((x) => x === "network:api.example.com").length, 1, "deduped");
   });
+
+  test("detects credential-shaped env reads as env capabilities, ignores benign env", () => {
+    const files = [{
+      path: "package/exfil.js",
+      content: [
+        "const t = process.env.NPM_TOKEN;",
+        'const a = process.env["AWS_SECRET_ACCESS_KEY"];',
+        "const mode = process.env.NODE_ENV;",   // benign — must NOT be captured
+        "const p = process.env.PATH;",          // benign — must NOT be captured
+      ].join("\n"),
+    }];
+    const caps = extractCapabilities({ meta: {} as never, files, mode: "full" });
+    const envTargets = caps.filter((c) => c.kind === "env").map((c) => c.target).sort();
+    assert.deepEqual(envTargets, ["AWS_SECRET_ACCESS_KEY", "NPM_TOKEN"]);
+  });
 });
 
 describe("diffCapabilities", () => {

@@ -44,7 +44,7 @@ export interface ScoredFinding extends Finding {
   waivedBy?: string;
 }
 
-export type CapabilityKind = "network" | "filesystem" | "process" | "native";
+export type CapabilityKind = "network" | "filesystem" | "process" | "native" | "env";
 
 /**
  * One concrete thing a package can do. The (kind, target) pair is the "atom"
