@@ -54,20 +54,24 @@ will matter.
 **`NODE` vars are enumerated exactly** — not a `NODE*` prefix — to avoid inadvertently
 passing `NODE_AUTH_TOKEN` (a registry auth token used by some npm toolchains). The
 allowlist contains `NODE`, `NODE_OPTIONS`, `NODE_PATH`, and `NODE_ENV` individually.
-Separately: modern npm does NOT leak registry credentials
-into the `npm_config_` namespace (probed; confirmed absent in the env dump), so
-`npm_config_registry` or `npm_config_//registry.npmjs.org/:_authToken` are not an
-active concern for the current `run-scripts` path.
+Separately: in our `npm install` env-dump probe, no registry credentials surfaced in the
+`npm_config_` namespace; npm's exact behavior here is version-dependent, so this is an
+observation, not a guarantee. For the current operator-invoked `run-scripts` path the
+`npm_config_*` allowlist entry is forward-looking insurance only.
 
 ### D3 — Env passthrough via a new `env` capability kind
 
 `CapabilityKind` gains `"env"`. `target` = the env var name (e.g. `NPM_TOKEN`); `"*"`
 is the dynamic/uncomputable sentinel.
 
-`scanForCapabilities` detects env-credential reads in lifecycle scripts (`process.env.X`,
-`process.env["X"]`, destructured `const { X } = process.env` where `X` matches the
-credential shape). These mirror the patterns the existing `secret-exfil` rule already
-uses, keeping detection and enforcement no-drift.
+`scanForCapabilities` detects env-credential reads in lifecycle scripts (`process.env.X`
+and `process.env["X"]` forms). The spec also lists the destructuring form
+`const { X } = process.env`, but **this form is NOT currently detected** — it is a
+detection-only gap; `scrubEnv` drops the credential regardless via the fail-closed
+allowlist, so enforcement is unaffected. Additionally, the capability matcher's
+credential-token set is a **near-mirror** of `secret-exfil`'s token set — the two sets
+are not byte-identical and diverge over time as one is updated without the other; both
+differences are detection-only (the allowlist remains the enforcement boundary).
 
 `parseApprovals` accepts `env:<NAME>` — the same `--approve` UX as `filesystem` and
 `network`. An approved `env` capability adds that var's name to the `scrubEnv` passlist
@@ -113,6 +117,17 @@ are YAGNI and explicitly deferred — no production demand identified.
 
 - **Enforced surface now covers** sensitive file reads + network egress (Phase 3) **plus**
   env-var secrets scrubbing + writes to credential and persistence paths (Phase 4).
+
+**Known scope note — `npm_` allowlist prefix:** The `npm_config_*`, `npm_package_*`,
+`npm_lifecycle_*`, `npm_node_*`, and `npm_command`/`npm_execpath` prefix entries in
+`ENV_ALLOWLIST` are **inert on the current `sentinel run-scripts` path** — the operator
+shell carries no `npm_*` vars because npm is not the invoker. They are forward-looking
+pre-conditions for the deferred `sentinel install --enforce` path. Before that path is
+activated, the `npm_` prefix group **must be narrowed** to the specific safe sub-groups
+(`npm_package_`, `npm_lifecycle_`, `npm_node_`, `npm_command`, `npm_execpath`) or
+`npm_config_*` must be credential-screened, because npm can surface legacy auth config
+(`_auth`, `_authToken`, `_password`) in the `npm_config_` namespace depending on
+`.npmrc` configuration.
 - `scrubEnv` is pure and deterministic — same `(sourceEnv, approvedEnv)` inputs always
   produce the same output, unit-testable without a kernel on every platform.
 - Profile generation remains pure and deterministic (same inputs → same SBPL profile),

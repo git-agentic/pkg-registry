@@ -65,11 +65,27 @@ describe("SeatbeltSandbox enforcement", { skip: darwin ? false : "requires macOS
   test("an unapproved write to a sensitive path is denied (planted file unchanged)", () => {
     const dir = realpathSync(mkdtempSync(join(tmpdir(), "sb-write-")));
     const planted = join(dir, "rc");      // stand-in for a shell rc / persistence file
+    const allowed = join(dir, "allowed.txt");
     writeFileSync(planted, "ORIGINAL");
-    // deny writes to this exact file; script swallows the EPERM like real malware
+    // deny writes to this exact file; allow all other writes; script swallows the EPERM like real malware
     const profile = `(version 1)\n(allow default)\n(deny file-write* (literal "${planted}"))\n`;
-    new SeatbeltSandbox().run(`echo PWNED >> "${planted}" 2>/dev/null || true`, { cwd: dir, profile });
-    assert.equal(readFileSync(planted, "utf8"), "ORIGINAL", "the planted file must be unchanged");
+    new SeatbeltSandbox().run(`echo OK > "${allowed}"; echo PWNED >> "${planted}" 2>/dev/null || true`, { cwd: dir, profile });
+    assert.equal(readFileSync(allowed, "utf8").trim(), "OK", "script must have executed (positive control)");
+    assert.equal(readFileSync(planted, "utf8"), "ORIGINAL", "the denied write must have been blocked");
+  });
+
+  test("a filesystem approval relaxes the write deny at the kernel level (criterion 3)", () => {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "sb-fsapprove-")));
+    const rc = join(home, ".zshrc");
+    writeFileSync(rc, "ORIGINAL");
+    // denied without approval:
+    const denyProfile = generateProfile([], { homeDir: home });
+    new SeatbeltSandbox().run(`echo INJECTED >> "${rc}" 2>/dev/null || true`, { cwd: home, profile: denyProfile });
+    assert.equal(readFileSync(rc, "utf8"), "ORIGINAL", "unapproved write to ~/.zshrc must be blocked");
+    // allowed WITH a filesystem approval covering it:
+    const allowProfile = generateProfile([{ kind: "filesystem", target: ".zshrc", evidence: [] }], { homeDir: home });
+    new SeatbeltSandbox().run(`echo INJECTED >> "${rc}"`, { cwd: home, profile: allowProfile });
+    assert.ok(readFileSync(rc, "utf8").includes("INJECTED"), "an approved filesystem write must succeed");
   });
 });
 

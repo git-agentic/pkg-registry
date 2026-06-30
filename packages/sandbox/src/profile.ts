@@ -23,6 +23,14 @@ function segments(p: string): string[] {
  * the other). Deliberately NOT a substring match — `ssh` does not cover `.ssh`, and
  * the dynamic `*` capability target covers nothing — so an over-broad/loose approval
  * can't silently cancel an unrelated credential deny.
+ *
+ * NOTE — descendant-covers-ancestor side-effect: an approval for a path INSIDE a
+ * `subpath` deny (e.g. `--approve filesystem:.ssh/config`) currently cancels the
+ * ENTIRE `~/.ssh` deny, not just the single file. This is operator-gated (an attacker
+ * cannot supply `--approve`), so it is not an immediate security issue. It is a
+ * candidate for future tightening: a descendant approval should not be allowed to lift
+ * an ancestor `subpath` deny — only an approval for the ancestor itself (or a wider
+ * path) should do so.
  */
 function pathCovers(approvedTarget: string, denyPath: string): boolean {
   const a = segments(approvedTarget);
