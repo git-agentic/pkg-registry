@@ -15,9 +15,9 @@ const LIFECYCLE = ["preinstall", "install", "postinstall"] as const;
 /** Run a package's present lifecycle scripts under the sandbox profile + scrubbed env. */
 export function runLifecycleScripts(opts: {
   packageDir: string;
-  profile: string;
   sandbox: Sandbox;
   approved?: Capability[];
+  homeDir: string;
 }): { results: ScriptResult[]; failed: boolean } {
   let scripts: Record<string, string> = {};
   try {
@@ -25,12 +25,13 @@ export function runLifecycleScripts(opts: {
   } catch {
     scripts = {};
   }
-  const env = scrubEnv(process.env, opts.approved ?? []);
+  const approved = opts.approved ?? [];
+  const env = scrubEnv(process.env, approved);
   const results: ScriptResult[] = [];
   for (const hook of LIFECYCLE) {
     const command = scripts[hook];
     if (!command) continue;
-    const r = opts.sandbox.run(command, { cwd: opts.packageDir, profile: opts.profile, env });
+    const r = opts.sandbox.run(command, { cwd: opts.packageDir, approved, homeDir: opts.homeDir, env });
     results.push({ hook, command, exitCode: r.exitCode });
   }
   return { results, failed: results.some((r) => r.exitCode !== 0) };
