@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { scrubEnv, ENV_ALLOWLIST } from "../src/env.js";
+import { scrubEnv, ENV_ALLOWLIST, CREDENTIAL_ENV_RE } from "../src/env.js";
 import type { Capability } from "@sentinel/core";
 
 const envCap = (target: string): Capability => ({ kind: "env", target, evidence: [] });
@@ -43,5 +43,43 @@ describe("scrubEnv (fail-closed allowlist)", () => {
   test("NODE allowlist is exact, not a prefix (guards NODE_AUTH_TOKEN)", () => {
     assert.ok(!ENV_ALLOWLIST.exact.has("NODE_AUTH_TOKEN"));
     assert.ok(!ENV_ALLOWLIST.prefixes.some((p) => "NODE_AUTH_TOKEN".startsWith(p)));
+  });
+});
+
+describe("scrubEnv npm narrowing + credential-screen", () => {
+  const scrub = (e: Record<string, string>) => scrubEnv(e, []);
+  test("keeps benign npm-injected vars a lifecycle script needs", () => {
+    const out = scrub({
+      npm_package_name: "p", npm_package_version: "1.0.0", npm_lifecycle_event: "postinstall",
+      npm_node_execpath: "/n/bin/node", npm_command: "install", npm_execpath: "/n/npm-cli.js",
+      npm_config_cache: "/c", npm_config_user_agent: "npm/11", npm_config_node_gyp: "/g",
+      INIT_CWD: "/proj", PATH: "/proj/node_modules/.bin:/usr/bin",
+    });
+    for (const k of ["npm_package_name","npm_lifecycle_event","npm_node_execpath","npm_command","npm_execpath","npm_config_cache","npm_config_user_agent","INIT_CWD","PATH"])
+      assert.ok(out[k] !== undefined, `${k} must be kept`);
+  });
+  test("drops credential-shaped npm_config_* keys (any npm version)", () => {
+    const out = scrub({
+      "npm_config__auth": "BASIC", "npm_config__authToken": "T", "npm_config__password": "P",
+      "npm_config_//registry.npmjs.org/:_authToken": "SCOPED", "npm_config_registry_secret": "S",
+      npm_config_cache: "/c",
+    });
+    assert.equal(out["npm_config__auth"], undefined);
+    assert.equal(out["npm_config__authToken"], undefined);
+    assert.equal(out["npm_config__password"], undefined);
+    assert.equal(out["npm_config_//registry.npmjs.org/:_authToken"], undefined);
+    assert.equal(out["npm_config_registry_secret"], undefined);
+    assert.equal(out["npm_config_cache"], "/c", "benign config still kept");
+  });
+  test("drops unknown npm_ vars outside the narrowed sub-groups (fail-closed narrowing)", () => {
+    assert.equal(scrub({ npm_mystery: "x" })["npm_mystery"], undefined);
+  });
+  test("an approved env: capability still passes its exact var through", () => {
+    const out = scrubEnv({ MY_TOKEN: "v" }, [{ kind: "env", target: "MY_TOKEN", evidence: [] }]);
+    assert.equal(out["MY_TOKEN"], "v");
+  });
+  test("CREDENTIAL_ENV_RE matches auth/token/password/secret shapes, not benign", () => {
+    for (const k of ["npm_config__authToken","FOO_SECRET","x_password","MY_AUTHTOKEN","registry_token"]) assert.ok(CREDENTIAL_ENV_RE.test(k), k);
+    for (const k of ["npm_config_cache","PATH","npm_package_name"]) assert.ok(!CREDENTIAL_ENV_RE.test(k), k);
   });
 });

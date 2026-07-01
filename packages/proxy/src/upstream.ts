@@ -150,6 +150,10 @@ export class LocalFixtureUpstream implements Upstream {
         version: v,
         dist: { tarball: `fixture:${pkg}@${v}`, integrity: m.dist.integrity },
         license: m.license ?? undefined,
+        // npm reads this flag from the packument to decide whether to run a package's install
+        // scripts (an optimization that skips extraction otherwise). Without it, npm would never
+        // run enforce-probe's postinstall on a by-name install.
+        hasInstallScript: m.hasInstallScripts,
       };
       if (cmpSemver(v, latest) > 0) latest = v;
     }

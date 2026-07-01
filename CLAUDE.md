@@ -24,6 +24,9 @@ Phase 5 adds **Linux enforcement** via bubblewrap (`bwrap`): `createSandbox()` s
 the backend by platform; same approved-capability model and `SENSITIVE_PATHS` deny list,
 same fail-closed contract. CI installs `bwrap` and relaxes the Ubuntu 24.04
 unprivileged-userns restriction so the Linux effect-tests run on `ubuntu-latest`.
+Phase 6 adds **`sentinel install --enforce`**: script-shell interposition via
+`npm_config_script_shell` wraps every lifecycle script in the tree under `createSandbox()`,
+with credential-screened env and approval resolution per dependency (ADR-0019).
 
 We are the Socket/Chainguard wedge: **do not** try to replace npm. Resolve and
 serve real packages transparently; only attach signal.
@@ -89,14 +92,15 @@ don't downgrade majors without a reason.
 
 ```bash
 npm run build            # tsc --build (project references: core → proxy/cli)
-npm test                 # engine + end-to-end proxy: 157 tests on this host (155 pass, 2 skipped on darwin).
+npm test                 # engine + end-to-end proxy: 176 tests on this host (174 pass, 2 skipped on darwin).
                          # Skips are platform-gated enforcement: "non-darwin throws" skips on darwin
                          # (it verifies darwin-only behaviour), and the "no silent skip" CI guard skips
-                         # off-CI. The BubblewrapSandbox enforcement suite (7 tests) skips as a
-                         # describe-level block on darwin ("requires Linux") and is not in the 157 count.
-                         # In Linux CI it is the reverse: 158 tests, 157 pass, 1 skip (Seatbelt enforcement
-                         # skips; bwrap enforcement + the no-silent-skip guard run). Each platform's
-                         # enforcement is verified on that platform (macOS dev host / ubuntu-latest CI).
+                         # off-CI. The BubblewrapSandbox enforcement suite and enforce-e2e tests skip as
+                         # describe-level blocks on darwin ("requires Linux") and are not in the 176 count.
+                         # In Linux CI (validated on Colima 24.04) it is 177 tests / 176 pass / 1 skip:
+                         # Seatbelt enforcement skips; bwrap enforcement + the no-silent-skip guard +
+                         # enforce-e2e run. Each platform's enforcement is verified on that platform
+                         # (macOS dev host / ubuntu-latest CI).
 npm run demo             # offline malware-detection walkthrough
 node packages/proxy/dist/index.js   # run the proxy (see README for env vars)
 ```

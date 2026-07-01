@@ -5,7 +5,10 @@
   "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/index.js",
-  "bin": { "sentinel": "./dist/index.js" },
+  "bin": {
+    "sentinel": "./dist/index.js",
+    "sentinel-script-shell": "./dist/script-shell.js"
+  },
   "dependencies": {
     "@sentinel/core": "0.1.0",
     "@sentinel/sandbox": "0.1.0",

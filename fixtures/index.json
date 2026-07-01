@@ -25,6 +25,13 @@
         "1.4.0": { "signatureStatus": "signed" },
         "1.4.1": { "signatureStatus": "unsigned" }
       }
+    },
+    "enforce-probe": {
+      "class": "benign",
+      "expect": { "verdict": "allow" },
+      "versions": {
+        "1.0.0": { "signatureStatus": "signed" }
+      }
     }
   }
 }

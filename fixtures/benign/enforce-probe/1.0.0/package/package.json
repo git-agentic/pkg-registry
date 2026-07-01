@@ -1,0 +1,8 @@
+{
+  "name": "enforce-probe",
+  "version": "1.0.0",
+  "description": "SYNTHETIC BENIGN FIXTURE — postinstall runs a local script that probes sandbox denial; writes only locally, never exfiltrates.",
+  "scripts": {
+    "postinstall": "node probe.js"
+  }
+}
