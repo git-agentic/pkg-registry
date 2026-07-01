@@ -608,11 +608,18 @@ import { DEFAULT_POLICY } from "@sentinel/core";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURES = join(HERE, "..", "..", "..", "fixtures");
-const SCRIPT_SHELL = join(HERE, "..", "..", "cli", "src", "script-shell.ts");
+// Use the BUILT wrapper (plain node — no tsx). The shim runs in a temp project cwd where a bare
+// `tsx` specifier would NOT resolve, so pointing at compiled dist/ is what makes the shim work.
+const CLI_DIST_SHELL = join(HERE, "..", "..", "cli", "dist", "script-shell.js");
 
 function ensureFixtures() {
   if (!existsSync(join(FIXTURES, "registry.json")))
     execFileSync("npx", ["tsx", join(HERE, "..", "..", "..", "scripts", "make-fixtures.ts")], { stdio: "ignore" });
+}
+function ensureBuilt() {
+  // The e2e test needs the compiled wrapper. `npm test` is preceded by `npm run build`, but build if missing.
+  if (!existsSync(CLI_DIST_SHELL))
+    execFileSync("npx", ["tsc", "--build", "--force", join(HERE, "..", "..", "cli")], { stdio: "ignore" });
 }
 
 // Sandbox availability: darwin always; linux only when bwrap can create namespaces.
@@ -630,6 +637,7 @@ describe("install --enforce (e2e) blocks an undeclared action; install otherwise
 
   before(async () => {
     ensureFixtures();
+    ensureBuilt();
     const app = createServer({
       upstream: new LocalFixtureUpstream(FIXTURES),
       store: new AuditStore(), approvals: new ApprovalStore(),
@@ -651,7 +659,7 @@ describe("install --enforce (e2e) blocks an undeclared action; install otherwise
     writeFileSync(join(proj, "package.json"), JSON.stringify({ name: "consumer", version: "1.0.0" }));
     // executable script-shell shim → runs our wrapper under tsx (no build needed)
     const shim = join(proj, "shim.sh");
-    writeFileSync(shim, `#!/bin/sh\nexec node --import tsx "${SCRIPT_SHELL}" "$@"\n`);
+    writeFileSync(shim, `#!/bin/sh\nexec node "${CLI_DIST_SHELL}" "$@"\n`);
     chmodSync(shim, 0o755);
     const env: NodeJS.ProcessEnv = {
       ...process.env, HOME: home, npm_config_cache: join(home, ".npmcache"), npm_config_audit: "false", npm_config_fund: "false",
