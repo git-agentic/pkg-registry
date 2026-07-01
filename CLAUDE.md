@@ -97,8 +97,9 @@ npm test                 # engine + end-to-end proxy: 176 tests on this host (17
                          # (it verifies darwin-only behaviour), and the "no silent skip" CI guard skips
                          # off-CI. The BubblewrapSandbox enforcement suite and enforce-e2e tests skip as
                          # describe-level blocks on darwin ("requires Linux") and are not in the 176 count.
-                         # In Linux CI the Seatbelt enforcement skips; bwrap enforcement + the no-silent-skip
-                         # guard + enforce-e2e run. Each platform's enforcement is verified on that platform
+                         # In Linux CI (validated on Colima 24.04) it is 177 tests / 176 pass / 1 skip:
+                         # Seatbelt enforcement skips; bwrap enforcement + the no-silent-skip guard +
+                         # enforce-e2e run. Each platform's enforcement is verified on that platform
                          # (macOS dev host / ubuntu-latest CI).
 npm run demo             # offline malware-detection walkthrough
 node packages/proxy/dist/index.js   # run the proxy (see README for env vars)

@@ -1,14 +1,15 @@
 import type { Capability } from "@sentinel/core";
 
 /** Env-var names that look credential-bearing — dropped regardless of allowlist match. */
-export const CREDENTIAL_ENV_RE = /_auth|authtoken|_password|passwd|token|secret|credential/i;
+export const CREDENTIAL_ENV_RE = /_auth|authtoken|_password|passwd|token|secret|credential|api[_-]?key|access[_-]?key/i;
 
 /**
  * Fail-closed env allowlist for sandboxed lifecycle scripts. Pass ONLY these; any other
  * var — including a novel-named credential — is dropped. Validated against a real `npm
- * install` lifecycle env (ADR-0017). The load-bearing behavior is the DROP of operator-shell
- * secrets (SSH_AUTH_SOCK, AWS_*, *_TOKEN); the npm_* entries are forward-looking for the
- * deferred `install --enforce` path (run-scripts itself isn't invoked by npm).
+ * install` lifecycle env (ADR-0017/0019). The load-bearing behavior is the DROP of operator-shell
+ * secrets (SSH_AUTH_SOCK, AWS_*, *_TOKEN); the narrowed npm_* sub-groups carry the vars a lifecycle
+ * script needs on the `install --enforce` path (npm is the invoker there), and any credential-shaped
+ * `npm_config_*` is screened out by CREDENTIAL_ENV_RE (ADR-0019).
  */
 export const ENV_ALLOWLIST = {
   // Narrowed npm sub-groups a lifecycle script legitimately needs (was a blanket "npm_" — ADR-0017).
