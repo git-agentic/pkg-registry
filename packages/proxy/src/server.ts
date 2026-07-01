@@ -5,9 +5,13 @@ import {
   score,
   policyHashOf,
   integrityOf,
+  aggregateTree,
+  treeGateOf,
   type AuditReport,
   type EnterprisePolicy,
   type PackageMeta,
+  type TreePackageRow,
+  type TreeAuditResult,
 } from "@sentinel/core";
 import { AuditStore } from "./store.js";
 import {
@@ -42,6 +46,20 @@ export interface ServerOptions {
 }
 
 const TARBALL_RE = /^(.+)\/-\/([^/]+\.tgz)$/;
+
+/** Run `fn` over `items` with at most `limit` in flight; preserves input order. */
+async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  async function worker(): Promise<void> {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i]!);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
 
 export function createServer(opts: ServerOptions) {
   const { upstream, store, approvals } = opts;
@@ -157,6 +175,43 @@ export function createServer(opts: ServerOptions) {
 
   app.get("/-/audits", (_req, res) => {
     res.json({ stats: store.stats(), audits: store.recent(50).map((s) => s.report) });
+  });
+
+  // Whole-tree audit: fan out over the integrity-cached auditVersion path and
+  // roll up a policy-gated aggregate (ADR-0020). Batch endpoint, not the gate path.
+  app.post("/-/audit-tree", async (req, res) => {
+    const body = req.body as { packages?: unknown };
+    if (!body || !Array.isArray(body.packages)) {
+      return res.status(400).json({ error: "expected { packages: [{ name, version }] }" });
+    }
+    const coords = body.packages as { name?: unknown; version?: unknown }[];
+    for (const cc of coords) {
+      if (!cc || typeof cc.name !== "string" || typeof cc.version !== "string") {
+        return res.status(400).json({ error: "each package needs a string name and version" });
+      }
+    }
+    const rows: TreePackageRow[] = await mapPool(
+      coords as { name: string; version: string }[],
+      8,
+      async (co) => {
+        try {
+          const { report } = await auditVersion(co.name, co.version);
+          return {
+            name: co.name, version: co.version, status: report.verdict,
+            score: report.score, topFinding: report.findings[0]?.message ?? null, error: null,
+          };
+        } catch (err) {
+          return {
+            name: co.name, version: co.version, status: "error" as const,
+            score: null, topFinding: null, error: (err as Error)?.message ?? "audit failed",
+          };
+        }
+      },
+    );
+    rows.sort((a, b) => `${a.name}@${a.version}`.localeCompare(`${b.name}@${b.version}`));
+    const aggregate = aggregateTree(rows, treeGateOf(enterprisePolicy));
+    const result: TreeAuditResult = { aggregate, packages: rows };
+    res.json(result);
   });
 
   app.get(/^\/-\/manifest\/(.+)\/([^/]+)$/, async (req, res) => {
