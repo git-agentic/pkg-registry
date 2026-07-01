@@ -151,11 +151,15 @@ score. Weights live in one policy object (`packages/core/src/score.ts`).
 
 ## Status
 
-Phase 1 (this repo) is a working MVP. Phase 2 — private-namespace override
-(structurally blocks dependency-confusion) and an install-time permission manifest
-(filesystem / network / memory) prompting a human or orchestrating agent — is
-designed for in [ARCHITECTURE.md](./ARCHITECTURE.md) and accommodated by the data
-model and proxy, but not yet implemented.
+Phases 1–7 are built. Phase 1 is the transparent auditing proxy. Phase 2 adds the
+install-time permission manifest + approval gate, signed per-enterprise policy, and
+the private-namespace registry. Phases 3–6 add cross-platform sandbox enforcement
+(macOS Seatbelt, Linux bubblewrap) up through `sentinel install --enforce`, which
+sandboxes every lifecycle script in the tree. Phase 7 adds `sentinel audit-tree`, a
+whole-tree lockfile gate: it audits every package in a `package-lock.json` through
+the proxy and exits non-zero if the aggregate verdict trips the policy's `treeGate`.
+See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full design and [docs/adr/](./docs/adr/)
+for the decision log.
 
 ## License
 
