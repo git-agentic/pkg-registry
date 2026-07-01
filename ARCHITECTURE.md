@@ -214,6 +214,19 @@ registry but runs scripts unsandboxed. `scrubEnv` now narrows the `npm_` allowli
 sub-groups and drops any credential-shaped var (ADR-0017's pre-condition, met). Fail-closed:
 sandbox unavailable / unapproved dependency ⇒ the wrapper exits non-zero and npm aborts.
 
+### 3.8 Whole-tree audit (Phase 7, ADR-0020)
+
+`sentinel audit-tree [lockfile]` audits an entire resolved dependency graph in one pass.
+The CLI parses the npm `package-lock.json` (v2/v3) `packages` map into deduped, sorted
+`{name, version, integrity?}` coordinates (skipping the root entry and `link:`/`file:`
+deps) and POSTs them to `POST /-/audit-tree`. The proxy fans out with bounded concurrency
+over the same integrity-cached `auditVersion()` path used by the tarball route, then rolls
+the per-package verdicts into a worst-case-wins aggregate and a gate decision — both
+computed server-side under the loaded policy. The gate trips at the policy's `treeGate`
+level (default `block`); a gated tree makes the CLI exit non-zero (the CI contract).
+Unresolvable packages become surfaced `error` rows and never trip the gate (invariant #6).
+This is a `/-/` batch endpoint, never on the inline tarball request path (invariant #3).
+
 ---
 
 ## 4. The audit engine (`@sentinel/core`)
