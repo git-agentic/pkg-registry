@@ -4,6 +4,7 @@ import { lstatSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, relative } from "node:path";
 import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import {
   auditTarball, type AuditReport,
@@ -61,11 +62,24 @@ program
 
 program
   .command("install")
-  .description("Run `npm install` with resolution routed through the Sentinel proxy.")
+  .description("Run `npm install` with resolution routed through the Sentinel proxy (add --enforce to sandbox every lifecycle script).")
   .option("-p, --proxy <url>", "Sentinel proxy base URL", DEFAULT_PROXY)
+  .option("--enforce", "run every lifecycle script in the tree under the sandbox (fail-closed)", false)
+  .option("--approve <cap...>", "capabilities to approve for the ROOT project's own scripts (kind:target)", [])
   .allowUnknownOption(true)
   .argument("[args...]", "arguments passed straight to npm install")
-  .action((args: string[], opts: { proxy: string }) => runNpm("install", args, opts.proxy));
+  .action((args: string[], opts: { proxy: string; enforce: boolean; approve: string[] }) => {
+    if (!opts.enforce) return runNpm("install", args, opts.proxy);
+    let sandbox;
+    try { sandbox = createSandbox(); } catch (e) {
+      console.error(`\x1b[31msentinel: --enforce unavailable: ${(e as Error).message}\x1b[0m`);
+      process.exit(2);
+    }
+    void sandbox;   // constructed only to fail fast here; the wrapper builds its own per script
+    const wrapperPath = fileURLToPath(new URL("./script-shell.js", import.meta.url));
+    const env = enforceNpmEnv(process.env, { proxy: opts.proxy, wrapperPath, approve: opts.approve });
+    runNpmWithEnv("install", args, opts.proxy, env);
+  });
 
 program
   .command("npx")
@@ -254,6 +268,16 @@ if (process.argv[1]?.endsWith("index.ts") || process.argv[1]?.endsWith("index.js
 
 // ---------------------------------------------------------------------------
 
+export function enforceNpmEnv(base: NodeJS.ProcessEnv, opts: { proxy: string; wrapperPath: string; approve: string[] }): NodeJS.ProcessEnv {
+  return {
+    ...base,
+    npm_config_script_shell: opts.wrapperPath,
+    SENTINEL_ENFORCE: "1",
+    SENTINEL_PROXY: opts.proxy,
+    SENTINEL_APPROVE: opts.approve.join(" "),
+  };
+}
+
 export function planApprovals(manifests: Manifest[]): { name: string; version: string; integrity: string }[] {
   return manifests
     .filter((m) => m.approvalState === "required")
@@ -363,6 +387,14 @@ function emit(report: AuditReport, json: boolean): void {
 
 function runNpm(sub: string, args: string[], proxy: string): void {
   runBin("npm", [sub, "--registry", proxy, ...args], proxy);
+}
+
+function runNpmWithEnv(sub: string, args: string[], proxy: string, env: NodeJS.ProcessEnv): void {
+  const finalArgs = [sub, "--registry", proxy, ...args];
+  console.error(`\x1b[90m$ npm ${finalArgs.join(" ")}  (enforced)\x1b[0m`);
+  const child = spawn("npm", finalArgs, { stdio: "inherit", shell: false, env });
+  child.on("exit", (code) => process.exit(code ?? 0));
+  child.on("error", (err) => fail(err, proxy));
 }
 
 function runBin(bin: string, args: string[], proxy: string): void {
