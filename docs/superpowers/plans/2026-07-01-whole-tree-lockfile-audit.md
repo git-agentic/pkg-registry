@@ -755,11 +755,14 @@ Create `packages/proxy/test/audit-tree-e2e.test.ts`. It starts the proxy over fi
 
 ```ts
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+
+const execFileAsync = promisify(execFile);
 import { after, before, describe, test } from "node:test";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
@@ -788,16 +791,22 @@ function lockfile(pkgs: { name: string; version: string }[]): string {
   return JSON.stringify({ name: "proj", version: "1.0.0", lockfileVersion: 3, packages });
 }
 
-/** Run the CLI via tsx; return { code, stdout } even on non-zero exit. */
-function runCli(args: string[]): { code: number; stdout: string } {
+/**
+ * Run the CLI via tsx; return { code, stdout } even on non-zero exit.
+ * MUST be async: the proxy runs in THIS test process, so a synchronous child
+ * (execFileSync) would block the event loop and deadlock the CLI's HTTP request
+ * to the in-process proxy. `await` keeps the loop turning so the proxy can serve.
+ */
+async function runCli(args: string[]): Promise<{ code: number; stdout: string }> {
   try {
-    const stdout = execFileSync(process.execPath, ["--import", "tsx", CLI_ENTRY, ...args], {
+    const { stdout } = await execFileAsync(process.execPath, ["--import", "tsx", CLI_ENTRY, ...args], {
       cwd: REPO_ROOT, encoding: "utf8", env: { ...process.env, NO_COLOR: "1" },
     });
     return { code: 0, stdout };
   } catch (err) {
-    const e = err as { status?: number; stdout?: string };
-    return { code: e.status ?? 1, stdout: e.stdout ?? "" };
+    // A non-zero exit rejects; the error carries the exit code and captured stdout.
+    const e = err as { code?: number; stdout?: string };
+    return { code: e.code ?? 1, stdout: e.stdout ?? "" };
   }
 }
 
@@ -822,27 +831,27 @@ describe("sentinel audit-tree end-to-end", () => {
   });
   after(() => server?.close());
 
-  test("a benign tree exits 0 and prints the allow verdict", () => {
+  test("a benign tree exits 0 and prints the allow verdict", async () => {
     const lock = join(dir, "benign-lock.json");
     writeFileSync(lock, lockfile([{ name: "leftpad-lite", version: "1.0.0" }, { name: "net-fetch-lite", version: "1.0.0" }]));
-    const { code, stdout } = runCli(["audit-tree", lock, "--proxy", base]);
+    const { code, stdout } = await runCli(["audit-tree", lock, "--proxy", base]);
     assert.equal(code, 0);
     assert.match(stdout, /ALLOW/);
   });
 
-  test("a tree with the malicious fixture exits non-zero and prints GATED", () => {
+  test("a tree with the malicious fixture exits non-zero and prints GATED", async () => {
     const lock = join(dir, "mal-lock.json");
     writeFileSync(lock, lockfile([{ name: "leftpad-lite", version: "1.0.0" }, { name: "color-stream", version: "1.4.1" }]));
-    const { code, stdout } = runCli(["audit-tree", lock, "--proxy", base]);
+    const { code, stdout } = await runCli(["audit-tree", lock, "--proxy", base]);
     assert.equal(code, 2);
     assert.match(stdout, /GATED/);
     assert.match(stdout, /color-stream@1\.4\.1/);
   });
 
-  test("--json emits the raw result", () => {
+  test("--json emits the raw result", async () => {
     const lock = join(dir, "json-lock.json");
     writeFileSync(lock, lockfile([{ name: "leftpad-lite", version: "1.0.0" }]));
-    const { stdout } = runCli(["audit-tree", lock, "--proxy", base, "--json"]);
+    const { stdout } = await runCli(["audit-tree", lock, "--proxy", base, "--json"]);
     const parsed = JSON.parse(stdout) as { aggregate: { verdict: string } };
     assert.equal(parsed.aggregate.verdict, "allow");
   });
