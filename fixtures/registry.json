@@ -121,9 +121,9 @@
           "signatureStatus": "signed",
           "dist": {
             "tarballFile": "enforce-probe-1.0.0.tgz",
-            "integrity": "sha512-odhdULib91i5AudZa3O4QPw8gon3LocqVjRTbJ6UKSiWH6S4Bnypmnf2+Cxg8bDvyI33AdsxEJHsRSGwE7HzKA==",
-            "unpackedSize": 665,
-            "fileCount": 2
+            "integrity": "sha512-j2ZrM5SnWH4SCNEitxLofKVuSlthX2Y8I4yidx038LcP1U5ulclwq2EbcGleTwtqY/Bioe/V3DUIAp4i4sHmvQ==",
+            "unpackedSize": 1565,
+            "fileCount": 3
           }
         }
       }
