@@ -45,6 +45,12 @@ not yet built · `Superseded` / `Deprecated` — replaced; see the linked succes
 | [0017](./0017-sandbox-env-scrub-and-write-confinement.md) | Sandbox hardening (Phase 4) | Fail-closed env scrubbing + write-confinement; `SENSITIVE_PATHS.modes` split |
 | [0018](./0018-cross-platform-sandbox-backends.md) | Cross-platform sandbox backends (Phase 5) | `createSandbox()` selects Seatbelt (darwin) or bubblewrap (linux); same model, same deny paths |
 
+## Phase 6 — enforced install (Accepted, implemented)
+
+| ADR | Title | Decision in one line |
+|-----|-------|----------------------|
+| [0019](./0019-enforced-install-script-shell.md) | Enforced install via script-shell interposition | `sentinel install --enforce` interposes via `npm_config_script_shell`; every lifecycle script runs under `createSandbox()` with credential-screened env |
+
 ## Conventions
 
 - One decision per record; number sequentially; never renumber.

@@ -201,6 +201,19 @@ On Ubuntu 24.04, unprivileged user namespaces are AppArmor-restricted by default
 `kernel.apparmor_restrict_unprivileged_userns`, and the backend fails closed if the kernel
 still refuses.
 
+### 3.7 Enforced install (Phase 6, ADR-0019)
+
+`sentinel install --enforce` runs a normal `npm install --registry <proxy>` with
+`npm_config_script_shell` set to the shipped `sentinel-script-shell` wrapper. npm invokes it as
+`<wrapper> -c "<cmd>"` for every lifecycle script in the tree — in dependency order, with the
+full npm env, cwd, and `.bin` PATH — and the wrapper runs each command under `createSandbox()`
+with the package's approved capabilities and a credential-screened env. Approvals come from the
+proxy manifest for dependencies (`required`/`denied` ⇒ fail closed) and from operator `--approve`
+for the root project. This is the difference from plain `sentinel install`, which redirects the
+registry but runs scripts unsandboxed. `scrubEnv` now narrows the `npm_` allowlist to safe
+sub-groups and drops any credential-shaped var (ADR-0017's pre-condition, met). Fail-closed:
+sandbox unavailable / unapproved dependency ⇒ the wrapper exits non-zero and npm aborts.
+
 ---
 
 ## 4. The audit engine (`@sentinel/core`)
@@ -332,7 +345,7 @@ caching.
 
 ## 6. CLI ↔ npm integration
 
-Two integration modes, both non-invasive:
+Three integration modes, all non-invasive:
 
 1. **`sentinel audit <pkg>[@version]`** — calls the proxy's `/-/audit` API and
    prints the pre-install panel: unpacked size, author, signature status, score,
@@ -343,6 +356,11 @@ Two integration modes, both non-invasive:
    resolution flows through Sentinel. The proxy's `x-sentinel-verdict` headers and
    the audit store give post-hoc visibility; a `block` policy makes npm fail closed
    on a `403`.
+3. **`sentinel install --enforce <args…>`** — extends mode 2 by also enforcing
+   approved capabilities at runtime. Sets `npm_config_script_shell` to the shipped
+   `sentinel-script-shell` wrapper so every lifecycle script in the tree runs under
+   `createSandbox()` (§3.7). Scripts with unapproved or undeclared capabilities are
+   denied at the kernel level even when the static audit passed.
 
 The cleanest hook is registry redirection (`.npmrc` `registry=` or `--registry`)
 rather than an npm wrapper, because it works identically across npm, yarn, pnpm,
