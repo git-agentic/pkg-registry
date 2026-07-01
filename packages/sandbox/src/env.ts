@@ -1,5 +1,8 @@
 import type { Capability } from "@sentinel/core";
 
+/** Env-var names that look credential-bearing — dropped regardless of allowlist match. */
+export const CREDENTIAL_ENV_RE = /_auth|authtoken|_password|passwd|token|secret|credential/i;
+
 /**
  * Fail-closed env allowlist for sandboxed lifecycle scripts. Pass ONLY these; any other
  * var — including a novel-named credential — is dropped. Validated against a real `npm
@@ -8,16 +11,19 @@ import type { Capability } from "@sentinel/core";
  * deferred `install --enforce` path (run-scripts itself isn't invoked by npm).
  */
 export const ENV_ALLOWLIST = {
-  prefixes: ["npm_", "LC_"],
+  // Narrowed npm sub-groups a lifecycle script legitimately needs (was a blanket "npm_" — ADR-0017).
+  prefixes: ["npm_package_", "npm_lifecycle_", "npm_node_", "npm_config_", "LC_"],
   exact: new Set([
     "PATH", "HOME", "SHELL", "PWD", "USER", "LOGNAME", "TMPDIR", "TMP", "TEMP",
     "LANG", "TERM", "INIT_CWD",
     "NODE", "NODE_OPTIONS", "NODE_PATH", "NODE_ENV",     // exact, NOT a NODE* prefix
     "CPPFLAGS", "CFLAGS", "CXXFLAGS", "LDFLAGS", "PKG_CONFIG_PATH", "PYTHON", "MAKEFLAGS",
+    "npm_command", "npm_execpath",
   ]),
 };
 
 function allowed(name: string): boolean {
+  if (CREDENTIAL_ENV_RE.test(name)) return false;   // credential-screen wins over any allowlist match
   return ENV_ALLOWLIST.exact.has(name) || ENV_ALLOWLIST.prefixes.some((p) => name.startsWith(p));
 }
 
