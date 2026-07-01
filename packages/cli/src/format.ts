@@ -1,4 +1,4 @@
-import type { AuditReport, Capability, CapabilityKind, Severity, Verdict } from "@sentinel/core";
+import type { AuditReport, Capability, CapabilityKind, Severity, Verdict, TreeAuditResult } from "@sentinel/core";
 
 const C = {
   reset: "\x1b[0m", bold: "\x1b[1m", dim: "\x1b[2m",
@@ -110,4 +110,37 @@ export function formatManifest(m: Manifest): string {
   }
   L.push("");
   return L.join("\n");
+}
+
+const treeStatusColor: Record<string, string> = {
+  allow: C.green, warn: C.yellow, block: C.red, error: C.gray,
+};
+
+/** Whole-tree audit summary: one line per package, then counts + aggregate verdict. */
+export function formatTree(r: TreeAuditResult): string {
+  const L: string[] = [];
+  L.push("");
+  L.push(c(C.bold, `  dependency tree audit (${r.packages.length} packages)`));
+  L.push(c(C.gray, `  ${"─".repeat(56)}`));
+  for (const p of r.packages) {
+    const label = p.status.toUpperCase().padEnd(6);
+    const score = p.score === null ? "" : c(C.gray, ` ${p.score}/100`);
+    L.push(`  ${c(treeStatusColor[p.status] ?? C.gray, label)} ${p.name}@${p.version}${score}`);
+    const note = p.error ?? p.topFinding;
+    if (note) L.push(`         ${c(C.gray, note)}`);
+  }
+  const a = r.aggregate;
+  L.push("");
+  L.push(`  ${a.counts.allow} allow · ${a.counts.warn} warn · ${a.counts.block} block · ${a.counts.error} error`);
+  L.push(
+    `  verdict    ${c(C.bold + (verdictColor[a.verdict] ?? C.gray), a.verdict.toUpperCase())}` +
+      (a.gated ? c(C.red, "  ✗ GATED") : c(C.green, "  ✓ ok")),
+  );
+  L.push("");
+  return L.join("\n");
+}
+
+/** CI contract: non-zero when the tree is gated. */
+export function treeExitCode(r: TreeAuditResult): number {
+  return r.aggregate.gated ? 2 : 0;
 }
