@@ -36,7 +36,10 @@ export function parseLockfile(raw: string, opts: { omitDev?: boolean } = {}): Co
     if (entry.integrity) coord.integrity = entry.integrity;
     byKey.set(`${name}@${entry.version}`, coord);
   }
-  return [...byKey.values()].sort((a, b) => `${a.name}@${a.version}`.localeCompare(`${b.name}@${b.version}`));
+  return [...byKey.values()].sort((a, b) => {
+    const ka = `${a.name}@${a.version}`, kb = `${b.name}@${b.version}`;
+    return ka < kb ? -1 : ka > kb ? 1 : 0;
+  });
 }
 
 /** `node_modules/foo` -> `foo`; `node_modules/@scope/bar` -> `@scope/bar`. */

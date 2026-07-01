@@ -36,6 +36,12 @@ handling — and computes the aggregate + gate decision server-side, where the p
 - Requires a running proxy (consistent with `sentinel audit`).
 - Deferred: CycloneDX SBOM output; lockfile-integrity-vs-served-integrity tamper detection;
   yarn/pnpm lockfiles; treating unresolved deps as a hard gate failure.
+- **The CLI exit code reflects only the policy verdict.** `error` rows (unresolvable
+  packages, or audits that throw) are surfaced in `counts.error` and per-row, but never
+  trip the gate. A tree that is entirely `error` rows — mass resolution failure, or the
+  proxy unreachable per-package — yields `verdict:"allow"`, `gated:false`, and exits `0`:
+  a deliberate fail-open when the auditor can't audit. A `--fail-on-error` flag to make
+  error rows gate is deferred.
 
 ## Rejected
 

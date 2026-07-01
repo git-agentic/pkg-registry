@@ -92,6 +92,20 @@ describe("sentinel audit-tree end-to-end", () => {
     assert.match(stdout, /color-stream@1\.4\.1/);
   });
 
+  test("a tree that is entirely unresolvable exits 0 (fail-open) and surfaces error rows, not GATED", async () => {
+    const lock = join(dir, "all-error-lock.json");
+    writeFileSync(
+      lock,
+      lockfile([{ name: "does-not-exist-lite", version: "1.0.0" }, { name: "also-missing-lite", version: "2.0.0" }]),
+    );
+    const { code, stdout } = await runCli(["audit-tree", lock, "--proxy", base]);
+    assert.equal(code, 0);
+    assert.doesNotMatch(stdout, /GATED/);
+    assert.match(stdout, /ERROR/);
+    assert.match(stdout, /does-not-exist-lite@1\.0\.0/);
+    assert.match(stdout, /also-missing-lite@2\.0\.0/);
+  });
+
   test("--json emits the raw result", async () => {
     const lock = join(dir, "json-lock.json");
     writeFileSync(lock, lockfile([{ name: "leftpad-lite", version: "1.0.0" }]));

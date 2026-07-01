@@ -208,7 +208,10 @@ export function createServer(opts: ServerOptions) {
         }
       },
     );
-    rows.sort((a, b) => `${a.name}@${a.version}`.localeCompare(`${b.name}@${b.version}`));
+    rows.sort((a, b) => {
+      const ka = `${a.name}@${a.version}`, kb = `${b.name}@${b.version}`;
+      return ka < kb ? -1 : ka > kb ? 1 : 0;
+    });
     const aggregate = aggregateTree(rows, treeGateOf(enterprisePolicy));
     const result: TreeAuditResult = { aggregate, packages: rows };
     res.json(result);
