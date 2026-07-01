@@ -12,6 +12,7 @@ export {
   verifyPolicyBytes,
   parsePolicy,
   loadPolicy,
+  treeGateOf,
   type EnterprisePolicy,
 } from "./policy.js";
 export {

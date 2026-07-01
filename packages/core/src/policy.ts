@@ -1,6 +1,6 @@
 import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sign as edSign, verify as edVerify } from "node:crypto";
 import { readFileSync } from "node:fs";
-import type { Severity } from "./types.js";
+import type { Severity, Verdict } from "./types.js";
 
 export interface EnterprisePolicy {
   schema: 1;
@@ -17,6 +17,8 @@ export interface EnterprisePolicy {
   deny: { package: string; reason?: string }[];
   /** Names/scopes served authoritatively by the private registry (ADR-0010). */
   privateNamespaces: string[];
+  /** Verdict level at which a whole-tree audit trips the gate (ADR-0020). Default "block". */
+  treeGate?: Verdict;
 }
 
 /** Compiled-in default. Equals the historical POLICY so out-of-the-box behavior is unchanged. */
@@ -33,6 +35,7 @@ export const DEFAULT_POLICY: EnterprisePolicy = {
   allow: [],
   deny: [],
   privateNamespaces: [],
+  treeGate: "block",
 };
 
 /** Stable hash of a policy OBJECT (used for the in-code default; external policies hash raw bytes). */
@@ -86,6 +89,7 @@ export function verifyPolicyBytes(raw: Buffer, sigB64: string, publicKeyPem: str
 }
 
 const SEVERITIES: readonly Severity[] = ["info", "low", "medium", "high", "critical"];
+const VERDICTS: readonly string[] = ["allow", "warn", "block"];
 
 export function parsePolicy(raw: Buffer): EnterprisePolicy {
   const p = JSON.parse(raw.toString("utf8")) as Partial<EnterprisePolicy>;
@@ -174,6 +178,11 @@ export function parsePolicy(raw: Buffer): EnterprisePolicy {
     }
   }
 
+  // Validate treeGate if present.
+  if (p.treeGate !== undefined && !VERDICTS.includes(p.treeGate as string)) {
+    throw new Error(`invalid policy: treeGate must be one of ${VERDICTS.join(", ")} (got "${p.treeGate}")`);
+  }
+
   return {
     schema: 1,
     version: p.version,
@@ -182,6 +191,7 @@ export function parsePolicy(raw: Buffer): EnterprisePolicy {
     allow: p.allow ?? [],
     deny: p.deny ?? [],
     privateNamespaces: p.privateNamespaces ?? [],
+    ...(p.treeGate !== undefined ? { treeGate: p.treeGate as Verdict } : {}),
   };
 }
 
@@ -195,4 +205,9 @@ export function loadPolicy(opts: { file: string; sig: string; publicKeyPem: stri
     throw new Error(`policy signature verification failed for ${opts.file}`);
   }
   return { policy: parsePolicy(raw), hash: policyHashOfBytes(raw) };
+}
+
+/** The verdict level at which `audit-tree` gates. Policy data, default "block". */
+export function treeGateOf(policy: EnterprisePolicy): Verdict {
+  return policy.treeGate ?? "block";
 }

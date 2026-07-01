@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { describe, test } from "node:test";
 import {
   DEFAULT_POLICY, generateKeypair, signPolicy, verifyPolicyBytes,
-  policyHashOfBytes, parsePolicy, loadPolicy,
+  policyHashOfBytes, parsePolicy, loadPolicy, treeGateOf,
 } from "../src/index.js";
 
 const rawDefault = Buffer.from(JSON.stringify({ ...DEFAULT_POLICY, version: "acme-1" }));
@@ -138,5 +138,20 @@ describe("privateNamespaces validation", () => {
   test("throws when present but not an array of strings", () => {
     assert.throws(() => parsePolicy(valid({ privateNamespaces: "@acme/*" })));
     assert.throws(() => parsePolicy(valid({ privateNamespaces: [1, 2] })));
+  });
+});
+
+describe("treeGate policy field", () => {
+  test("treeGateOf defaults to block and honors an explicit value", () => {
+    assert.equal(treeGateOf(DEFAULT_POLICY), "block");
+    assert.equal(treeGateOf({ ...DEFAULT_POLICY, treeGate: "warn" }), "warn");
+    assert.equal(treeGateOf({ ...DEFAULT_POLICY, treeGate: undefined }), "block");
+  });
+
+  test("parsePolicy accepts a valid treeGate and rejects a bad one", () => {
+    const good = Buffer.from(JSON.stringify({ ...DEFAULT_POLICY, treeGate: "warn" }));
+    assert.equal(parsePolicy(good).treeGate, "warn");
+    const bad = Buffer.from(JSON.stringify({ ...DEFAULT_POLICY, treeGate: "nope" }));
+    assert.throws(() => parsePolicy(bad), /treeGate/);
   });
 });
