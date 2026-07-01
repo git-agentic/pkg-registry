@@ -11,9 +11,11 @@ import {
   loadPolicy, signPolicy, generateKeypair, policyHashOfBytes,
   type EnterprisePolicy,
   extractCapabilities, capabilityAtom, type Capability, type PackageFile,
+  type TreeAuditResult,
 } from "@sentinel/core";
 import { createSandbox, runLifecycleScripts } from "@sentinel/sandbox";
-import { formatReport, formatManifest, verdictExitCode, type Manifest } from "./format.js";
+import { formatReport, formatManifest, verdictExitCode, formatTree, treeExitCode, type Manifest } from "./format.js";
+import { parseLockfile, type Coordinate } from "./lockfile.js";
 
 const DEFAULT_PROXY = process.env.SENTINEL_PROXY ?? "http://localhost:4873";
 
@@ -58,6 +60,25 @@ program
     });
     emit(report, opts.json);
     process.exitCode = verdictExitCode(report.verdict);
+  });
+
+program
+  .command("audit-tree")
+  .description("Audit every package in a resolved npm lockfile; exits non-zero when the tree is gated by policy.")
+  .argument("[lockfile]", "path to package-lock.json", "package-lock.json")
+  .option("-p, --proxy <url>", "Sentinel proxy base URL", DEFAULT_PROXY)
+  .option("--omit <type>", "omit a dependency group (only 'dev' is supported)")
+  .option("--json", "emit the raw JSON result", false)
+  .action(async (lockfile: string, opts: { proxy: string; omit?: string; json: boolean }) => {
+    try {
+      const coords = parseLockfile(readFileSync(lockfile, "utf8"), { omitDev: opts.omit === "dev" });
+      const result = await fetchTree(opts.proxy, coords);
+      if (opts.json) console.log(JSON.stringify(result, null, 2));
+      else console.log(formatTree(result));
+      process.exitCode = treeExitCode(result);
+    } catch (err) {
+      fail(err, opts.proxy);
+    }
   });
 
 program
@@ -378,6 +399,19 @@ async function fetchAudit(proxy: string, pkg: string, version: string): Promise<
     throw new Error(body.error ?? `audit failed: ${res.status}`);
   }
   return (await res.json()) as AuditReport;
+}
+
+async function fetchTree(proxy: string, packages: Coordinate[]): Promise<TreeAuditResult> {
+  const res = await fetch(`${proxy}/-/audit-tree`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ packages }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `tree audit failed: ${res.status}`);
+  }
+  return (await res.json()) as TreeAuditResult;
 }
 
 function emit(report: AuditReport, json: boolean): void {
