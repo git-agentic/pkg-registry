@@ -40,3 +40,10 @@ export {
   type LlmEnrichInput,
   type LlmEnrichOutput,
 } from "./llm/adapter.js";
+export {
+  aggregateTree,
+  type TreeStatus,
+  type TreePackageRow,
+  type TreeAggregate,
+  type TreeAuditResult,
+} from "./tree.js";
