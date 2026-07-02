@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { before, describe, test } from "node:test";
-import { auditTarball, runAudit, NPM_SIGNING_KEYS, type AuditReport } from "../src/index.js";
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
+import { auditTarball, runAudit, integrityOf, NPM_SIGNING_KEYS, type AuditReport, type NpmSigningKey, type RegistrySignature } from "../src/index.js";
 import { ensureFixtures, tarball } from "./helpers.js";
 
 const baseMeta = {
@@ -8,15 +9,32 @@ const baseMeta = {
   maintainers: [] as string[],
   license: null,
   hasInstallScripts: false,
-  signature: "verified" as const,
-  provenance: "present" as const,
 };
 
+// A synthetic registry-signing key used to make these fixtures resolve to
+// signature: "verified" / provenance: "present" through the real runAudit
+// verification path (Task 4: the new provenance rule reads these fields).
+const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+const spkiPem = publicKey.export({ type: "spki", format: "pem" }).toString();
+const spkiDer = publicKey.export({ type: "spki", format: "der" }) as Buffer;
+const TEST_KEYID = "SHA256:" + createHash("sha256").update(spkiDer).digest("base64");
+const TEST_KEYS: NpmSigningKey[] = [{ keyid: TEST_KEYID, spkiPem, expires: null }];
+
+function signFor(name: string, version: string, integrity: string): RegistrySignature {
+  const sig = sign("sha256", Buffer.from(`${name}@${version}:${integrity}`), privateKey);
+  return { keyid: TEST_KEYID, sig: sig.toString("base64") };
+}
+
 async function audit(name: string, version: string, baselineVersion?: string): Promise<AuditReport> {
+  const tgz = tarball(name, version);
+  const integrity = integrityOf(tgz);
   return auditTarball({
-    meta: { name, version, ...baseMeta },
-    tarball: tarball(name, version),
+    meta: { name, version, ...baseMeta, integrity },
+    tarball: tgz,
     baselineTarball: baselineVersion ? tarball(name, baselineVersion) : undefined,
+    signatures: [signFor(name, version, integrity)],
+    hasProvenance: true,
+    signingKeys: TEST_KEYS,
   });
 }
 

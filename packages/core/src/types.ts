@@ -18,7 +18,8 @@ export type Category =
   | "network"
   | "secret-exfil"
   | "install-script"
-  | "metadata";
+  | "metadata"
+  | "provenance";
 
 export interface Evidence {
   /** File path inside the package (npm convention: `package/<path>`). */

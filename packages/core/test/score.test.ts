@@ -1,15 +1,40 @@
 import assert from "node:assert/strict";
 import { before, describe, test } from "node:test";
-import { runAudit, score, DEFAULT_POLICY, matchPackage, type EnterprisePolicy } from "../src/index.js";
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
+import { runAudit, score, integrityOf, DEFAULT_POLICY, matchPackage, type EnterprisePolicy, type NpmSigningKey, type RegistrySignature } from "../src/index.js";
 import { ensureFixtures, tarball } from "./helpers.js";
 
 const baseMeta = {
   author: null, maintainers: [] as string[], license: null,
-  hasInstallScripts: false, signature: "verified" as const, provenance: "present" as const,
+  hasInstallScripts: false,
 };
-const auditOf = (name: string, version: string, baseline?: string) =>
-  runAudit({ meta: { name, version, ...baseMeta }, tarball: tarball(name, version),
-    baselineTarball: baseline ? tarball(name, baseline) : undefined });
+
+// A synthetic registry-signing key so these fixtures resolve to
+// signature: "verified" / provenance: "present" through the real runAudit
+// verification path (Task 4: the provenance rule reads these fields, and a
+// hand-built "unsigned"/"absent" meta would otherwise add unwaived findings
+// that shift these policy-comparison tests' scores).
+const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+const spkiPem = publicKey.export({ type: "spki", format: "pem" }).toString();
+const spkiDer = publicKey.export({ type: "spki", format: "der" }) as Buffer;
+const TEST_KEYID = "SHA256:" + createHash("sha256").update(spkiDer).digest("base64");
+const TEST_KEYS: NpmSigningKey[] = [{ keyid: TEST_KEYID, spkiPem, expires: null }];
+
+function signFor(name: string, version: string, integrity: string): RegistrySignature {
+  const sig = sign("sha256", Buffer.from(`${name}@${version}:${integrity}`), privateKey);
+  return { keyid: TEST_KEYID, sig: sig.toString("base64") };
+}
+
+const auditOf = (name: string, version: string, baseline?: string) => {
+  const tgz = tarball(name, version);
+  const integrity = integrityOf(tgz);
+  return runAudit({ meta: { name, version, ...baseMeta, integrity }, tarball: tgz,
+    baselineTarball: baseline ? tarball(name, baseline) : undefined,
+    signatures: [signFor(name, version, integrity)],
+    hasProvenance: true,
+    signingKeys: TEST_KEYS,
+  });
+};
 
 function policy(over: Partial<EnterprisePolicy> = {}): EnterprisePolicy {
   return { ...DEFAULT_POLICY, version: "test", ...over };
