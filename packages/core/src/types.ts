@@ -10,6 +10,9 @@ export type Verdict = "allow" | "warn" | "block";
 
 export type Severity = "info" | "low" | "medium" | "high" | "critical";
 
+/** Result of verifying a package's npm registry signature. */
+export type SignatureVerdict = "verified" | "invalid" | "unsigned" | "unknown";
+
 export type Category =
   | "obfuscation"
   | "network"
