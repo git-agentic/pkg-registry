@@ -335,7 +335,8 @@ interface PackageMeta {
   author: string | null; maintainers: string[];
   license: string | null;
   hasInstallScripts: boolean;
-  signatureStatus: 'signed' | 'unsigned' | 'unknown';   // npm registry signature / provenance
+  signature: 'verified' | 'invalid' | 'unsigned' | 'unknown';   // verified npm registry-signature status
+  provenance: 'present' | 'absent';                             // build-provenance attestation
   integrity: string | null;       // SRI from dist
   unpackedSize: number; fileCount: number;
 }
