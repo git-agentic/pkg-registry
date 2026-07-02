@@ -19,6 +19,10 @@ export interface EnterprisePolicy {
   privateNamespaces: string[];
   /** Verdict level at which a whole-tree audit trips the gate (ADR-0020). Default "block". */
   treeGate?: Verdict;
+  /** Package patterns that MUST have a verified registry signature (ADR-0021). */
+  requireSignature?: string[];
+  /** Package patterns that MUST carry a provenance attestation (ADR-0021). */
+  requireProvenance?: string[];
 }
 
 /** Compiled-in default. Equals the historical POLICY so out-of-the-box behavior is unchanged. */
@@ -183,6 +187,14 @@ export function parsePolicy(raw: Buffer): EnterprisePolicy {
     throw new Error(`invalid policy: treeGate must be one of ${VERDICTS.join(", ")} (got "${p.treeGate}")`);
   }
 
+  // Validate requireSignature / requireProvenance if present.
+  for (const field of ["requireSignature", "requireProvenance"] as const) {
+    const v = (p as Record<string, unknown>)[field];
+    if (v !== undefined && (!Array.isArray(v) || !v.every((x) => typeof x === "string"))) {
+      throw new Error(`invalid policy: ${field} must be an array of strings`);
+    }
+  }
+
   return {
     schema: 1,
     version: p.version,
@@ -192,6 +204,8 @@ export function parsePolicy(raw: Buffer): EnterprisePolicy {
     deny: p.deny ?? [],
     privateNamespaces: p.privateNamespaces ?? [],
     ...(p.treeGate !== undefined ? { treeGate: p.treeGate as Verdict } : {}),
+    ...((p as { requireSignature?: string[] }).requireSignature !== undefined ? { requireSignature: (p as { requireSignature: string[] }).requireSignature } : {}),
+    ...((p as { requireProvenance?: string[] }).requireProvenance !== undefined ? { requireProvenance: (p as { requireProvenance: string[] }).requireProvenance } : {}),
   };
 }
 

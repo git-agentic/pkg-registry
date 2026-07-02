@@ -59,3 +59,36 @@ describe("registry signature verification (local fixtures, test keys)", () => {
     assert.equal((await sig(base, "prov-absent", "1.0.0")).split("/")[1], "absent");
   });
 });
+
+describe("requireSignature / requireProvenance policy gate (proxy integration)", () => {
+  let server: Server; let base: string;
+  before(async () => {
+    ensureFixtures();
+    const signingKeys = JSON.parse(readFileSync(KEYS_FILE, "utf8")) as NpmSigningKey[];
+    const app = createServer({
+      upstream: new LocalFixtureUpstream(FIXTURES), store: new AuditStore(),
+      approvals: new ApprovalStore(),
+      enterprisePolicy: { ...DEFAULT_POLICY, requireSignature: ["sig-unsigned"], requireProvenance: ["prov-absent"] },
+      policy: "block",
+      privateStore: new PrivatePackageStore(), signingKeys,
+    });
+    await new Promise<void>((res) => { server = app.listen(0, () => { base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`; res(); }); });
+  });
+  after(() => server?.close());
+
+  test("a package matching requireSignature but not verified is blocked", async () => {
+    const res = await fetch(`${base}/sig-unsigned/-/sig-unsigned-1.0.0.tgz`);
+    assert.equal(res.status, 403);
+    assert.equal(res.headers.get("x-sentinel-verdict"), "block");
+  });
+  test("a package matching requireProvenance but without provenance is blocked", async () => {
+    const res = await fetch(`${base}/prov-absent/-/prov-absent-1.0.0.tgz`);
+    assert.equal(res.status, 403);
+    assert.equal(res.headers.get("x-sentinel-verdict"), "block");
+  });
+  test("a verified/present package not matching any requirement is allowed", async () => {
+    const res = await fetch(`${base}/leftpad-lite/-/leftpad-lite-1.0.0.tgz`);
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("x-sentinel-verdict"), "allow");
+  });
+});

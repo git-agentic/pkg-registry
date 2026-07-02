@@ -110,3 +110,27 @@ describe("score under policies", () => {
     assert.equal(a.verdict, b.verdict);
   });
 });
+
+function auditWith(signature: string, provenance: string, name = "acme-lib") {
+  return {
+    schema: 3 as const, meta: { name, version: "1.0.0", author: null, maintainers: [], license: null, hasInstallScripts: false, signature, provenance, integrity: "sha512-x", unpackedSize: 1, fileCount: 1 },
+    findings: [], capabilities: [], capabilityDelta: null,
+    engine: { version: "0.1.0", rules: [], mode: "full" as const }, auditedAt: "t", durationMs: 0,
+  } as Parameters<typeof score>[0];
+}
+
+describe("requireSignature / requireProvenance policy gate", () => {
+  test("requireSignature blocks a non-verified package", () => {
+    const p = { ...DEFAULT_POLICY, requireSignature: ["acme-*"] };
+    assert.equal(score(auditWith("unsigned", "present"), p).verdict, "block");
+    assert.equal(score(auditWith("verified", "present"), p).verdict, "allow");
+  });
+  test("requireProvenance blocks a package without provenance", () => {
+    const p = { ...DEFAULT_POLICY, requireProvenance: ["acme-*"] };
+    assert.equal(score(auditWith("verified", "absent"), p).verdict, "block");
+    assert.equal(score(auditWith("verified", "present"), p).verdict, "allow");
+  });
+  test("no requirement -> not gated on signature/provenance", () => {
+    assert.equal(score(auditWith("unsigned", "absent"), DEFAULT_POLICY).verdict, "allow");
+  });
+});

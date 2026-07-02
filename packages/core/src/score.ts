@@ -45,9 +45,11 @@ export function score(
   const hardBlock = scored.some(
     (f) => !f.waived && severityRank(f.severity) >= severityRank(policy.scoring.hardBlockSeverity),
   );
+  const reqSig = (policy.requireSignature ?? []).some((p) => matchPackage(p, audit.meta.name)) && audit.meta.signature !== "verified";
+  const reqProv = (policy.requireProvenance ?? []).some((p) => matchPackage(p, audit.meta.name)) && audit.meta.provenance !== "present";
 
   let verdict: Verdict;
-  if (denied || hardBlock) verdict = "block";
+  if (denied || hardBlock || reqSig || reqProv) verdict = "block";
   else if (value >= policy.scoring.thresholds.allow) verdict = "allow";
   else if (value >= policy.scoring.thresholds.warn) verdict = "warn";
   else verdict = "block";
