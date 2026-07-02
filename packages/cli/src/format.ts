@@ -39,9 +39,8 @@ export function formatReport(r: AuditReport): string {
   L.push(c(C.gray, `  ${"─".repeat(56)}`));
   L.push(`  size       ${bytes(m.unpackedSize)} ${c(C.gray, `(${m.fileCount} files)`)}`);
   L.push(`  author     ${m.author ?? c(C.gray, "unknown")}`);
-  const sig = m.signatureStatus === "signed" ? c(C.green, "signed")
-    : m.signatureStatus === "unsigned" ? c(C.yellow, "unsigned") : c(C.gray, "unknown");
-  L.push(`  signature  ${sig}`);
+  L.push(`  signature  ${m.signature}`);
+  L.push(`  provenance ${m.provenance}`);
   L.push(`  install    ${m.hasInstallScripts ? c(C.yellow, "⚠ runs lifecycle scripts") : "no install scripts"}`);
   L.push(`  audit      ${r.engine.mode}-mode · ${r.engine.rules.length} rules · engine ${r.engine.version}`);
   L.push("");

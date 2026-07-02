@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { before, describe, test } from "node:test";
-import { auditTarball, type AuditReport } from "../src/index.js";
+import { auditTarball, runAudit, NPM_SIGNING_KEYS, type AuditReport } from "../src/index.js";
 import { ensureFixtures, tarball } from "./helpers.js";
 
 const baseMeta = {
@@ -8,7 +8,8 @@ const baseMeta = {
   maintainers: [] as string[],
   license: null,
   hasInstallScripts: false,
-  signatureStatus: "unknown" as const,
+  signature: "verified" as const,
+  provenance: "present" as const,
 };
 
 async function audit(name: string, version: string, baselineVersion?: string): Promise<AuditReport> {
@@ -88,5 +89,18 @@ describe("audit engine", () => {
     const b = await audit("leftpad-lite", "1.0.0");
     assert.match(a.meta.integrity ?? "", /^sha512-/);
     assert.equal(a.meta.integrity, b.meta.integrity);
+  });
+
+  test("runAudit populates signature/provenance (unsigned when no signatures)", async () => {
+    const tgz = tarball("leftpad-lite", "1.0.0");
+    const audit = await runAudit({
+      meta: { name: "demo", version: "1.0.0", author: null, maintainers: [], license: null, hasInstallScripts: false, integrity: "sha512-x" },
+      tarball: tgz,
+      signatures: null,
+      hasProvenance: false,
+      signingKeys: NPM_SIGNING_KEYS,
+    });
+    assert.equal(audit.meta.signature, "unsigned");
+    assert.equal(audit.meta.provenance, "absent");
   });
 });

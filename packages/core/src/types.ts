@@ -74,8 +74,10 @@ export interface PackageMeta {
   maintainers: string[];
   license: string | null;
   hasInstallScripts: boolean;
-  /** npm registry signature / provenance status. */
-  signatureStatus: "signed" | "unsigned" | "unknown";
+  /** Verified npm registry-signature status. */
+  signature: SignatureVerdict;
+  /** Whether the packument declares a build-provenance attestation. */
+  provenance: "present" | "absent";
   /** Subresource Integrity string from the registry `dist` block. */
   integrity: string | null;
   unpackedSize: number;

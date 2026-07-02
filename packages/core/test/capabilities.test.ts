@@ -83,7 +83,7 @@ import { ensureFixtures, tarball } from "./helpers.js";
 
 const baseMeta = {
   author: null, maintainers: [] as string[], license: null,
-  hasInstallScripts: false, signatureStatus: "unknown" as const,
+  hasInstallScripts: false, signature: "verified" as const, provenance: "present" as const,
 };
 
 describe("capabilities in the audit report (color-stream fixture)", () => {
