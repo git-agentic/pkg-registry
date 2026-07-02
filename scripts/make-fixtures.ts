@@ -3,8 +3,8 @@
  * `.tgz`, computes integrity + sizes, and writes `fixtures/registry.json` —
  * the document the proxy's LocalFixtureUpstream serves. Run: `npm run fixtures`.
  */
-import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync, mkdirSync, statSync, readdirSync } from "node:fs";
+import { createHash, generateKeyPairSync, sign, createPrivateKey } from "node:crypto";
+import { readFileSync, writeFileSync, mkdirSync, statSync, readdirSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as tar from "tar";
@@ -19,7 +19,7 @@ interface IndexFile {
     string,
     {
       class: "benign" | "malicious";
-      versions: Record<string, { signatureStatus: "signed" | "unsigned" | "unknown" }>;
+      versions: Record<string, { signature: "valid" | "tampered" | "unknown-key" | "none"; provenance: boolean }>;
     }
   >;
 }
@@ -29,8 +29,9 @@ interface RegistryVersion {
   author: string | null;
   license: string | null;
   hasInstallScripts: boolean;
-  signatureStatus: "signed" | "unsigned" | "unknown";
   dist: { tarballFile: string; integrity: string; unpackedSize: number; fileCount: number };
+  signatures?: { keyid: string; sig: string }[] | null;
+  attestations?: boolean;
 }
 
 interface RegistryDoc {
@@ -51,6 +52,24 @@ function main(): void {
   const index = JSON.parse(readFileSync(join(FIX, "index.json"), "utf8")) as IndexFile;
   mkdirSync(OUT_DIR, { recursive: true });
   const registry: RegistryDoc = { packages: {} };
+
+  // Synthetic signing key for fixtures: load-or-generate so the keyid + private key
+  // are stable across rebuilds (only the ECDSA `sig` bytes churn, per-signature nonce).
+  const SIGNING_DIR = join(FIX, "signing");
+  const KEY_FILE = join(SIGNING_DIR, "test-key.json");
+  mkdirSync(SIGNING_DIR, { recursive: true });
+  let priv: string, keyid: string;
+  if (existsSync(KEY_FILE)) {
+    ({ priv, keyid } = JSON.parse(readFileSync(KEY_FILE, "utf8")));
+  } else {
+    const kp = generateKeyPairSync("ec", { namedCurve: "P-256" });
+    priv = kp.privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+    const spkiDer = kp.publicKey.export({ type: "spki", format: "der" }) as Buffer;
+    keyid = "SHA256:" + createHash("sha256").update(spkiDer).digest("base64");
+    writeFileSync(KEY_FILE, JSON.stringify({ priv, keyid, spkiPem: kp.publicKey.export({ type: "spki", format: "pem" }).toString() }, null, 2));
+  }
+  const keyMeta = JSON.parse(readFileSync(KEY_FILE, "utf8")) as { priv: string; keyid: string; spkiPem: string };
+  writeFileSync(join(FIX, "signing-keys.json"), JSON.stringify([{ keyid: keyMeta.keyid, spkiPem: keyMeta.spkiPem, expires: null }], null, 2) + "\n");
 
   for (const [name, pkg] of Object.entries(index.packages)) {
     const entry = { name, author: null as string | null, versions: {} as Record<string, RegistryVersion> };
@@ -86,13 +105,25 @@ function main(): void {
         (h) => Boolean(pkgJson.scripts?.[h]),
       );
 
+      const payload = Buffer.from(`${name}@${version}:${integrity}`);
+      let signatures: { keyid: string; sig: string }[] | null = null;
+      if (vmeta.signature === "valid") {
+        signatures = [{ keyid: keyMeta.keyid, sig: sign("sha256", payload, createPrivateKey(keyMeta.priv)).toString("base64") }];
+      } else if (vmeta.signature === "tampered") {
+        const bad = Buffer.from(`${name}@${version}:sha512-TAMPERED`);
+        signatures = [{ keyid: keyMeta.keyid, sig: sign("sha256", bad, createPrivateKey(keyMeta.priv)).toString("base64") }];
+      } else if (vmeta.signature === "unknown-key") {
+        signatures = [{ keyid: "SHA256:unknown-test-key", sig: sign("sha256", payload, createPrivateKey(keyMeta.priv)).toString("base64") }];
+      } // "none" -> null
+
       entry.versions[version] = {
         version,
         author,
         license: pkgJson.license ?? null,
         hasInstallScripts,
-        signatureStatus: vmeta.signatureStatus,
         dist: { tarballFile: tarballName, integrity, unpackedSize, fileCount },
+        signatures,
+        attestations: vmeta.provenance,
       };
       console.log(`packed ${name}@${version} -> ${tarballName} (${buf.length} B, integrity ${integrity.slice(0, 23)}…)`);
     }

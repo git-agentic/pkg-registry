@@ -1,0 +1,1 @@
+{ "name": "sig-unsigned", "version": "1.0.0", "description": "SYNTHETIC FIXTURE — signature/provenance test", "license": "MIT", "main": "index.js" }

@@ -3,4 +3,6 @@ dist/
 *.tsbuildinfo
 .sentinel-store.json
 fixtures/**/*.tgz
+fixtures/signing/
+fixtures/signing-keys.json
 .env

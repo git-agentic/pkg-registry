@@ -9,26 +9,38 @@
           "author": "Jane Dev <jane@example.com>",
           "license": "MIT",
           "hasInstallScripts": false,
-          "signatureStatus": "signed",
           "dist": {
             "tarballFile": "leftpad-lite-1.0.0.tgz",
             "integrity": "sha512-AUnRW91NJ6VvjnR2I3zydmncMUlC6CO9FJAtBesGUxFNPcmmYaYPwXrCraVODBYa9H7DW8ycyc6KOXSzVTPXFg==",
             "unpackedSize": 693,
             "fileCount": 2
-          }
+          },
+          "signatures": [
+            {
+              "keyid": "SHA256:jfs25wAGi5NRoM8z615fvjhGsyqYMotB9faclJ37W0A=",
+              "sig": "MEUCIAYL6HAJnGbcwWG9T/ZtDzgHw1oU7TMvSU655eG1bzuNAiEAyjBlygN+9XaR86dAqnBsuMAqstddOzAK9OpzcFGW04U="
+            }
+          ],
+          "attestations": true
         },
         "1.0.1": {
           "version": "1.0.1",
           "author": "Jane Dev <jane@example.com>",
           "license": "MIT",
           "hasInstallScripts": false,
-          "signatureStatus": "signed",
           "dist": {
             "tarballFile": "leftpad-lite-1.0.1.tgz",
             "integrity": "sha512-6MA7wt62DV7bKGweIwhSBtdHm9g8R0JAfTHMtlmV5l07KQwiiMaB+Qcq8JA6x0bwnF/9WFmRQLBGHMA5QeVZng==",
             "unpackedSize": 873,
             "fileCount": 2
-          }
+          },
+          "signatures": [
+            {
+              "keyid": "SHA256:jfs25wAGi5NRoM8z615fvjhGsyqYMotB9faclJ37W0A=",
+              "sig": "MEYCIQDxbuNgDl868wGIDUpsEFj/qwaRkENRJa11nB1dzx4nIAIhAKWks5dqUDgCvopQzMHFkAdQwsaeaC3QHlfnAyHA8XJH"
+            }
+          ],
+          "attestations": true
         }
       }
     },
@@ -41,39 +53,57 @@
           "author": "nfl-maintainer <nfl@example.com>",
           "license": "MIT",
           "hasInstallScripts": false,
-          "signatureStatus": "signed",
           "dist": {
             "tarballFile": "net-fetch-lite-1.0.0.tgz",
             "integrity": "sha512-huYZKpFT3BBgZjikUFWxTldZF2DR2hJiV7VO4lEEcPpTrtipjwgtFKBxIKZEPWa+2NSOjRvOR2/rdLi1z5XItA==",
             "unpackedSize": 676,
             "fileCount": 2
-          }
+          },
+          "signatures": [
+            {
+              "keyid": "SHA256:jfs25wAGi5NRoM8z615fvjhGsyqYMotB9faclJ37W0A=",
+              "sig": "MEYCIQDNHKNS8AB8jc/8oUgfhzK2eNwQAYn3McHA+U/g1UYKcgIhAPw/QiCMJI+OVguJIYr5Qx92kfel1VbSIfBcAimuT6wl"
+            }
+          ],
+          "attestations": true
         },
         "1.0.1": {
           "version": "1.0.1",
           "author": "nfl-maintainer <nfl@example.com>",
           "license": "MIT",
           "hasInstallScripts": false,
-          "signatureStatus": "signed",
           "dist": {
             "tarballFile": "net-fetch-lite-1.0.1.tgz",
             "integrity": "sha512-CfBxrvG8Cn1RRPWYWJL/cFzKS5tvaPq5mcf8n99XmuXpMV3npliwEixyVyzwRD9YxAIbvRERPGRA7yOmj3tffQ==",
             "unpackedSize": 770,
             "fileCount": 2
-          }
+          },
+          "signatures": [
+            {
+              "keyid": "SHA256:jfs25wAGi5NRoM8z615fvjhGsyqYMotB9faclJ37W0A=",
+              "sig": "MEYCIQDok1U2upWRdYPhXAZ+2LojJi+wfr/NgWIG/QleRmspWgIhAIXkx8Tjf0I1s5BuOd3I7LLTJf+eL8+wGHgrNJIT/z6W"
+            }
+          ],
+          "attestations": true
         },
         "1.0.2": {
           "version": "1.0.2",
           "author": "nfl-maintainer <nfl@example.com>",
           "license": "MIT",
           "hasInstallScripts": false,
-          "signatureStatus": "signed",
           "dist": {
             "tarballFile": "net-fetch-lite-1.0.2.tgz",
             "integrity": "sha512-BVlVd9sd0i9Y9PEmNPvPF3WsASzvW+ti7AOsRFWmQg84q23CNKCCHcLdhmOr6WaNoKAOPYmp8i+VL8lk0ntNiA==",
             "unpackedSize": 826,
             "fileCount": 2
-          }
+          },
+          "signatures": [
+            {
+              "keyid": "SHA256:jfs25wAGi5NRoM8z615fvjhGsyqYMotB9faclJ37W0A=",
+              "sig": "MEQCIHJEtjCUxzqZaMeqOtNCcdsoxGhHC+XYUWwLE9yqlzS8AiBMSUgacyYXID0wCp7wEWwxsfTAYk/AcwdQskMRGUtTVg=="
+            }
+          ],
+          "attestations": true
         }
       }
     },
@@ -86,26 +116,38 @@
           "author": "om-maintainer <om@example.com>",
           "license": "MIT",
           "hasInstallScripts": false,
-          "signatureStatus": "signed",
           "dist": {
             "tarballFile": "color-stream-1.4.0.tgz",
             "integrity": "sha512-TyoiS3oxx8mF4gbfYCf2Cfeb6n7sSikDITWMBZAcl1EAWTMnP8NSxw4HLS7Dx/sxNeVBV9YVNJp9ag2dE5Ix+g==",
             "unpackedSize": 713,
             "fileCount": 2
-          }
+          },
+          "signatures": [
+            {
+              "keyid": "SHA256:jfs25wAGi5NRoM8z615fvjhGsyqYMotB9faclJ37W0A=",
+              "sig": "MEUCIQCAgGj+wK4k6gAfhomaMkLXiicM4NJJRzoeE9iV5iN0ZgIgLldJ6m/afR+nhKpBG4jLCJmd9U4V+w9znwSBFsUVAsI="
+            }
+          ],
+          "attestations": true
         },
         "1.4.1": {
           "version": "1.4.1",
           "author": "om-maintainer <om@example.com>",
           "license": "MIT",
           "hasInstallScripts": true,
-          "signatureStatus": "unsigned",
           "dist": {
             "tarballFile": "color-stream-1.4.1.tgz",
             "integrity": "sha512-bLXSTGvkeisB9jkQ2M4X5MLmw08uD1+zso4/mjvOgIxs6prRUm2IHqeQkA/dU/+qzWzS3i4rWMGCedwVuv/vmw==",
             "unpackedSize": 3068,
             "fileCount": 3
-          }
+          },
+          "signatures": [
+            {
+              "keyid": "SHA256:jfs25wAGi5NRoM8z615fvjhGsyqYMotB9faclJ37W0A=",
+              "sig": "MEUCIQD/OZph8v3xaVF7brfRYyUJv7as3i0NZ3HCRXWfz48evQIgOnihlKXEB6OqiAp28jup14Om4S7dNqk0KccW+VJhFUA="
+            }
+          ],
+          "attestations": true
         }
       }
     },
@@ -118,13 +160,114 @@
           "author": null,
           "license": null,
           "hasInstallScripts": true,
-          "signatureStatus": "signed",
           "dist": {
             "tarballFile": "enforce-probe-1.0.0.tgz",
             "integrity": "sha512-j2ZrM5SnWH4SCNEitxLofKVuSlthX2Y8I4yidx038LcP1U5ulclwq2EbcGleTwtqY/Bioe/V3DUIAp4i4sHmvQ==",
             "unpackedSize": 1565,
             "fileCount": 3
-          }
+          },
+          "signatures": [
+            {
+              "keyid": "SHA256:jfs25wAGi5NRoM8z615fvjhGsyqYMotB9faclJ37W0A=",
+              "sig": "MEUCIBoxopqQ4Hf3OMuRtwpk+L1mbg9YsaYyN+Pwp6HZCub/AiEAotO27zQC4Z2tTfU9s1IRVzWCs4vxz3J2mswktJvTmQ8="
+            }
+          ],
+          "attestations": true
+        }
+      }
+    },
+    "sig-tampered": {
+      "name": "sig-tampered",
+      "author": null,
+      "versions": {
+        "1.0.0": {
+          "version": "1.0.0",
+          "author": null,
+          "license": "MIT",
+          "hasInstallScripts": false,
+          "dist": {
+            "tarballFile": "sig-tampered-1.0.0.tgz",
+            "integrity": "sha512-6WkH5BOr0CLUtyH1FzW0SsJtw4yNFBsNnwuDQQ9Iiq5IC3JcczLX+sCw9HS3Vkx1yb424UQxgryDYIK6MK/cyA==",
+            "unpackedSize": 253,
+            "fileCount": 2
+          },
+          "signatures": [
+            {
+              "keyid": "SHA256:jfs25wAGi5NRoM8z615fvjhGsyqYMotB9faclJ37W0A=",
+              "sig": "MEUCIH9x+eU5YUL/amHXNKgobYHvw+DTfidvCUV9Qz58uUkJAiEAqmcK16KFJKd+oymlAKsD2wStUdO0OjituBKL8ddV7V8="
+            }
+          ],
+          "attestations": true
+        }
+      }
+    },
+    "sig-unsigned": {
+      "name": "sig-unsigned",
+      "author": null,
+      "versions": {
+        "1.0.0": {
+          "version": "1.0.0",
+          "author": null,
+          "license": "MIT",
+          "hasInstallScripts": false,
+          "dist": {
+            "tarballFile": "sig-unsigned-1.0.0.tgz",
+            "integrity": "sha512-jjizlZNCS1LhhHu9Dn/0lV+g4HEjzj1dgd5uQ8zLJH7Tsz2ZakZETq6MiqscPEqT/CwfH46WSoaYK2U4/I1snw==",
+            "unpackedSize": 253,
+            "fileCount": 2
+          },
+          "signatures": null,
+          "attestations": true
+        }
+      }
+    },
+    "sig-unknown": {
+      "name": "sig-unknown",
+      "author": null,
+      "versions": {
+        "1.0.0": {
+          "version": "1.0.0",
+          "author": null,
+          "license": "MIT",
+          "hasInstallScripts": false,
+          "dist": {
+            "tarballFile": "sig-unknown-1.0.0.tgz",
+            "integrity": "sha512-+JkoOEvMKSIaJdkOnC2lUggAPARWi61d2NhGhCApCJ7oc9IrHq4bICe03NcvLNl2Hvr/oC6RMaZ8J+5csqh8Uw==",
+            "unpackedSize": 252,
+            "fileCount": 2
+          },
+          "signatures": [
+            {
+              "keyid": "SHA256:unknown-test-key",
+              "sig": "MEQCIBCQk7Mq5Fn8+yUV2Ax5yobG9IIVv3xXyI1nFw5R82lVAiBH9jHnzXuLR3MEIl9aHXUSm3B8cPoa4JlKijlNEfuEfA=="
+            }
+          ],
+          "attestations": true
+        }
+      }
+    },
+    "prov-absent": {
+      "name": "prov-absent",
+      "author": null,
+      "versions": {
+        "1.0.0": {
+          "version": "1.0.0",
+          "author": null,
+          "license": "MIT",
+          "hasInstallScripts": false,
+          "dist": {
+            "tarballFile": "prov-absent-1.0.0.tgz",
+            "integrity": "sha512-JWs7ZnltECU1ubmu3Tt0eb9rzUmTSZvqN1FNMjnpjfBCOR+dfDBBWurC+LTBhNE6uWhTZPwasxePkb6EZZdsBQ==",
+            "unpackedSize": 252,
+            "fileCount": 2
+          },
+          "signatures": [
+            {
+              "keyid": "SHA256:jfs25wAGi5NRoM8z615fvjhGsyqYMotB9faclJ37W0A=",
+              "sig": "MEUCIFrZpa+36JKtDQAw5sHlw5XFwSnAuB+TwupNhxIzjwdcAiEAoJIPslBjr4DMSrfMrblb2L5B99SABW9ABSrBvvRbG8o="
+            }
+          ],
+          "attestations": false
         }
       }
     }
