@@ -29,7 +29,7 @@ describe("private serve routing", () => {
     // Seed a published private package directly (a benign tarball).
     const tgz = readFileSync(join(FIXTURES, ".tarballs", "leftpad-lite-1.0.1.tgz"));
     const meta = { name: "@acme/widget", version: "1.0.0", author: null, maintainers: [], license: null,
-      hasInstallScripts: false, signature: "verified" as const, provenance: "present" as const, integrity: integrityOf(tgz) };
+      hasInstallScripts: false, signature: "unsigned" as const, provenance: "absent" as const, integrity: integrityOf(tgz) };
     const audit = await runAudit({ meta, tarball: tgz });
     priv.put({ name: "@acme/widget", version: "1.0.0", integrity: integrityOf(tgz),
       manifest: { name: "@acme/widget", version: "1.0.0", dist: {} }, tarball: tgz, audit, actor: "seed" });

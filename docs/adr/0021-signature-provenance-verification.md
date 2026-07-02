@@ -26,7 +26,13 @@ status."
 
 ## Consequences
 
-- Real MITM/compromised-mirror defense for the proxy; policy can require provenance for a namespace.
+- Verifies the `name@version → integrity` binding against npm's registry key, so a forged
+  packument entry (wrong claimed `integrity`) is caught; policy can require provenance for a
+  namespace. This is **not** full MITM/compromised-mirror defense: `verifyRegistrySignature`
+  checks the signature over the *claimed* `dist.integrity`, but the proxy fetch path does not
+  recompute `integrityOf(tarball)` against that claim, so byte-level tampering between the
+  claimed integrity and the delivered tarball is caught downstream by npm-client SRI
+  enforcement, not by this gate (Sentinel's content rules still scan the real bytes regardless).
 - Key rotation/expiry: keys are matched by `keyid`; expiry is surfaced, not enforced (a package
   signed under a since-rotated key stays `verified`).
 - Deferred: full Sigstore/Rekor attestation-bundle verification (async-enrich follow-up);

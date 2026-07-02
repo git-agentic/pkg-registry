@@ -5,4 +5,5 @@ dist/
 fixtures/**/*.tgz
 fixtures/signing/
 fixtures/signing-keys.json
+fixtures/registry.json
 .env
