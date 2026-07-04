@@ -1,36 +1,60 @@
 {
-  "_comment": "Local fixture registry. `make-fixtures` packs each version's package/ dir into a .tgz and fills in integrity + sizes at build time. signatureStatus is declared here to simulate npm provenance.",
+  "_comment": "Local fixture registry. `make-fixtures` packs each version's package/ dir into a .tgz and fills in integrity + sizes at build time. signature/provenance are declared here to simulate npm registry signing + build provenance and are signed with a synthetic test key at build time.",
   "packages": {
     "leftpad-lite": {
       "class": "benign",
       "expect": { "verdict": "allow" },
       "versions": {
-        "1.0.0": { "signatureStatus": "signed" },
-        "1.0.1": { "signatureStatus": "signed" }
+        "1.0.0": { "signature": "valid", "provenance": true },
+        "1.0.1": { "signature": "valid", "provenance": true }
       }
     },
     "net-fetch-lite": {
       "class": "benign",
       "expect": { "verdict": "allow" },
       "versions": {
-        "1.0.0": { "signatureStatus": "signed" },
-        "1.0.1": { "signatureStatus": "signed" },
-        "1.0.2": { "signatureStatus": "signed" }
+        "1.0.0": { "signature": "valid", "provenance": true },
+        "1.0.1": { "signature": "valid", "provenance": true },
+        "1.0.2": { "signature": "valid", "provenance": true }
       }
     },
     "color-stream": {
       "class": "malicious",
       "expect": { "1.4.0": "allow", "1.4.1": "block" },
       "versions": {
-        "1.4.0": { "signatureStatus": "signed" },
-        "1.4.1": { "signatureStatus": "unsigned" }
+        "1.4.0": { "signature": "valid", "provenance": true },
+        "1.4.1": { "signature": "valid", "provenance": true }
       }
     },
     "enforce-probe": {
       "class": "benign",
       "expect": { "verdict": "allow" },
       "versions": {
-        "1.0.0": { "signatureStatus": "signed" }
+        "1.0.0": { "signature": "valid", "provenance": true }
+      }
+    },
+    "sig-tampered": {
+      "class": "benign",
+      "versions": {
+        "1.0.0": { "signature": "tampered", "provenance": true }
+      }
+    },
+    "sig-unsigned": {
+      "class": "benign",
+      "versions": {
+        "1.0.0": { "signature": "none", "provenance": true }
+      }
+    },
+    "sig-unknown": {
+      "class": "benign",
+      "versions": {
+        "1.0.0": { "signature": "unknown-key", "provenance": true }
+      }
+    },
+    "prov-absent": {
+      "class": "benign",
+      "versions": {
+        "1.0.0": { "signature": "valid", "provenance": false }
       }
     }
   }

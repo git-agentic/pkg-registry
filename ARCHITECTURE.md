@@ -227,6 +227,20 @@ level (default `block`); a gated tree makes the CLI exit non-zero (the CI contra
 Unresolvable packages become surfaced `error` rows and never trip the gate (invariant #6).
 This is a `/-/` batch endpoint, never on the inline tarball request path (invariant #3).
 
+### 3.9 Signature & provenance verification (Phase 8, ADR-0021)
+
+`PackageMeta` carries `signature: verified|invalid|unsigned|unknown` and
+`provenance: present|absent` instead of the flattened `signatureStatus` field it replaces.
+`verifyRegistrySignature` checks the npm registry signature offline against a configured
+key set (`NPM_SIGNING_KEYS`, matched by `keyid`) — ECDSA P-256, SHA-256, DER-encoded,
+over the payload `${name}@${version}:${integrity}`. The key set is a static input baked
+into the audit, never fetched at request time (invariant #3); the check runs inline,
+alongside the other sync rules. A pure `provenance` rule turns the two fields into findings
+(`invalid` is `critical` and hard-blocks); it cannot see policy, so an optional
+`requireSignature`/`requireProvenance` pattern-list gate lives beside `deny` in `score.ts`,
+letting a policy require a verified signature or present provenance for matching package
+names without changing the rule itself.
+
 ---
 
 ## 4. The audit engine (`@sentinel/core`)
@@ -321,7 +335,8 @@ interface PackageMeta {
   author: string | null; maintainers: string[];
   license: string | null;
   hasInstallScripts: boolean;
-  signatureStatus: 'signed' | 'unsigned' | 'unknown';   // npm registry signature / provenance
+  signature: 'verified' | 'invalid' | 'unsigned' | 'unknown';   // verified npm registry-signature status
+  provenance: 'present' | 'absent';                             // build-provenance attestation
   integrity: string | null;       // SRI from dist
   unpackedSize: number; fileCount: number;
 }

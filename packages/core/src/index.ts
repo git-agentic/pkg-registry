@@ -47,3 +47,10 @@ export {
   type TreeAggregate,
   type TreeAuditResult,
 } from "./tree.js";
+export {
+  verifyRegistrySignature,
+  NPM_SIGNING_KEYS,
+  type SignatureVerdict,
+  type RegistrySignature,
+  type NpmSigningKey,
+} from "./signature.js";

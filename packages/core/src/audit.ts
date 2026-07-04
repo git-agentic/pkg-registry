@@ -4,6 +4,7 @@ import { extractCapabilities, diffCapabilities } from "./capabilities.js";
 import { RULES } from "./rules/index.js";
 import { score } from "./score.js";
 import { DEFAULT_POLICY } from "./policy.js";
+import { verifyRegistrySignature, NPM_SIGNING_KEYS, type RegistrySignature, type NpmSigningKey } from "./signature.js";
 import type {
   Audit,
   AuditInput,
@@ -58,12 +59,18 @@ export function buildAudit(
 
 export interface AuditTarballInput {
   /** Registry metadata for the version being audited (from the packument). */
-  meta: Omit<PackageMeta, "integrity" | "unpackedSize" | "fileCount"> & {
+  meta: Omit<PackageMeta, "integrity" | "unpackedSize" | "fileCount" | "signature" | "provenance"> & {
     integrity?: string | null;
   };
   tarball: Buffer;
   /** Previous version's tarball, to enable diff-mode weighting. */
   baselineTarball?: Buffer;
+  /** Raw `dist.signatures` from the packument (base64 sigs), verified offline. */
+  signatures?: RegistrySignature[] | null;
+  /** Whether the packument declared `dist.attestations`. */
+  hasProvenance?: boolean;
+  /** Trusted signing keys (default: bundled npm keys). Never fetched at audit time. */
+  signingKeys?: NpmSigningKey[];
 }
 
 /** Extract + diff + run rules + capabilities → policy-independent {@link Audit}. */
@@ -80,12 +87,20 @@ export async function runAudit(input: AuditTarballInput): Promise<Audit> {
   }
 
   const extracted = await extractTarball(input.tarball, baseline);
+  const integrity = input.meta.integrity ?? integrityOf(input.tarball);
+  const signature = verifyRegistrySignature(
+    { name: input.meta.name, version: input.meta.version, integrity },
+    input.signatures ?? null,
+    input.signingKeys ?? NPM_SIGNING_KEYS,
+  );
   const meta: PackageMeta = {
     ...input.meta,
-    integrity: input.meta.integrity ?? integrityOf(input.tarball),
+    integrity,
     unpackedSize: extracted.unpackedSize,
     fileCount: extracted.fileCount,
     hasInstallScripts: detectInstallScripts(extracted.files) || input.meta.hasInstallScripts,
+    signature,
+    provenance: input.hasProvenance ? "present" : "absent",
   };
 
   return buildAudit(meta, extracted.files, { mode, durationMs: Date.now() - started, baselineCapabilities });

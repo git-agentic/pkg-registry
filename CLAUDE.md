@@ -31,6 +31,13 @@ Phase 7 adds **`sentinel audit-tree`**: a whole-tree lockfile gate. It parses an
 `package-lock.json`, audits every resolved package through the proxy (`POST /-/audit-tree`,
 fan-out over the integrity cache), rolls a worst-case aggregate gated by the policy's
 `treeGate` (default `block`), and exits non-zero on a gated tree (ADR-0020).
+Phase 8 adds **offline npm registry-signature verification**: `verifyRegistrySignature`
+checks the ECDSA P-256/SHA-256/DER registry signature against a configured, keyid-matched
+key set (`NPM_SIGNING_KEYS`) — a static input, never fetched at audit time (invariant #3).
+`PackageMeta.signatureStatus` is un-flattened into `signature` (`verified|invalid|unsigned|unknown`)
+and `provenance` (`present|absent`); a pure `provenance` rule surfaces the status as findings
+(`invalid` is critical and hard-blocks), and an optional `requireSignature`/`requireProvenance`
+policy gate lives beside `deny` in `score.ts` (ADR-0021).
 
 We are the Socket/Chainguard wedge: **do not** try to replace npm. Resolve and
 serve real packages transparently; only attach signal.
@@ -96,17 +103,17 @@ don't downgrade majors without a reason.
 
 ```bash
 npm run build            # tsc --build (project references: core → proxy/cli)
-npm test                 # engine + end-to-end proxy: 197 tests on this host (195 pass, 2 skipped on darwin).
+npm test                 # engine + end-to-end proxy: 219 tests on this host (217 pass, 2 skipped on darwin).
                          # Skips are platform-gated enforcement: "non-darwin throws" skips on darwin
                          # (it verifies darwin-only behaviour), and the "no silent skip" CI guard skips
                          # off-CI. The BubblewrapSandbox enforcement suite and enforce-e2e tests skip as
-                         # describe-level blocks on darwin ("requires Linux") and are not in the 197 count.
-                         # Phase 7's audit-tree tests are hermetic and platform-neutral, so the darwin/
-                         # Linux relationship from Phase 6 (Linux one test higher, one fewer skip) should
-                         # hold, but hasn't been re-verified on Linux CI since Phase 7 landed — confirm on
-                         # the next Linux CI run rather than trusting an extrapolated count here. Each
-                         # platform's enforcement is verified on that platform (macOS dev host /
-                         # ubuntu-latest CI).
+                         # describe-level blocks on darwin ("requires Linux") and are not in the 219 count.
+                         # Phase 7's audit-tree and Phase 8's signature/provenance tests are hermetic and
+                         # platform-neutral, so the darwin/Linux relationship from Phase 6 (Linux one test
+                         # higher, one fewer skip) should hold, but hasn't been re-verified on Linux CI
+                         # since Phase 7/8 landed — confirm on the next Linux CI run rather than trusting
+                         # an extrapolated count here. Each platform's enforcement is verified on that
+                         # platform (macOS dev host / ubuntu-latest CI).
 npm run demo             # offline malware-detection walkthrough
 node packages/proxy/dist/index.js   # run the proxy (see README for env vars)
 ```

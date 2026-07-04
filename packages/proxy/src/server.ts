@@ -7,11 +7,13 @@ import {
   integrityOf,
   aggregateTree,
   treeGateOf,
+  NPM_SIGNING_KEYS,
   type AuditReport,
   type EnterprisePolicy,
   type PackageMeta,
   type TreePackageRow,
   type TreeAuditResult,
+  type NpmSigningKey,
 } from "@sentinel/core";
 import { AuditStore } from "./store.js";
 import {
@@ -43,6 +45,8 @@ export interface ServerOptions {
   privateStore: PrivatePackageStore;
   /** Valid bearer tokens for publishing; empty ⇒ publishing disabled. */
   publishTokens?: string[];
+  /** Trusted npm registry signing keys (default: bundled npm keys). */
+  signingKeys?: NpmSigningKey[];
 }
 
 const TARBALL_RE = /^(.+)\/-\/([^/]+\.tgz)$/;
@@ -68,6 +72,7 @@ export function createServer(opts: ServerOptions) {
   const policy: ProxyPolicy = opts.policy ?? "observe";
   const privateStore = opts.privateStore;
   const publishTokens = opts.publishTokens ?? [];
+  const signingKeys = opts.signingKeys ?? NPM_SIGNING_KEYS;
   const app = express();
   app.disable("x-powered-by");
   const jsonSmall = express.json({ limit: "1mb" });
@@ -103,18 +108,17 @@ export function createServer(opts: ServerOptions) {
     const prev = previousVersion(Object.keys(pm.versions), version);
     const baselineTarball = prev ? await upstream.getTarball(pkg, prev) : undefined;
 
-    const meta: Omit<PackageMeta, "unpackedSize" | "fileCount"> = {
+    const meta: Omit<PackageMeta, "unpackedSize" | "fileCount" | "signature" | "provenance"> = {
       name: pkg,
       version,
       author: vmeta.author,
       maintainers: vmeta.maintainers,
       license: vmeta.license,
       hasInstallScripts: vmeta.hasInstallScripts,
-      signatureStatus: vmeta.signatureStatus,
       integrity,
     };
 
-    const audit = await runAudit({ meta, tarball, baselineTarball });
+    const audit = await runAudit({ meta, tarball, baselineTarball, signatures: vmeta.signatures, hasProvenance: vmeta.hasProvenance, signingKeys });
     const report = score(audit, enterprisePolicy, policyHash);
     store.put(report);
     return { report, tarball };
@@ -304,9 +308,9 @@ export function createServer(opts: ServerOptions) {
       const meta = {
         name, version: parsed.version,
         author: null, maintainers: [], license: null,
-        hasInstallScripts: false, signatureStatus: "unknown" as const, integrity,
+        hasInstallScripts: false, integrity,
       };
-      const audit = await runAudit({ meta, tarball: parsed.tarball });
+      const audit = await runAudit({ meta, tarball: parsed.tarball, signatures: null, hasProvenance: false, signingKeys });
       const report = score(audit, enterprisePolicy, policyHash);
       if (report.verdict === "block") {
         return res.status(403).json({

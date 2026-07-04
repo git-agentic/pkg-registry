@@ -2,13 +2,15 @@ import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { RegistrySignature } from "@sentinel/core";
 
 export interface UpstreamVersion {
   version: string;
   author: string | null;
   maintainers: string[];
   license: string | null;
-  signatureStatus: "signed" | "unsigned" | "unknown";
+  signatures: RegistrySignature[] | null;
+  hasProvenance: boolean;
   integrity: string | null;
   hasInstallScripts: boolean;
 }
@@ -30,7 +32,7 @@ export interface PackumentDoc {
 interface VersionManifest {
   name: string;
   version: string;
-  dist: { tarball: string; integrity?: string; signatures?: unknown[]; attestations?: unknown };
+  dist: { tarball: string; integrity?: string; signatures?: { keyid: string; sig: string }[]; attestations?: unknown };
   scripts?: Record<string, string>;
   author?: unknown;
   maintainers?: { name: string }[];
@@ -52,14 +54,13 @@ function authorString(a: unknown): string | null {
 }
 
 function normalizeVersion(m: VersionManifest): UpstreamVersion {
-  const signed = Array.isArray(m.dist?.signatures) && m.dist.signatures.length > 0;
-  const provenance = Boolean(m.dist?.attestations);
   return {
     version: m.version,
     author: authorString(m.author),
     maintainers: (m.maintainers ?? []).map((x) => x.name).filter(Boolean),
     license: typeof m.license === "string" ? m.license : null,
-    signatureStatus: signed || provenance ? "signed" : "unsigned",
+    signatures: Array.isArray(m.dist?.signatures) && m.dist.signatures.length > 0 ? m.dist.signatures : null,
+    hasProvenance: Boolean(m.dist?.attestations),
     integrity: m.dist?.integrity ?? null,
     hasInstallScripts: ["preinstall", "install", "postinstall"].some(
       (h) => Boolean(m.scripts?.[h]),
@@ -108,7 +109,8 @@ interface RegistryDoc {
           author: string | null;
           license: string | null;
           hasInstallScripts: boolean;
-          signatureStatus: "signed" | "unsigned" | "unknown";
+          signatures?: { keyid: string; sig: string }[] | null;
+          attestations?: boolean;
           dist: { tarballFile: string; integrity: string; unpackedSize: number; fileCount: number };
         }
       >;
@@ -141,14 +143,20 @@ export class LocalFixtureUpstream implements Upstream {
         author: m.author,
         maintainers: [],
         license: m.license,
-        signatureStatus: m.signatureStatus,
+        signatures: m.signatures ?? null,
+        hasProvenance: Boolean(m.attestations),
         integrity: m.dist.integrity,
         hasInstallScripts: m.hasInstallScripts,
       };
       docVersions[v] = {
         name: pkg,
         version: v,
-        dist: { tarball: `fixture:${pkg}@${v}`, integrity: m.dist.integrity },
+        dist: {
+          tarball: `fixture:${pkg}@${v}`,
+          integrity: m.dist.integrity,
+          signatures: m.signatures ?? undefined,
+          attestations: m.attestations ? {} : undefined,
+        },
         license: m.license ?? undefined,
         // npm reads this flag from the packument to decide whether to run a package's install
         // scripts (an optimization that skips extraction otherwise). Without it, npm would never

@@ -10,12 +10,16 @@ export type Verdict = "allow" | "warn" | "block";
 
 export type Severity = "info" | "low" | "medium" | "high" | "critical";
 
+/** Result of verifying a package's npm registry signature. */
+export type SignatureVerdict = "verified" | "invalid" | "unsigned" | "unknown";
+
 export type Category =
   | "obfuscation"
   | "network"
   | "secret-exfil"
   | "install-script"
-  | "metadata";
+  | "metadata"
+  | "provenance";
 
 export interface Evidence {
   /** File path inside the package (npm convention: `package/<path>`). */
@@ -71,8 +75,10 @@ export interface PackageMeta {
   maintainers: string[];
   license: string | null;
   hasInstallScripts: boolean;
-  /** npm registry signature / provenance status. */
-  signatureStatus: "signed" | "unsigned" | "unknown";
+  /** Verified npm registry-signature status. */
+  signature: SignatureVerdict;
+  /** Whether the packument declares a build-provenance attestation. */
+  provenance: "present" | "absent";
   /** Subresource Integrity string from the registry `dist` block. */
   integrity: string | null;
   unpackedSize: number;

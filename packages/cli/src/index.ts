@@ -54,7 +54,7 @@ program
     const report = await auditTarball({
       meta: {
         name, version: "local", author: null, maintainers: [], license: null,
-        hasInstallScripts: false, signatureStatus: "unknown",
+        hasInstallScripts: false,
       },
       tarball,
     });
