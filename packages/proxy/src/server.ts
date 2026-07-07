@@ -238,7 +238,12 @@ export function createServer(opts: ServerOptions) {
         try {
           const { report: audited } = await auditVersion(co.name, co.version);
           const report = applyQuarantine(audited);
-          const mismatch = typeof co.integrity === "string" && report.meta.integrity !== null && co.integrity !== report.meta.integrity;
+          const claimed = typeof co.integrity === "string" ? co.integrity : null;
+          const served = report.meta.integrity;
+          // Only compare same-algorithm SRIs; a sha1/sha256 lockfile pin vs our sha512 recompute
+          // is not comparable (and must NOT be treated as tampering).
+          const sameAlgo = claimed !== null && served !== null && claimed.split("-", 1)[0] === served.split("-", 1)[0];
+          const mismatch = sameAlgo && claimed !== served;
           return {
             name: co.name, version: co.version,
             status: mismatch ? "block" as const : report.verdict,

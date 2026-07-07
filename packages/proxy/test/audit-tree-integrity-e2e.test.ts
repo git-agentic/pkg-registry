@@ -52,6 +52,21 @@ describe("audit-tree integrity cross-check + failOnError (e2e)", () => {
     assert.equal(r.packages.find((p) => p.name === "leftpad-lite")!.integrityMismatch, false);
   });
 
+  test("a claimed integrity that MATCHES the served hash is not flagged (no false positive)", async () => {
+    // get the real served integrity for leftpad-lite@1.0.0
+    const rep = await (await fetch(`${base}/-/audit/leftpad-lite/1.0.0`)).json() as { meta: { integrity: string } };
+    const r = await tree(base, [{ name: "leftpad-lite", version: "1.0.0", integrity: rep.meta.integrity }]);
+    const row = r.packages.find((p) => p.name === "leftpad-lite")!;
+    assert.equal(row.integrityMismatch, false);
+    assert.notEqual(row.status, "block");  // a matching integrity must not force-block
+  });
+
+  test("a different-ALGORITHM claimed integrity (sha1) is not flagged (algorithm-blind FP fixed)", async () => {
+    const r = await tree(base, [{ name: "leftpad-lite", version: "1.0.0", integrity: "sha1-abcdef1234567890abcdef1234567890abcdef12" }]);
+    const row = r.packages.find((p) => p.name === "leftpad-lite")!;
+    assert.equal(row.integrityMismatch, false);  // sha1 vs sha512 = not comparable, not a mismatch
+  });
+
   test("failOnError gates a tree containing an unresolvable package", async () => {
     const open = await tree(base, [{ name: "does-not-exist", version: "9.9.9" }]);
     assert.equal(open.aggregate.gated, false); // default fail-open

@@ -137,7 +137,7 @@ unaffected because nothing in it exercises lockfile parsing or SBOM export.
   is closing that list.
 
 Extends ADR-0020 (whole-tree audit — closes its yarn/pnpm/SBOM/integrity-check/
-fail-on-error deferred items), ADR-0009 (integrity cache key — the cross-check
+fail-on-error deferred items), ADR-0004 (integrity-hash cache key — the cross-check
 reuses the same `dist.integrity`-keyed, recomputed-hash contract rather than
 inventing a second notion of integrity), and ADR-0002 (deterministic scoring —
 parsing and SBOM export are pure projections of already-deterministic audit
