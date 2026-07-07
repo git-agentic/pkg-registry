@@ -1,0 +1,1 @@
+{ "name": "expres", "version": "1.0.0", "description": "SYNTHETIC BENIGN FIXTURE — a typosquat-shaped NAME (near-miss of `express`) with entirely benign content. Detection fires on the name, not the bytes.", "license": "MIT", "main": "index.js" }

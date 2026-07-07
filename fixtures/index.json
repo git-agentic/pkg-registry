@@ -72,6 +72,14 @@
     "violation-net-probe": {
       "class": "benign",
       "versions": { "1.0.0": { "signature": "valid", "provenance": false } }
+    },
+    "expres": {
+      "class": "benign",
+      "versions": { "1.0.0": { "signature": "valid", "provenance": false } }
+    },
+    "express": {
+      "class": "benign",
+      "versions": { "1.0.0": { "signature": "valid", "provenance": false } }
     }
   }
 }

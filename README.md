@@ -285,9 +285,28 @@ produced entirely by the heuristic rules so it is reproducible in CI; the LLM
 adapter only adds human-readable context in the async-enrich phase, never the
 score. Weights live in one policy object (`packages/core/src/score.ts`).
 
+## Supply-chain identity signals (Phase 13)
+
+Two name-only checks catch the older, non-code attack class — a malicious
+package published under a name close enough to trick a human or an
+automated install:
+
+- **Typosquat detection** — a pure rule flags a package name that's an
+  edit-distance/homoglyph near-match of a name in a bundled, static
+  popular-package corpus (e.g. `expres` vs `express`). `medium` severity.
+- **Dependency-confusion detection** — a score-time check flags a *public*
+  package name that's a look-alike of one of your claimed
+  `privateNamespaces` (the same field that gates private-store serving) —
+  the signal only Sentinel can produce, since it's the only layer here that
+  holds your namespace claims. `high` severity. Never flags the legitimate
+  claimed package itself.
+
+Both are weighted findings that raise the score, not automatic blocks — see
+[ADR-0026](./docs/adr/0026-supply-chain-identity-heuristics.md).
+
 ## Status
 
-Phases 1–10 are built. Phase 1 is the transparent auditing proxy. Phase 2 adds the
+Phases 1–13 are built. Phase 1 is the transparent auditing proxy. Phase 2 adds the
 install-time permission manifest + approval gate, signed per-enterprise policy, and
 the private-namespace registry. Phases 3–6 add cross-platform sandbox enforcement
 (macOS Seatbelt, Linux bubblewrap) up through `sentinel install --enforce`, which
