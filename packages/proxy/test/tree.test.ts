@@ -13,6 +13,7 @@ import { LocalFixtureUpstream } from "../src/upstream.js";
 import { ApprovalStore } from "../src/approvals.js";
 import { PrivatePackageStore } from "../src/private-store.js";
 import { ViolationStore } from "../src/violations.js";
+import { ApprovalRequestStore } from "../src/approval-requests.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, "..", "..", "..");
@@ -46,6 +47,7 @@ describe("POST /-/audit-tree (local fixtures)", () => {
       enterprisePolicy: DEFAULT_POLICY,
       privateStore: new PrivatePackageStore(),
       violations: new ViolationStore(),
+      approvalRequests: new ApprovalRequestStore(),
     });
     await new Promise<void>((resolve) => {
       server = app.listen(0, () => { base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`; resolve(); });

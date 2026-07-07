@@ -28,6 +28,7 @@ import { reconcileApproval, type ApprovalState } from "./reconcile.js";
 import { PrivatePackageStore } from "./private-store.js";
 import { isClaimed, parsePublishBody, publishTokenValid } from "./private.js";
 import { ViolationStore, type ViolationInput } from "./violations.js";
+import { ApprovalRequestStore } from "./approval-requests.js";
 
 export type ProxyPolicy = "observe" | "block";
 
@@ -53,6 +54,8 @@ export interface ServerOptions {
   trustMaterial?: ProvenanceTrustMaterial | null;
   /** Runtime-violation telemetry store (Phase 10). */
   violations: ViolationStore;
+  /** Pending approval requests store (agent asks, human grants) — Phase 11. */
+  approvalRequests: ApprovalRequestStore;
 }
 
 const TARBALL_RE = /^(.+)\/-\/([^/]+\.tgz)$/;
@@ -72,7 +75,7 @@ async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise
 }
 
 export function createServer(opts: ServerOptions) {
-  const { upstream, store, approvals, violations } = opts;
+  const { upstream, store, approvals, violations, approvalRequests } = opts;
   const enterprisePolicy = opts.enterprisePolicy;
   const policyHash = opts.policyHash ?? policyHashOf(enterprisePolicy);
   const policy: ProxyPolicy = opts.policy ?? "observe";
@@ -291,6 +294,7 @@ export function createServer(opts: ServerOptions) {
           reason: d.reason,
           decidedAt: new Date().toISOString(),
         }));
+        approvalRequests.clear(d.integrity);
       }
     } catch (err) {
       return sendError(res, err);
@@ -305,6 +309,29 @@ export function createServer(opts: ServerOptions) {
   app.delete(/^\/-\/approvals\/(.+)$/, (req, res) => {
     const integrity = decodeURIComponent(req.params[0] ?? "");
     res.json({ revoked: approvals.remove(integrity) });
+  });
+
+  app.post("/-/approval-requests", (req, res) => {
+    const b = req.body as { name?: unknown; version?: unknown; integrity?: unknown; reason?: unknown; requestedBy?: { type?: string; id?: string } };
+    if (typeof b?.name !== "string" || typeof b.version !== "string" || typeof b.integrity !== "string" || typeof b.reason !== "string") {
+      return res.status(400).json({ error: "need name, version, integrity, reason" });
+    }
+    const audited = store.get(b.integrity);
+    if (!audited) return res.status(400).json({ error: `audit ${b.name}@${b.version} first (no report for that integrity)` });
+    const reqByType = b.requestedBy?.type;
+    const requestedBy: { type: "human" | "agent"; id: string } =
+      reqByType === "human" || reqByType === "agent"
+        ? { type: reqByType, id: String(b.requestedBy?.id ?? "unknown") }
+        : { type: "agent", id: "mcp" };
+    const rec = approvalRequests.record({
+      name: audited.report.meta.name, version: audited.report.meta.version, integrity: b.integrity,
+      reason: b.reason, requestedBy, capabilities: audited.report.capabilities,
+    });
+    res.json({ requested: rec });
+  });
+
+  app.get("/-/approval-requests", (_req, res) => {
+    res.json({ requests: approvalRequests.recent(50) });
   });
 
   app.post("/-/violations", (req, res) => {

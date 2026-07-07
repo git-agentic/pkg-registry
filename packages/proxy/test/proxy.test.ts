@@ -13,6 +13,7 @@ import { LocalFixtureUpstream } from "../src/upstream.js";
 import { ApprovalStore } from "../src/approvals.js";
 import { PrivatePackageStore } from "../src/private-store.js";
 import { ViolationStore } from "../src/violations.js";
+import { ApprovalRequestStore } from "../src/approval-requests.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, "..", "..", "..");
@@ -42,6 +43,7 @@ describe("registry proxy (block policy, local fixtures)", () => {
       policy: "block",
       privateStore: new PrivatePackageStore(),
       violations: new ViolationStore(),
+      approvalRequests: new ApprovalRequestStore(),
     });
     await new Promise<void>((resolve) => {
       server = app.listen(0, () => {
@@ -123,6 +125,7 @@ describe("approval gate (block policy, local fixtures)", () => {
       policy: "block",
       privateStore: new PrivatePackageStore(),
       violations: new ViolationStore(),
+      approvalRequests: new ApprovalRequestStore(),
     });
     await new Promise<void>((resolve) => {
       server = app.listen(0, () => {
@@ -270,6 +273,7 @@ describe("approval gate — no forward inheritance (isolated server)", () => {
       policy: "block",
       privateStore: new PrivatePackageStore(),
       violations: new ViolationStore(),
+      approvalRequests: new ApprovalRequestStore(),
     });
     await new Promise<void>((resolve) => {
       server = app.listen(0, () => {
@@ -326,6 +330,7 @@ describe("enterprise policy scoring (block policy, local fixtures)", () => {
       policy: "block",
       privateStore: new PrivatePackageStore(),
       violations: new ViolationStore(),
+      approvalRequests: new ApprovalRequestStore(),
     });
     await new Promise<void>((resolve) => {
       server = app.listen(0, () => {

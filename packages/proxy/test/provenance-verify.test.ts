@@ -13,6 +13,7 @@ import { LocalFixtureUpstream } from "../src/upstream.js";
 import { ApprovalStore } from "../src/approvals.js";
 import { PrivatePackageStore } from "../src/private-store.js";
 import { ViolationStore } from "../src/violations.js";
+import { ApprovalRequestStore } from "../src/approval-requests.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, "..", "..", "..");
@@ -27,7 +28,8 @@ function boot(overrides: Partial<ServerOptions> = {}): Promise<{ server: Server;
   const app = createServer({
     upstream: new LocalFixtureUpstream(FIXTURES), store: new AuditStore(),
     approvals: new ApprovalStore(), enterprisePolicy: DEFAULT_POLICY,
-    privateStore: new PrivatePackageStore(), violations: new ViolationStore(), ...overrides,
+    privateStore: new PrivatePackageStore(), violations: new ViolationStore(),
+    approvalRequests: new ApprovalRequestStore(), ...overrides,
   });
   return new Promise((res) => {
     const server = app.listen(0, () => res({ server, base: `http://127.0.0.1:${(server.address() as AddressInfo).port}` }));
