@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { homedir } from "node:os";
+import { realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { createSandbox, scrubEnv } from "@sentinel/sandbox";
 import type { SandboxViolation } from "@sentinel/sandbox";
@@ -68,7 +69,7 @@ async function main(): Promise<number> {
   const env = scrubEnv(process.env, approved);
   const sandbox = createSandbox();   // throws (fail closed) on unsupported platform / missing bwrap
   const r = sandbox.run(cmd, { cwd, approved, homeDir: homedir(), env });
-  if (r.violation && process.env.SENTINEL_PROXY && name && version) {
+  if (r.violation && process.env.SENTINEL_PROXY && name && version && !isRootScript(cwd, process.env.INIT_CWD)) {
     await reportViolation(process.env.SENTINEL_PROXY, name, version, r.violation);
   }
   if (r.stdout) process.stdout.write(r.stdout);
@@ -78,7 +79,20 @@ async function main(): Promise<number> {
 
 // Only auto-run when invoked as the CLI entrypoint (not on `import` for unit testing, e.g.
 // reportViolation above) — argv[1] is the invoked script path; compare it to this module's URL.
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+// Both sides are resolved through the real path first so a bin-symlink invocation (npx /
+// node_modules/.bin) — where argv[1] is the symlink but import.meta.url resolves to the real
+// file — still compares equal, instead of silently failing to run (fail-open).
+function isMainModule(): boolean {
+  const arg = process.argv[1];
+  if (!arg) return false;
+  try {
+    return import.meta.url === pathToFileURL(realpathSync(arg)).href;
+  } catch {
+    return false;
+  }
+}
+
+if (isMainModule()) {
   main().then(
     (code) => process.exit(code),
     (err) => {
