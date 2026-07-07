@@ -1,10 +1,39 @@
 #!/usr/bin/env node
 import { homedir } from "node:os";
+import { pathToFileURL } from "node:url";
 import { createSandbox, scrubEnv } from "@sentinel/sandbox";
+import type { SandboxViolation } from "@sentinel/sandbox";
 import type { Capability } from "@sentinel/core";
 import { approvedCapsForManifest, isRootScript, commandFromArgv, EnforceError } from "./enforce.js";
 import { parseApprovals } from "./index.js";
 import type { Manifest } from "./format.js";
+
+/**
+ * Best-effort telemetry: reports a detected runtime violation to the proxy so it can be
+ * surfaced/aggregated. Resolves the served integrity from the dependency's proxy manifest
+ * (the shell doesn't otherwise know it). Never throws — a reporting failure (unreachable
+ * proxy, non-ok response, malformed JSON) must never change the install's exit code.
+ */
+export async function reportViolation(
+  proxy: string,
+  name: string,
+  version: string,
+  violation: SandboxViolation,
+): Promise<void> {
+  try {
+    const man = await fetch(`${proxy}/-/manifest/${encodeURIComponent(name)}/${encodeURIComponent(version)}`);
+    if (!man.ok) return;
+    const integrity = ((await man.json()) as { meta?: { integrity?: string } }).meta?.integrity;
+    if (!integrity) return;
+    await fetch(`${proxy}/-/violations`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name, version, integrity, ...violation }),
+    });
+  } catch {
+    /* telemetry is best-effort: a reporting failure never changes the install outcome */
+  }
+}
 
 /**
  * npm invokes this as the lifecycle script-shell: `sentinel-script-shell -c "<cmd>"`, with cwd set
@@ -39,16 +68,23 @@ async function main(): Promise<number> {
   const env = scrubEnv(process.env, approved);
   const sandbox = createSandbox();   // throws (fail closed) on unsupported platform / missing bwrap
   const r = sandbox.run(cmd, { cwd, approved, homeDir: homedir(), env });
+  if (r.violation && process.env.SENTINEL_PROXY && name && version) {
+    await reportViolation(process.env.SENTINEL_PROXY, name, version, r.violation);
+  }
   if (r.stdout) process.stdout.write(r.stdout);
   if (r.stderr) process.stderr.write(r.stderr);
   return r.exitCode;
 }
 
-main().then(
-  (code) => process.exit(code),
-  (err) => {
-    const tag = err instanceof EnforceError ? "enforcement" : "error";
-    console.error(`\x1b[31msentinel-script-shell (${tag}): ${(err as Error).message}\x1b[0m`);
-    process.exit(70);   // non-zero → npm aborts the install (fail closed)
-  },
-);
+// Only auto-run when invoked as the CLI entrypoint (not on `import` for unit testing, e.g.
+// reportViolation above) — argv[1] is the invoked script path; compare it to this module's URL.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().then(
+    (code) => process.exit(code),
+    (err) => {
+      const tag = err instanceof EnforceError ? "enforcement" : "error";
+      console.error(`\x1b[31msentinel-script-shell (${tag}): ${(err as Error).message}\x1b[0m`);
+      process.exit(70);   // non-zero → npm aborts the install (fail closed)
+    },
+  );
+}
