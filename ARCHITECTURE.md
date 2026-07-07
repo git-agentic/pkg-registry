@@ -440,6 +440,10 @@ interface AuditReport {
 // keyed by integrity (see ADR-0011/0013).
 // Runtime-violation state is likewise NOT in the report — it is mutable proxy state
 // in ViolationStore, keyed by integrity, applied as a serve-time overlay (ADR-0023).
+// Pending approval requests are a third, separate store — ApprovalRequestStore,
+// keyed by integrity, written by POST /-/approval-requests (an MCP/agent ask,
+// never a grant) and cleared when a human's POST /-/approvals decision lands
+// for that integrity (ADR-0024).
 ```
 
 Storage in Phase 1 is a pluggable `AuditStore` (in-memory + JSON-file impl). The
@@ -451,7 +455,7 @@ caching.
 
 ## 6. CLI ↔ npm integration
 
-Three integration modes, all non-invasive:
+Four integration modes, all non-invasive:
 
 1. **`sentinel audit <pkg>[@version]`** — calls the proxy's `/-/audit` API and
    prints the pre-install panel: unpacked size, author, signature status, score,
@@ -467,6 +471,29 @@ Three integration modes, all non-invasive:
    `sentinel-script-shell` wrapper so every lifecycle script in the tree runs under
    `createSandbox()` (§3.7). Scripts with unapproved or undeclared capabilities are
    denied at the kernel level even when the static audit passed.
+4. **`sentinel-mcp` (Phase 11, ADR-0024)** — a stdio MCP server
+   (`packages/mcp`, `@modelcontextprotocol/sdk`) for agent hosts that speak
+   MCP instead of shelling out to the CLI. `createMcpServer(client)` registers
+   six tools against a `ProxyClient` — a thin fetch wrapper over the proxy's
+   `/-/audit`, `/-/manifest`, `/-/audit-tree`, `/-/violations`, and
+   `/-/approval-requests` endpoints, resolving `latest` from the packument's
+   `dist-tags` when a version is omitted. Five tools are read-only
+   (`sentinel_audit`, `sentinel_audit_tree`, `sentinel_capabilities`,
+   `sentinel_check_provenance`, `sentinel_list_violations`); the sixth,
+   `sentinel_request_approval`, is the only write path and records a
+   **pending** entry in the new `ApprovalRequestStore` via `POST
+   /-/approval-requests` — it can never grant approval itself. This is a
+   deliberate privilege boundary: the agent requests, only a human grants
+   through the existing `POST /-/approvals`, and there is no auto-approve or
+   clear-quarantine tool. Because every read tool calls the same
+   `/-/audit`/`/-/manifest` endpoints the CLI and the tarball serve gate use,
+   the verdict an agent sees is byte-identical to what a real install would
+   see; a `ProxyClient` failure (unreachable proxy, non-OK response) throws
+   `ProxyError` rather than ever fabricating a verdict, and the MCP layer
+   performs zero scoring of its own (invariant #1 untouched). `parseLockfile`
+   (used by `sentinel_audit_tree`) moved from `@sentinel/cli` to
+   `@sentinel/core` this phase so both packages can share it without `mcp`
+   tripping `cli`'s own entrypoint guard.
 
 The cleanest hook is registry redirection (`.npmrc` `registry=` or `--registry`)
 rather than an npm wrapper, because it works identically across npm, yarn, pnpm,

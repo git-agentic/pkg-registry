@@ -59,6 +59,17 @@ overlay** (`applyQuarantine` in `server.ts`) — it forces `block` and prepends 
 finding on a *copy* of the served report, never mutating the cached score (invariant #1).
 Best-effort/containment-unchanged: a swallowed denial evades telemetry, not containment —
 the sandbox still denied the syscall exactly as it did before Phase 10 (ADR-0023).
+Phase 11 adds an **agent-native MCP surface** (`packages/mcp`, `sentinel-mcp` bin):
+`createMcpServer` is a thin stdio client over the running proxy — five read tools
+(`sentinel_audit`, `sentinel_audit_tree`, `sentinel_capabilities`,
+`sentinel_check_provenance`, `sentinel_list_violations`) plus one write tool,
+`sentinel_request_approval`, that only ever records a **pending** entry in the new
+`ApprovalRequestStore` (`POST /-/approval-requests`) — the agent requests, a human
+still grants via the existing `POST /-/approvals`, and there is no auto-approve or
+clear-quarantine tool. `parseLockfile` moved from `@sentinel/cli` to `@sentinel/core`
+so `mcp` and `cli` can share it without tripping `cli`'s own entrypoint guard. The MCP
+layer does zero scoring; a `ProxyClient` failure throws rather than fabricating a
+verdict (invariant #1 untouched, ADR-0024).
 
 We are the Socket/Chainguard wedge: **do not** try to replace npm. Resolve and
 serve real packages transparently; only attach signal.
@@ -124,22 +135,22 @@ don't downgrade majors without a reason.
 
 ```bash
 npm run build            # tsc --build (project references: core → proxy/cli)
-npm test                 # engine + end-to-end proxy: 290 tests on this host (288 pass, 2 skipped on darwin).
+npm test                 # engine + end-to-end proxy: 308 tests on this host (306 pass, 2 skipped on darwin).
                          # Skips are platform-gated enforcement: "non-darwin throws" skips on darwin
                          # (it verifies darwin-only behaviour), and the "no silent skip" CI guard skips
                          # off-CI. The BubblewrapSandbox enforcement suite and the Linux enforce-e2e tests
-                         # skip as describe-level blocks on darwin ("requires Linux") and are not in the 290
+                         # skip as describe-level blocks on darwin ("requires Linux") and are not in the 308
                          # count. Phase 10's violation-enforce e2e and the darwin-gated runtime-violation
                          # effect test (SeatbeltSandbox: "a denied credential read surfaces a confirmed
                          # runtime violation") RUN on darwin via Seatbelt, the same way the rest of the
-                         # Seatbelt effect suite does, and ARE in the 290 count.
-                         # Phase 7's audit-tree, Phase 8/9's signature/provenance, and Phase 10's
-                         # classifyViolation/deny-set/violations-store tests are hermetic and platform-neutral,
-                         # so the darwin/Linux relationship from Phase 6 (Linux one test higher, one fewer
-                         # skip) should hold, but hasn't been re-verified on Linux CI since Phase 7/8/9/10
-                         # landed — confirm on the next Linux CI run rather than trusting an extrapolated
-                         # count here. Each platform's enforcement is verified on that platform (macOS dev
-                         # host / ubuntu-latest CI).
+                         # Seatbelt effect suite does, and ARE in the 308 count.
+                         # Phase 7's audit-tree, Phase 8/9's signature/provenance, Phase 10's
+                         # classifyViolation/deny-set/violations-store, and Phase 11's MCP/approval-request
+                         # tests are hermetic and platform-neutral, so the darwin/Linux relationship from
+                         # Phase 6 (Linux one test higher, one fewer skip) should hold, but hasn't been
+                         # re-verified on Linux CI since Phase 7/8/9/10/11 landed — confirm on the next
+                         # Linux CI run rather than trusting an extrapolated count here. Each platform's
+                         # enforcement is verified on that platform (macOS dev host / ubuntu-latest CI).
 npm run demo             # offline malware-detection walkthrough
 node packages/proxy/dist/index.js   # run the proxy (see README for env vars)
 ```
