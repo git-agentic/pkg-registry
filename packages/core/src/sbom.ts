@@ -1,5 +1,5 @@
 import { ENGINE_VERSION } from "./audit.js";
-import type { TreeAuditResult, TreePackageRow } from "./tree.js";
+import type { TreeAuditResult } from "./tree.js";
 
 export interface CycloneDXComponent {
   type: "library";
@@ -44,10 +44,7 @@ export function toCycloneDX(tree: TreeAuditResult, opts: { now: string }): Cyclo
         { name: "sentinel:score", value: p.score === null ? "n/a" : String(p.score) },
       ];
       if (p.topFinding) properties.push({ name: "sentinel:topFinding", value: p.topFinding });
-      // TreePackageRow doesn't declare `integrityMismatch` until Task 4; read it
-      // guardedly so real rows (undefined today) and future/test rows both work.
-      const integrityMismatch = (p as TreePackageRow & { integrityMismatch?: boolean }).integrityMismatch;
-      if (integrityMismatch) properties.push({ name: "sentinel:integrityMismatch", value: "true" });
+      if (p.integrityMismatch) properties.push({ name: "sentinel:integrityMismatch", value: "true" });
       return { type: "library" as const, name: p.name, version: p.version, purl: npmPurl(p.name, p.version), properties };
     }),
   };
