@@ -316,6 +316,66 @@ unauthenticated (like `/-/approvals`); a spoofed report can only quarantine
 an *already-audited* integrity (the endpoint 400s otherwise) and can only
 force `block`, never relax a verdict — a fail-closed DoS, not a bypass.
 
+### 3.12 Control-plane auth (Phase 12, ADR-0025)
+
+Phases 2–11 left every mutating control-plane endpoint unauthenticated;
+ADR-0024 named the gap and deferred it. Phase 12 closes it with **signed,
+stateless Ed25519 role tokens**, reusing the same offline-signed-artifact
+pattern ADR-0014 established for policy: `signToken`/`verifyToken`
+(`packages/core/src/auth.ts`) mint and check `base64url(payload).base64url(sig)`,
+where `payload` is `{ role, sub, iat, exp }`. `verifyToken` is pure and total
+(never throws) and checks, in order, signature → parse → role → expiry, so a
+tampered payload fails at the signature check before anything downstream sees
+it. Three roles: `operator`, `agent`, `publisher`.
+
+**Opt-in, not on by default.** `makeAuthz(publicKeyPem)`
+(`packages/proxy/src/authz.ts`) is disabled (`enabled: false`, every
+`requireRole` a pass-through) unless `SENTINEL_AUTH_PUBKEY` (a path to a PEM
+public key) is set at proxy startup, in which case a bad path is a fatal
+startup error rather than a silent fall-back to open mode. With auth
+disabled — the default — every existing test and deployment behaves exactly
+as before this phase.
+
+**Role → endpoint map** (gated only when auth is enabled):
+
+| Route | Required role |
+|---|---|
+| `POST /-/approvals` | `operator` |
+| `DELETE /-/approvals/:integrity` | `operator` |
+| `DELETE /-/violations/:integrity` | `operator` |
+| `POST /-/approval-requests` | `agent` |
+| `POST /-/violations` | `agent` |
+| `PUT /:pkg` (publish) | `publisher` (auth enabled) / legacy `requirePublishAuth` token (auth disabled) |
+
+**Reads stay open in every mode**: every `GET`, the tarball serve, packument
+resolution, and `POST /-/audit-tree` (a read-shaped fan-out audit, not a gate
+mutation) are never gated by role — Phase 12 authenticates mutations to the
+gate, not visibility into it, preserving §3.5/ADR-0005's transparent-proxy
+posture unchanged.
+
+**This makes ADR-0013/0024's boundary real at the HTTP layer.** ADR-0024's
+"the agent can request, only a human can grant" was, before this phase,
+enforced only by the *shape* of the MCP tool surface (no `sentinel_approve`
+tool exists) — nothing stopped a caller from bypassing MCP and hitting `POST
+/-/approvals` directly. With auth enabled, an `agent`-role token presented to
+that route now gets a `403` (valid identity, wrong role); only an
+`operator`-role token is accepted. `401` vs `403` is a deliberate distinction:
+401 means no valid identity was proven at all (missing/malformed/expired/bad
+signature); 403 means a valid identity was proven but it isn't permitted on
+this route.
+
+Clients: `sentinel-mcp`'s `ProxyClient` and `sentinel-script-shell` both read
+`SENTINEL_AUTH_TOKEN` and attach `Authorization: Bearer <token>` on POSTs only
+(agent role); the dashboard has an operator-token field (persisted to
+`localStorage`) that attaches the same header to its Approve/Deny/Revoke
+actions. `sentinel token keygen/mint/verify` (CLI) is the minting/inspection
+workflow.
+
+Expiry is enforced at request time (`verifyToken` rejects `now >= exp`) — this
+is authentication, not scoring, and touches nothing in `runAudit`/`score.ts`;
+invariant #1 is untouched. There is no token store or revocation list: a
+compromised token is bounded by its TTL, and full revocation is key rotation.
+
 ---
 
 ## 4. The audit engine (`@sentinel/core`)

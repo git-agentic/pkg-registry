@@ -70,6 +70,16 @@ clear-quarantine tool. `parseLockfile` moved from `@sentinel/cli` to `@sentinel/
 so `mcp` and `cli` can share it without tripping `cli`'s own entrypoint guard. The MCP
 layer does zero scoring; a `ProxyClient` failure throws rather than fabricating a
 verdict (invariant #1 untouched, ADR-0024).
+Phase 12 adds **signed role-token control-plane auth**: `signToken`/`verifyToken`
+(`packages/core/src/auth.ts`) mint/check offline-verifiable Ed25519 tokens
+(`operator | agent | publisher`), opt-in via `SENTINEL_AUTH_PUBKEY` (unset ⇒
+open mode, all existing behavior unchanged). `makeAuthz(...).requireRole([...])`
+gates the six mutating routes — `POST/DELETE /-/approvals*`, `POST /-/violations`,
+`DELETE /-/violations/:integrity`, `POST /-/approval-requests`, and publish —
+with 401 (no/bad/expired token) vs 403 (valid token, wrong role); every read
+(incl. `POST /-/audit-tree`) stays open. This enforces ADR-0024's request-not-grant
+boundary at the HTTP layer for the first time: an `agent` token now gets a hard
+403 on `POST /-/approvals`, not just an absent tool (ADR-0025).
 
 We are the Socket/Chainguard wedge: **do not** try to replace npm. Resolve and
 serve real packages transparently; only attach signal.
@@ -135,22 +145,23 @@ don't downgrade majors without a reason.
 
 ```bash
 npm run build            # tsc --build (project references: core → proxy/cli)
-npm test                 # engine + end-to-end proxy: 308 tests on this host (306 pass, 2 skipped on darwin).
+npm test                 # engine + end-to-end proxy: 336 tests on this host (334 pass, 2 skipped on darwin).
                          # Skips are platform-gated enforcement: "non-darwin throws" skips on darwin
                          # (it verifies darwin-only behaviour), and the "no silent skip" CI guard skips
                          # off-CI. The BubblewrapSandbox enforcement suite and the Linux enforce-e2e tests
-                         # skip as describe-level blocks on darwin ("requires Linux") and are not in the 308
+                         # skip as describe-level blocks on darwin ("requires Linux") and are not in the 336
                          # count. Phase 10's violation-enforce e2e and the darwin-gated runtime-violation
                          # effect test (SeatbeltSandbox: "a denied credential read surfaces a confirmed
                          # runtime violation") RUN on darwin via Seatbelt, the same way the rest of the
-                         # Seatbelt effect suite does, and ARE in the 308 count.
+                         # Seatbelt effect suite does, and ARE in the 336 count.
                          # Phase 7's audit-tree, Phase 8/9's signature/provenance, Phase 10's
-                         # classifyViolation/deny-set/violations-store, and Phase 11's MCP/approval-request
-                         # tests are hermetic and platform-neutral, so the darwin/Linux relationship from
-                         # Phase 6 (Linux one test higher, one fewer skip) should hold, but hasn't been
-                         # re-verified on Linux CI since Phase 7/8/9/10/11 landed — confirm on the next
-                         # Linux CI run rather than trusting an extrapolated count here. Each platform's
-                         # enforcement is verified on that platform (macOS dev host / ubuntu-latest CI).
+                         # classifyViolation/deny-set/violations-store, Phase 11's MCP/approval-request,
+                         # and Phase 12's auth/authz-e2e tests are hermetic and platform-neutral, so the
+                         # darwin/Linux relationship from Phase 6 (Linux one test higher, one fewer skip)
+                         # should hold, but hasn't been re-verified on Linux CI since Phase 7/8/9/10/11/12
+                         # landed — confirm on the next Linux CI run rather than trusting an extrapolated
+                         # count here. Each platform's enforcement is verified on that platform (macOS dev
+                         # host / ubuntu-latest CI).
 npm run demo             # offline malware-detection walkthrough
 node packages/proxy/dist/index.js   # run the proxy (see README for env vars)
 ```

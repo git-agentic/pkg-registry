@@ -83,6 +83,8 @@ node packages/cli/dist/index.js install lodash
 | `SENTINEL_APPROVAL_REQUESTS` | _(memory only)_ | path to a JSON file to persist pending approval requests (MCP `sentinel_request_approval` and any other caller) |
 | `SENTINEL_TRUSTED_ROOT` | _(bundled root)_ | path to a Sigstore `trusted_root.json` for provenance verification (fatal error on a bad path) |
 | `SENTINEL_NPM_ATTESTATION_KEYS` | _(bundled keys)_ | path to an npm publish-attestation keys JSON, used alongside `SENTINEL_TRUSTED_ROOT` |
+| `SENTINEL_AUTH_PUBKEY` | _(unset ⇒ open)_ | path to an Ed25519 public key PEM; when set, gates control-plane mutations behind signed role tokens (see below) |
+| `SENTINEL_AUTH_TOKEN` | _(unset)_ | signed role token attached as `Authorization: Bearer` by the MCP client and `sentinel-script-shell` on their POST calls |
 
 ## CLI
 
@@ -92,6 +94,9 @@ sentinel scan  <file.tgz>        audit a local tarball offline (no proxy)
 sentinel install [args…]         npm install routed through the proxy
 sentinel npx     [args…]         npx routed through the proxy
 sentinel violations              list runtime violations recorded by the proxy (quarantined builds)
+sentinel token keygen --out <prefix>              generate an Ed25519 keypair for control-plane auth
+sentinel token mint --role --sub --ttl --key       mint a signed role token (prints to stdout)
+sentinel token verify <token> --pubkey             verify a token, print role/sub/exp or the rejection reason
   -p, --proxy <url>   proxy base URL (default http://localhost:4873)
   --json              raw JSON report
 ```
@@ -121,6 +126,60 @@ denied at the kernel level exactly as before — containment is unaffected eithe
 - `GET /-/violations` — the 50 most recent violation records.
 - `DELETE /-/violations/:integrity` — clear a quarantine.
 - `x-sentinel-violations` response header on every served tarball (`1`/`0`).
+
+## Control-plane authentication (Phase 12)
+
+The control plane's mutating endpoints — approvals, violation reports and
+clears, and publish — are **unauthenticated by default (open mode)**. Setting
+`SENTINEL_AUTH_PUBKEY` on the proxy turns on signed-role-token auth for those
+routes; everything else (every `GET`, tarball fetches, packument resolution,
+and `POST /-/audit-tree`) stays open in either mode.
+
+Tokens are stateless, offline-verifiable Ed25519 signatures over
+`{ role, sub, iat, exp }` — no server-side session store, no token database.
+Generate a keypair, mint a token, and verify it:
+
+```bash
+sentinel token keygen --out ./auth              # writes auth.pub.pem, auth.key.pem (0600)
+sentinel token mint --role operator --sub alice --ttl 3600 --key ./auth.key.pem
+# eyJyb2xlIjoib3BlcmF0b3IiLCJzdWIiOiJhbGljZSIsImlhdCI6...  .  c2ln...
+sentinel token verify <token> --pubkey ./auth.pub.pem
+# valid  role=operator  sub=alice  exp=2026-07-07T15:00:00.000Z
+```
+
+Run the proxy with auth enabled:
+
+```bash
+SENTINEL_AUTH_PUBKEY=./auth.pub.pem node packages/proxy/dist/index.js
+```
+
+**Role → endpoint map** (enforced only when `SENTINEL_AUTH_PUBKEY` is set):
+
+| Route | Required role |
+|---|---|
+| `POST /-/approvals` | `operator` |
+| `DELETE /-/approvals/:integrity` | `operator` |
+| `DELETE /-/violations/:integrity` | `operator` |
+| `POST /-/approval-requests` | `agent` |
+| `POST /-/violations` | `agent` |
+| `PUT /:pkg` (publish) | `publisher` |
+
+A missing/malformed/expired/badly-signed token is `401`; a well-formed token
+with the wrong role for the route is `403`. Reads are never gated.
+
+**Clients:** `sentinel-mcp` (`ProxyClient`) and `sentinel-script-shell` both
+read `SENTINEL_AUTH_TOKEN` from the environment and attach it as
+`Authorization: Bearer <token>` on their POST calls (agent role) — reads stay
+unauthenticated even with a token set. The dashboard has an "operator token"
+field (persisted to `localStorage`) that attaches the same header to its
+Approve/Deny/Revoke actions, so a human operator can drive the gate when auth
+is enabled.
+
+This is what makes ADR-0024's "the agent can request, only a human can grant"
+boundary a hard guarantee rather than an absent tool: with auth on, an
+`agent`-role token presented to `POST /-/approvals` now gets a `403`, no
+matter which client sends the request. See
+[ADR-0025](./docs/adr/0025-control-plane-auth.md).
 
 ## MCP server (Phase 11)
 
