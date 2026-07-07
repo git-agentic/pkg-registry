@@ -13,6 +13,7 @@ import {
   extractCapabilities, capabilityAtom, type Capability, type PackageFile,
   type TreeAuditResult,
   parseLockfile, type Coordinate,
+  signToken, verifyToken, type Role,
 } from "@sentinel/core";
 import { createSandbox, runLifecycleScripts } from "@sentinel/sandbox";
 import { formatReport, formatManifest, verdictExitCode, formatTree, treeExitCode, formatViolations, type Manifest, type ViolationRow } from "./format.js";
@@ -240,6 +241,51 @@ policyCmd
       console.log("  " + summarizePolicy(policy));
     } catch (err) {
       console.error(`✗ ${(err as Error).message}`);
+      process.exit(2);
+    }
+  });
+
+const tokenCmd = program.command("token").description("Mint and verify signed control-plane auth tokens.");
+
+tokenCmd
+  .command("keygen")
+  .description("Generate an Ed25519 keypair (PEM) for signing auth tokens.")
+  .requiredOption("--out <prefix>", "write <prefix>.pub.pem and <prefix>.key.pem")
+  .action((opts: { out: string }) => {
+    const { publicKey, privateKey } = generateKeypair();
+    writeFileSync(`${opts.out}.pub.pem`, publicKey);
+    writeFileSync(`${opts.out}.key.pem`, privateKey);
+    console.log(`wrote ${opts.out}.pub.pem and ${opts.out}.key.pem`);
+  });
+
+tokenCmd
+  .command("mint")
+  .description("Mint a signed role token (prints to stdout).")
+  .requiredOption("--role <role>", "operator | agent | publisher")
+  .requiredOption("--sub <id>", "subject identity recorded in the token")
+  .requiredOption("--ttl <seconds>", "seconds until the token expires")
+  .requiredOption("--key <privkey>", "path to the Ed25519 private key PEM")
+  .action((opts: { role: string; sub: string; ttl: string; key: string }) => {
+    const roles = ["operator", "agent", "publisher"];
+    if (!roles.includes(opts.role)) {
+      console.error(`sentinel: --role must be one of ${roles.join(", ")}`);
+      process.exit(2);
+    }
+    const token = signToken({ role: opts.role as Role, sub: opts.sub, ttlSeconds: Number(opts.ttl) }, readFileSync(opts.key, "utf8"));
+    console.log(token);
+  });
+
+tokenCmd
+  .command("verify")
+  .description("Verify a token and print its role/sub/exp, or the rejection reason.")
+  .argument("<token>")
+  .requiredOption("--pubkey <pubkey>", "path to the Ed25519 public key PEM")
+  .action((token: string, opts: { pubkey: string }) => {
+    const r = verifyToken(token, readFileSync(opts.pubkey, "utf8"));
+    if (r.ok) {
+      console.log(`valid  role=${r.role}  sub=${r.sub}  exp=${new Date(r.exp * 1000).toISOString()}`);
+    } else {
+      console.error(`invalid: ${r.reason}`);
       process.exit(2);
     }
   });
