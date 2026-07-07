@@ -106,6 +106,11 @@ Probed live against `registry.npmjs.org/-/npm/v1/attestations/sigstore@3.0.0`:
 | `absent` | Packument claims no attestations |
 | `unknown` | Claimed but bundle unfetchable, or no trust root configured → low finding; no unconditional block (but see §3: it does not satisfy `requireProvenance`) |
 
+> **Implementation refinement (ADR-0022):** a thrown error while verifying
+> *present* bundles maps to `invalid`, not `unknown` — a crafted crash-bundle
+> must not fail open past an identity gate. `unknown` is reserved for missing
+> inputs (bundle unfetchable, empty bundle list, no trust material).
+
 - **Trust-root staleness**: computed against an injectable timestamp, surfaced as a
   **zero-weight info finding** when the pinned root's `validFor` can no longer chain
   newly issued certs. Zero weight preserves invariant #1 (no clock-dependent score).

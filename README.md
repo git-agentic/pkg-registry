@@ -79,6 +79,8 @@ node packages/cli/dist/index.js install lodash
 | `SENTINEL_PORT` | `4873` | proxy port (verdaccio's conventional local-registry port) |
 | `SENTINEL_REGISTRY` | `https://registry.npmjs.org` | upstream registry when in npm mode |
 | `SENTINEL_STORE` | _(memory only)_ | path to a JSON file to persist the audit log |
+| `SENTINEL_TRUSTED_ROOT` | _(bundled root)_ | path to a Sigstore `trusted_root.json` for provenance verification (fatal error on a bad path) |
+| `SENTINEL_NPM_ATTESTATION_KEYS` | _(bundled keys)_ | path to an npm publish-attestation keys JSON, used alongside `SENTINEL_TRUSTED_ROOT` |
 
 ## CLI
 
@@ -161,6 +163,10 @@ the proxy and exits non-zero if the aggregate verdict trips the policy's `treeGa
 Phase 8 verifies the npm registry signature offline (ECDSA P-256/SHA-256/DER against a
 configured key set) and surfaces `signature`/`provenance` status on every audit; a policy
 can require a verified signature or present provenance for matching package names.
+Phase 9 deep-verifies build provenance: real Sigstore attestation bundles are checked
+offline against pinned trust material, `provenance` becomes `verified|invalid|absent|unknown`
+with subject-digest binding to the actual served bytes, and a policy can require a verified
+attestation from a specific repository, workflow, or builder for matching package names.
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full design and [docs/adr/](./docs/adr/)
 for the decision log.
 
