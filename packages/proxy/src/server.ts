@@ -228,7 +228,8 @@ export function createServer(opts: ServerOptions) {
       8,
       async (co) => {
         try {
-          const { report } = await auditVersion(co.name, co.version);
+          const { report: audited } = await auditVersion(co.name, co.version);
+          const report = applyQuarantine(audited);
           return {
             name: co.name, version: co.version, status: report.verdict,
             score: report.score, topFinding: report.findings[0]?.message ?? null, error: null,
