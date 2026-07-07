@@ -61,4 +61,17 @@ describe("auth tokens", () => {
     assert.equal(r.ok, false);
     if (!r.ok) assert.equal(r.reason, "bad-role");
   });
+
+  test("a validly-signed non-object payload (null) is malformed, not a throw", async () => {
+    const { createPrivateKey, sign } = await import("node:crypto");
+    for (const raw of ["null", "5", "\"hi\"", "[1,2]"]) {
+      const payload = Buffer.from(raw).toString("base64url");
+      const sig = sign(null, Buffer.from(payload), createPrivateKey(privateKey)).toString("base64url");
+      const token = `${payload}.${sig}`;
+      let r: ReturnType<typeof verifyToken>;
+      assert.doesNotThrow(() => { r = verifyToken(token, publicKey, NOW); });
+      assert.equal(r!.ok, false);
+      if (!r!.ok) assert.equal(r!.reason, "malformed");
+    }
+  });
 });

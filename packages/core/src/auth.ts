@@ -52,6 +52,9 @@ export function verifyToken(
   } catch {
     return { ok: false, reason: "malformed" };
   }
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return { ok: false, reason: "malformed" };
+  }
   if (!ROLES.includes(payload.role)) return { ok: false, reason: "bad-role" };
   if (typeof payload.exp !== "number" || now >= payload.exp) return { ok: false, reason: "expired" };
   return { ok: true, role: payload.role, sub: String(payload.sub ?? ""), exp: payload.exp };
