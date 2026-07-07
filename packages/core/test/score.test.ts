@@ -3,6 +3,7 @@ import { before, describe, test } from "node:test";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { runAudit, score, integrityOf, DEFAULT_POLICY, matchPackage, type EnterprisePolicy, type NpmSigningKey, type RegistrySignature } from "../src/index.js";
 import { ensureFixtures, tarball } from "./helpers.js";
+import type { Audit, PackageMeta } from "../src/types.js";
 
 const baseMeta = {
   author: null, maintainers: [] as string[], license: null,
@@ -175,5 +176,47 @@ describe("provenance identity gate", () => {
     const p = { ...DEFAULT_POLICY, requireProvenance: ["acme-lib"] } as EnterprisePolicy;
     assert.equal(score(auditWith("verified", "unknown"), p).verdict, "block");
     assert.equal(score(auditWith("verified", "verified", ID), p).verdict, "allow");
+  });
+});
+
+function auditNamed(name: string): Audit {
+  const meta = { name, version: "1.0.0", author: null, maintainers: [], license: null,
+    hasInstallScripts: false, signature: "unsigned", provenance: "absent", integrity: "sha512-x",
+    unpackedSize: 10, fileCount: 1 } as unknown as PackageMeta;
+  return { schema: 3, meta, findings: [], capabilities: [], capabilityDelta: null,
+    engine: { version: "0.1.0", rules: [], mode: "full" }, auditedAt: "t", durationMs: 0 };
+}
+const withClaim = (ns: string[]): EnterprisePolicy => ({ ...DEFAULT_POLICY, privateNamespaces: ns });
+
+describe("dependency-confusion gate", () => {
+  test("a public look-alike of a claimed scope is flagged high", () => {
+    const r = score(auditNamed("acme-internal"), withClaim(["@acme/*"]));
+    const f = r.findings.find((x) => x.ruleId === "dependency-confusion");
+    assert.ok(f, "expected a dependency-confusion finding");
+    assert.equal(f!.severity, "high");
+    assert.equal(f!.category, "metadata");
+    assert.match(f!.message, /@acme/);
+  });
+
+  test("the legitimate claimed package itself is NOT flagged", () => {
+    const r = score(auditNamed("@acme/utils"), withClaim(["@acme/*"]));
+    assert.equal(r.findings.find((x) => x.ruleId === "dependency-confusion"), undefined);
+  });
+
+  test("an unrelated public package is NOT flagged", () => {
+    const r = score(auditNamed("lodash"), withClaim(["@acme/*"]));
+    assert.equal(r.findings.find((x) => x.ruleId === "dependency-confusion"), undefined);
+  });
+
+  test("no claimed namespaces (default policy) → gate inert", () => {
+    const r = score(auditNamed("acme-internal"), DEFAULT_POLICY);
+    assert.equal(r.findings.find((x) => x.ruleId === "dependency-confusion"), undefined);
+  });
+
+  test("the finding is weighted (contributes to the score), not a forced block", () => {
+    const r = score(auditNamed("acme-internal"), withClaim(["@acme/*"]));
+    assert.ok(r.score < 100, "the high finding must lower the score");
+    // high (-25) alone → 75 → warn, not block:
+    assert.equal(r.verdict, "warn");
   });
 });

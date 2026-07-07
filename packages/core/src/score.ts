@@ -1,5 +1,7 @@
 import type { Audit, AuditReport, ProvenanceIdentity, ScoredFinding, Severity, Verdict } from "./types.js";
 import { DEFAULT_POLICY, matchPackage, policyHashOf, type EnterprisePolicy, type ProvenanceIdentityRequirement } from "./policy.js";
+import { canonical, typosquatMatch, normalizeName } from "./name-distance.js";
+import type { Finding } from "./types.js";
 
 const SEVERITY_ORDER: Severity[] = ["info", "low", "medium", "high", "critical"];
 
@@ -19,7 +21,9 @@ export function score(
   hash: string = policyHashOf(policy),
 ): AuditReport {
   const disabled = new Set(policy.rules.disabled);
-  const scored: ScoredFinding[] = audit.findings.map((f) => {
+  const dcFinding = dependencyConfusion(audit.meta.name, policy.privateNamespaces ?? []);
+  const rawFindings = dcFinding ? [...audit.findings, dcFinding] : audit.findings;
+  const scored: ScoredFinding[] = rawFindings.map((f) => {
     let waived = false;
     let waivedBy: string | undefined;
     if (disabled.has(f.ruleId)) {
@@ -96,6 +100,31 @@ export function score(
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, n));
+}
+
+/**
+ * Dependency-confusion detection (ADR-0026): a PUBLIC package whose name is a
+ * confusable look-alike of a namespace the operator explicitly claimed
+ * (policy.privateNamespaces). Never flags the legitimate claimed package itself
+ * (it matches the claim via matchPackage). Pure; guarded against a malformed name.
+ */
+function dependencyConfusion(name: string, privateNamespaces: string[]): Finding | null {
+  if (!name || privateNamespaces.length === 0) return null;
+  // The real private package legitimately matches its own claim — never flag it.
+  if (privateNamespaces.some((c) => matchPackage(c, name))) return null;
+  const nc = canonical(name);
+  for (const claim of privateNamespaces) {
+    const scope = normalizeName(claim); // "@acme/*" → "acme"; "internal-tool" → "internaltool"
+    if (scope.length < 3) continue;
+    if (nc === scope || nc.startsWith(scope) || typosquatMatch(nc, scope)) {
+      return {
+        ruleId: "dependency-confusion", category: "metadata", severity: "high",
+        message: `\`${name}\` resembles your claimed private namespace \`${claim}\` — possible dependency confusion.`,
+        onChangedFile: false, evidence: [],
+      };
+    }
+  }
+  return null;
 }
 
 function identityViolation(
