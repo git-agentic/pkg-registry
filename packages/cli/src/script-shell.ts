@@ -26,9 +26,11 @@ export async function reportViolation(
     if (!man.ok) return;
     const integrity = ((await man.json()) as { meta?: { integrity?: string } }).meta?.integrity;
     if (!integrity) return;
+    const headers: Record<string, string> = { "content-type": "application/json" };
+    if (process.env.SENTINEL_AUTH_TOKEN) headers.authorization = `Bearer ${process.env.SENTINEL_AUTH_TOKEN}`;
     await fetch(`${proxy}/-/violations`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers,
       body: JSON.stringify({ name, version, integrity, ...violation }),
     });
   } catch {
