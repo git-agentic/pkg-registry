@@ -83,10 +83,18 @@ export function baselineFrom(files: PackageFile[]): Map<string, string> {
   return new Map(files.map((f) => [f.path, f.content]));
 }
 
+/** SRI algorithms Sentinel can recompute for a lockfile-integrity cross-check. */
+export type SriAlgorithm = "sha1" | "sha256" | "sha512";
+
+/** Compute the SRI integrity string (`<algo>-<base64>`) for a tarball in `algo`. */
+export function integrityOfAlgo(tgz: Buffer, algo: SriAlgorithm): string {
+  const digest = createHash(algo).update(tgz).digest("base64");
+  return `${algo}-${digest}`;
+}
+
 /** Compute the SRI integrity string (`sha512-<base64>`) for a tarball. */
 export function integrityOf(tgz: Buffer): string {
-  const digest = createHash("sha512").update(tgz).digest("base64");
-  return `sha512-${digest}`;
+  return integrityOfAlgo(tgz, "sha512");
 }
 
 function normalize(p: string): string {

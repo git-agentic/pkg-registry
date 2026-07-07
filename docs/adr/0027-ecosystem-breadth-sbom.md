@@ -61,17 +61,25 @@ per-package audit path (rules, scoring, provenance) is untouched.
   carries `meta.integrity` — the hash Sentinel actually recomputed from the
   bytes it served (`actualIntegrity`, ADR-0022), not a claimed value. When
   the caller's lockfile coordinate carries an `integrity` field, the route
-  compares it against `report.meta.integrity`; a mismatch forces that row to
-  `block`, sets `integrityMismatch: true`, and injects a
+  recomputes the served tarball's digest **in the lockfile's own algorithm**
+  (`integrityOfAlgo(tarball, algo)`) and compares same-algorithm; a mismatch
+  forces that row to `block`, sets `integrityMismatch: true`, and injects a
   `lockfile-integrity-mismatch` top finding — the closest thing `audit-tree`
   has to substitution/tampering detection between what a team's lockfile
-  pinned and what the registry serves today. Both `TreePackageRow` and
-  `TreeAggregate` gained an `integrityMismatch` field (row: boolean;
-  aggregate: count) so the CLI's summary and the SBOM can both surface it.
-  When either side has no integrity to compare (yarn-berry's non-SRI
-  checksum, or a claimed package with no integrity in the lockfile at all),
-  the row is left alone — the check only ever fires on a genuine disagreement
-  between two present SRI-shaped hashes, never on absence.
+  pinned and what the registry serves today. Recomputing in the claimed
+  algorithm (rather than string-comparing against Sentinel's fixed sha512
+  recompute) is load-bearing: a legacy `sha1-`/`sha256-` pin (common in
+  yarn v1 and pre-2017 npm locks) is thereby **genuinely verified** — neither
+  false-blocked against a sha512 hash (a wrong FP that breaks real CI) nor
+  silently skipped (a fail-open that would leave those packages
+  integrity-unchecked). Both `TreePackageRow` and `TreeAggregate` gained an
+  `integrityMismatch` field (row: boolean; aggregate: count) so the CLI's
+  summary and the SBOM can both surface it. When there is no integrity to
+  compare (yarn-berry's non-SRI checksum, a lockfile coordinate with no
+  integrity, or a truly-unknown algorithm Sentinel cannot recompute), the row
+  is left alone — the check only ever fires on a genuine disagreement between
+  the pinned hash and a freshly-computed digest of the served bytes in that
+  same algorithm, never on absence.
 - **`--fail-on-error` is opt-in, not the default.** `aggregateTree`'s
   `failOnError` option (default `false`, preserving ADR-0020's fail-open
   stance on unresolvable packages) now also gates the tree when any row is an

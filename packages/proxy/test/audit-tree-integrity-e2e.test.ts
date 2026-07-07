@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
@@ -61,10 +62,27 @@ describe("audit-tree integrity cross-check + failOnError (e2e)", () => {
     assert.notEqual(row.status, "block");  // a matching integrity must not force-block
   });
 
-  test("a different-ALGORITHM claimed integrity (sha1) is not flagged (algorithm-blind FP fixed)", async () => {
+  // The lockfile-integrity cross-check recomputes the SERVED bytes in the lockfile's own
+  // algorithm, so a legacy sha1 pin is genuinely verified (no fail-open) without being
+  // false-flagged against our sha512 recompute.
+  const sha1Of = (name: string, version: string): string =>
+    `sha1-${createHash("sha1").update(readFileSync(join(FIXTURES, ".tarballs", `${name}-${version}.tgz`))).digest("base64")}`;
+
+  test("a correct sha1 lockfile pin (matches the served bytes) is not flagged", async () => {
+    const r = await tree(base, [{ name: "leftpad-lite", version: "1.0.0", integrity: sha1Of("leftpad-lite", "1.0.0") }]);
+    assert.equal(r.packages.find((p) => p.name === "leftpad-lite")!.integrityMismatch, false);
+  });
+
+  test("a WRONG sha1 lockfile pin blocks the row (fail-open closed — genuinely verified, not skipped)", async () => {
     const r = await tree(base, [{ name: "leftpad-lite", version: "1.0.0", integrity: "sha1-abcdef1234567890abcdef1234567890abcdef12" }]);
     const row = r.packages.find((p) => p.name === "leftpad-lite")!;
-    assert.equal(row.integrityMismatch, false);  // sha1 vs sha512 = not comparable, not a mismatch
+    assert.equal(row.integrityMismatch, true);
+    assert.equal(row.status, "block");
+  });
+
+  test("an unknown-algorithm pin cannot be recomputed and is left unverified (skip, not a false block)", async () => {
+    const r = await tree(base, [{ name: "leftpad-lite", version: "1.0.0", integrity: "md5-abcdef1234567890abcdef1234567890" }]);
+    assert.equal(r.packages.find((p) => p.name === "leftpad-lite")!.integrityMismatch, false);
   });
 
   test("failOnError gates a tree containing an unresolvable package", async () => {
