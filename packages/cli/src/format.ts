@@ -134,6 +134,8 @@ export function formatTree(r: TreeAuditResult): string {
   const a = r.aggregate;
   L.push("");
   L.push(`  ${a.counts.allow} allow · ${a.counts.warn} warn · ${a.counts.block} block · ${a.counts.error} error`);
+  const pv = a.provenance;
+  L.push(c(C.gray, `  provenance: ${pv.verified} verified · ${pv.invalid} invalid · ${pv.absent} absent · ${pv.unknown} unknown`));
   L.push(
     `  verdict    ${c(C.bold + (verdictColor[a.verdict] ?? C.gray), a.verdict.toUpperCase())}` +
       (a.gated ? c(C.red, "  ✗ GATED") : c(C.green, "  ✓ ok")),

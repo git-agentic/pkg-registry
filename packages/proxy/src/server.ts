@@ -214,11 +214,13 @@ export function createServer(opts: ServerOptions) {
           return {
             name: co.name, version: co.version, status: report.verdict,
             score: report.score, topFinding: report.findings[0]?.message ?? null, error: null,
+            provenance: report.meta.provenance,
           };
         } catch (err) {
           return {
             name: co.name, version: co.version, status: "error" as const,
             score: null, topFinding: null, error: (err as Error)?.message ?? "audit failed",
+            provenance: null,
           };
         }
       },

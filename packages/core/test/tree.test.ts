@@ -3,7 +3,7 @@ import { describe, test } from "node:test";
 import { aggregateTree, type TreePackageRow } from "../src/tree.js";
 
 function row(status: TreePackageRow["status"]): TreePackageRow {
-  return { name: "p", version: "1.0.0", status, score: null, topFinding: null, error: null };
+  return { name: "p", version: "1.0.0", status, score: null, topFinding: null, error: null, provenance: null };
 }
 
 describe("aggregateTree", () => {
@@ -38,5 +38,16 @@ describe("aggregateTree", () => {
     const forward = aggregateTree(rows, "block");
     const reversed = aggregateTree([...rows].reverse(), "block");
     assert.deepEqual(forward, reversed);
+  });
+
+  test("aggregate rolls up provenance counts; error rows are excluded", () => {
+    const rows: TreePackageRow[] = [
+      { name: "a", version: "1", status: "allow", score: 100, topFinding: null, error: null, provenance: "verified" },
+      { name: "b", version: "1", status: "allow", score: 100, topFinding: null, error: null, provenance: "absent" },
+      { name: "c", version: "1", status: "block", score: 0, topFinding: "x", error: null, provenance: "invalid" },
+      { name: "d", version: "1", status: "error", score: null, topFinding: null, error: "boom", provenance: null },
+    ];
+    const agg = aggregateTree(rows, "block");
+    assert.deepEqual(agg.provenance, { verified: 1, invalid: 1, absent: 1, unknown: 0 });
   });
 });
