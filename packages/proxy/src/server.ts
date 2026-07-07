@@ -14,6 +14,7 @@ import {
   type TreePackageRow,
   type TreeAuditResult,
   type NpmSigningKey,
+  type ProvenanceTrustMaterial,
 } from "@sentinel/core";
 import { AuditStore } from "./store.js";
 import {
@@ -47,6 +48,8 @@ export interface ServerOptions {
   publishTokens?: string[];
   /** Trusted npm registry signing keys (default: bundled npm keys). */
   signingKeys?: NpmSigningKey[];
+  /** Pinned Sigstore trust material. undefined ⇒ bundled default; null ⇒ disabled. */
+  trustMaterial?: ProvenanceTrustMaterial | null;
 }
 
 const TARBALL_RE = /^(.+)\/-\/([^/]+\.tgz)$/;
@@ -100,13 +103,16 @@ export function createServer(opts: ServerOptions) {
     if (!vmeta) throw new HttpError(404, `unknown version ${pkg}@${version}`);
 
     const tarball = providedTarball ?? (await upstream.getTarball(pkg, version));
-    const integrity = vmeta.integrity ?? integrityOf(tarball);
+    // Cache and report by the ACTUAL bytes hash; the claimed integrity goes into
+    // runAudit for the tamper check (ADR-0022).
+    const actualIntegrity = integrityOf(tarball);
 
-    const cached = store.get(integrity);
+    const cached = store.get(actualIntegrity);
     if (cached) return { report: cached.report, tarball };
 
     const prev = previousVersion(Object.keys(pm.versions), version);
     const baselineTarball = prev ? await upstream.getTarball(pkg, prev) : undefined;
+    const attestations = vmeta.hasProvenance ? await upstream.getAttestations(pkg, version) : null;
 
     const meta: Omit<PackageMeta, "unpackedSize" | "fileCount" | "signature" | "provenance"> = {
       name: pkg,
@@ -115,10 +121,14 @@ export function createServer(opts: ServerOptions) {
       maintainers: vmeta.maintainers,
       license: vmeta.license,
       hasInstallScripts: vmeta.hasInstallScripts,
-      integrity,
+      integrity: vmeta.integrity ?? actualIntegrity,
     };
 
-    const audit = await runAudit({ meta, tarball, baselineTarball, signatures: vmeta.signatures, hasProvenance: vmeta.hasProvenance, signingKeys });
+    const audit = await runAudit({
+      meta, tarball, baselineTarball,
+      signatures: vmeta.signatures, hasProvenance: vmeta.hasProvenance,
+      attestations, signingKeys, trustMaterial: opts.trustMaterial,
+    });
     const report = score(audit, enterprisePolicy, policyHash);
     store.put(report);
     return { report, tarball };
@@ -132,6 +142,7 @@ export function createServer(opts: ServerOptions) {
     res.setHeader("x-sentinel-capabilities", String(report.capabilities.length));
     res.setHeader("x-sentinel-approval", rec.state);
     res.setHeader("x-sentinel-policy", report.policy.version);
+    res.setHeader("x-sentinel-provenance", report.meta.provenance);
     if (isPrivate) res.setHeader("x-sentinel-private", "true");
     if (policy === "block") {
       if (report.verdict === "block") {
@@ -310,7 +321,7 @@ export function createServer(opts: ServerOptions) {
         author: null, maintainers: [], license: null,
         hasInstallScripts: false, integrity,
       };
-      const audit = await runAudit({ meta, tarball: parsed.tarball, signatures: null, hasProvenance: false, signingKeys });
+      const audit = await runAudit({ meta, tarball: parsed.tarball, signatures: null, hasProvenance: false, attestations: null, signingKeys });
       const report = score(audit, enterprisePolicy, policyHash);
       if (report.verdict === "block") {
         return res.status(403).json({
