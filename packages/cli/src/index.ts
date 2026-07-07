@@ -12,7 +12,8 @@ import {
   type EnterprisePolicy,
   extractCapabilities, capabilityAtom, type Capability, type PackageFile,
   type TreeAuditResult,
-  parseLockfile, type Coordinate,
+  parseAnyLockfile, type Coordinate,
+  toCycloneDX,
   signToken, verifyToken, type Role,
 } from "@sentinel/core";
 import { createSandbox, runLifecycleScripts } from "@sentinel/sandbox";
@@ -65,15 +66,21 @@ program
 
 program
   .command("audit-tree")
-  .description("Audit every package in a resolved npm lockfile; exits non-zero when the tree is gated by policy.")
-  .argument("[lockfile]", "path to package-lock.json", "package-lock.json")
+  .description("Audit every package in a resolved lockfile (npm/yarn/pnpm); exits non-zero when the tree is gated.")
+  .argument("[lockfile]", "path to package-lock.json / yarn.lock / pnpm-lock.yaml", "package-lock.json")
   .option("-p, --proxy <url>", "Sentinel proxy base URL", DEFAULT_PROXY)
   .option("--omit <type>", "omit a dependency group (only 'dev' is supported)")
+  .option("--sbom <file>", "write a CycloneDX 1.6 SBOM of the audited tree to <file>")
+  .option("--fail-on-error", "gate (exit non-zero) when any package fails to audit", false)
   .option("--json", "emit the raw JSON result", false)
-  .action(async (lockfile: string, opts: { proxy: string; omit?: string; json: boolean }) => {
+  .action(async (lockfile: string, opts: { proxy: string; omit?: string; sbom?: string; failOnError: boolean; json: boolean }) => {
     try {
-      const coords = parseLockfile(readFileSync(lockfile, "utf8"), { omitDev: opts.omit === "dev" });
-      const result = await fetchTree(opts.proxy, coords);
+      const coords = parseAnyLockfile(readFileSync(lockfile, "utf8"), { filename: lockfile, omitDev: opts.omit === "dev" });
+      const result = await fetchTree(opts.proxy, coords, opts.failOnError);
+      if (opts.sbom) {
+        writeFileSync(opts.sbom, JSON.stringify(toCycloneDX(result, { now: new Date().toISOString() }), null, 2));
+        console.error(`\x1b[90mwrote CycloneDX SBOM → ${opts.sbom}\x1b[0m`);
+      }
       if (opts.json) console.log(JSON.stringify(result, null, 2));
       else console.log(formatTree(result));
       process.exitCode = treeExitCode(result);
@@ -460,11 +467,11 @@ async function fetchAudit(proxy: string, pkg: string, version: string): Promise<
   return (await res.json()) as AuditReport;
 }
 
-async function fetchTree(proxy: string, packages: Coordinate[]): Promise<TreeAuditResult> {
+async function fetchTree(proxy: string, packages: Coordinate[], failOnError = false): Promise<TreeAuditResult> {
   const res = await fetch(`${proxy}/-/audit-tree`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ packages }),
+    body: JSON.stringify({ packages, failOnError }),
   });
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
