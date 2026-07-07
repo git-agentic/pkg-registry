@@ -113,7 +113,7 @@ export function verifyProvenance(input: {
       const stmt = statementOf(bundle);
       const bindErr = checkSubjectBinding(stmt, input.integrity);
       if (bindErr) return { status: "invalid", identity: null, reason: bindErr, rootStale };
-      if (a.predicateType === SLSA_V1) identity = extractIdentity(result, stmt);
+      if (stmt.predicateType === SLSA_V1) identity = extractIdentity(result, stmt);
     }
     return { status: "verified", identity, reason: null, rootStale };
   } catch (e) {
@@ -142,6 +142,7 @@ function buildVerifier(trust: ProvenanceTrustMaterial): Verifier {
 }
 
 interface InTotoStatement {
+  predicateType?: string;
   subject?: { name?: string; digest?: Record<string, string> }[];
   predicate?: {
     buildDefinition?: {

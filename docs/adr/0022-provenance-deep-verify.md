@@ -108,6 +108,28 @@ This is also recorded as a spec amendment in
   acquisition path (only when the packument claims provenance) — still no
   network call on the cached-integrity request path once cached (invariant #3
   intact: the *fetch* is acquisition, the *audit* stays sync-over-bytes-in-memory).
+- An `allow` waiver that matches the `provenance` **category** also waives the
+  `integrity-mismatch` critical finding, since it shares that category. An
+  enterprise that wants to silence attestation noise (e.g. `trust-root-stale`)
+  without also blinding itself to a claimed/actual integrity mismatch should
+  waive by `ruleId`, not by category. A distinct category for the integrity
+  check is deferred.
+- `requireProvenance` demands verified provenance **and** a non-null build
+  identity (ADR-0022's identity-required refinement); `provenanceIdentities`
+  entries are checked independently and are exempt when provenance is
+  `unknown` by design. Operators should pair `provenanceIdentities` with
+  `requireProvenance` on the same package patterns — `requireProvenance` is
+  the fail-closed lever that also covers the outage case the identity gate
+  deliberately exempts.
+- `trust-root-stale` is zero-weight only **under the default policy**, where
+  `severityWeight.info = 0`; it's still an `info`-severity finding, `verifyAt`
+  is an explicit audit input, and determinism-given-a-policy (invariant #1)
+  holds regardless — a custom policy that weights `info > 0` will make the
+  score depend on `verifyAt`, which is expected, not a bug.
+- `matchPackage` globs match across `/`, so a repository pattern like
+  `"https://github.com/acme*"` also matches `"https://github.com/acme-evil"`.
+  Operators writing `provenanceIdentities` `repository` patterns should prefer
+  an explicit separator, e.g. `"https://github.com/acme/*"`.
 
 ## Deferred
 

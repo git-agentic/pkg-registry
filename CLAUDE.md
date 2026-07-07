@@ -113,11 +113,11 @@ don't downgrade majors without a reason.
 
 ```bash
 npm run build            # tsc --build (project references: core → proxy/cli)
-npm test                 # engine + end-to-end proxy: 256 tests on this host (254 pass, 2 skipped on darwin).
+npm test                 # engine + end-to-end proxy: 259 tests on this host (257 pass, 2 skipped on darwin).
                          # Skips are platform-gated enforcement: "non-darwin throws" skips on darwin
                          # (it verifies darwin-only behaviour), and the "no silent skip" CI guard skips
                          # off-CI. The BubblewrapSandbox enforcement suite and enforce-e2e tests skip as
-                         # describe-level blocks on darwin ("requires Linux") and are not in the 256 count.
+                         # describe-level blocks on darwin ("requires Linux") and are not in the 259 count.
                          # Phase 7's audit-tree and Phase 8/9's signature/provenance tests are hermetic and
                          # platform-neutral, so the darwin/Linux relationship from Phase 6 (Linux one test
                          # higher, one fewer skip) should hold, but hasn't been re-verified on Linux CI

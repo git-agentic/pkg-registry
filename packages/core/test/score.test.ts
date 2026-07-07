@@ -118,6 +118,13 @@ function auditWith(signature: string, provenance: string, provenanceIdentity?: o
   } as Parameters<typeof score>[0];
 }
 
+const ID = {
+  workflow: "https://github.com/acme/pkg/.github/workflows/release.yml@refs/heads/main",
+  issuer: "https://token.actions.githubusercontent.com",
+  sourceRepository: "https://github.com/acme/pkg", ref: "refs/heads/main",
+  builder: "https://github.com/actions/runner/github-hosted", commit: "abc123",
+};
+
 describe("requireSignature / requireProvenance policy gate", () => {
   test("requireSignature blocks a non-verified package", () => {
     const p = { ...DEFAULT_POLICY, requireSignature: ["acme-*"] };
@@ -127,20 +134,22 @@ describe("requireSignature / requireProvenance policy gate", () => {
   test("requireProvenance blocks a package without verified provenance", () => {
     const p = { ...DEFAULT_POLICY, requireProvenance: ["acme-*"] };
     assert.equal(score(auditWith("verified", "absent"), p).verdict, "block");
-    assert.equal(score(auditWith("verified", "verified"), p).verdict, "allow");
+    assert.equal(score(auditWith("verified", "verified", ID), p).verdict, "allow");
   });
   test("no requirement -> not gated on signature/provenance", () => {
     assert.equal(score(auditWith("unsigned", "absent"), DEFAULT_POLICY).verdict, "allow");
   });
+  test("requireProvenance rejects verified provenance without build identity", () => {
+    const p = { ...DEFAULT_POLICY, requireProvenance: ["acme-lib"] };
+    assert.equal(score(auditWith("verified", "verified"), p).verdict, "block");
+  });
+  test("requireProvenance passes verified provenance with identity", () => {
+    const p = { ...DEFAULT_POLICY, requireProvenance: ["acme-lib"] };
+    assert.equal(score(auditWith("verified", "verified", ID), p).verdict, "allow");
+  });
 });
 
 describe("provenance identity gate", () => {
-  const ID = {
-    workflow: "https://github.com/acme/pkg/.github/workflows/release.yml@refs/heads/main",
-    issuer: "https://token.actions.githubusercontent.com",
-    sourceRepository: "https://github.com/acme/pkg", ref: "refs/heads/main",
-    builder: "https://github.com/actions/runner/github-hosted", commit: "abc123",
-  };
   const policyWith = (entry: object) => ({ ...DEFAULT_POLICY, provenanceIdentities: [entry] } as EnterprisePolicy);
 
   test("verified + matching identity passes", () => {
@@ -165,6 +174,6 @@ describe("provenance identity gate", () => {
   test("requireProvenance demands verified: unknown trips it", () => {
     const p = { ...DEFAULT_POLICY, requireProvenance: ["acme-lib"] } as EnterprisePolicy;
     assert.equal(score(auditWith("verified", "unknown"), p).verdict, "block");
-    assert.equal(score(auditWith("verified", "verified"), p).verdict, "allow");
+    assert.equal(score(auditWith("verified", "verified", ID), p).verdict, "allow");
   });
 });

@@ -142,7 +142,8 @@ export function createServer(opts: ServerOptions) {
     res.setHeader("x-sentinel-capabilities", String(report.capabilities.length));
     res.setHeader("x-sentinel-approval", rec.state);
     res.setHeader("x-sentinel-policy", report.policy.version);
-    res.setHeader("x-sentinel-provenance", report.meta.provenance);
+    // legacy persisted audits may predate the provenance field
+    res.setHeader("x-sentinel-provenance", report.meta.provenance ?? "unknown");
     if (isPrivate) res.setHeader("x-sentinel-private", "true");
     if (policy === "block") {
       if (report.verdict === "block") {

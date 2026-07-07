@@ -34,6 +34,15 @@ describe("verifyProvenance — real captured bundle, offline", () => {
     assert.match(r.identity?.workflow ?? "", /^https:\/\/github\.com\/sigstore\/sigstore-js\//);
   });
 
+  test("identity extraction keys on the signed statement, not the outer wrapper label", () => {
+    const relabeled = structuredClone(ATTESTATIONS);
+    const slsa = relabeled.attestations.find((a) => a.predicateType === "https://slsa.dev/provenance/v1")!;
+    slsa.predicateType = "https://example.com/mislabeled";
+    const r = verifyProvenance({ ...base, attestations: relabeled });
+    assert.equal(r.status, "verified");
+    assert.equal(r.identity?.sourceRepository, "https://github.com/sigstore/sigstore-js");
+  });
+
   test("invalid: tampered DSSE payload", () => {
     const tampered = structuredClone(ATTESTATIONS);
     const slsa = tampered.attestations.find((a) => a.predicateType === "https://slsa.dev/provenance/v1")!;

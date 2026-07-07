@@ -46,7 +46,7 @@ export function score(
     (f) => !f.waived && severityRank(f.severity) >= severityRank(policy.scoring.hardBlockSeverity),
   );
   const reqSig = (policy.requireSignature ?? []).some((p) => matchPackage(p, audit.meta.name)) && audit.meta.signature !== "verified";
-  const reqProv = (policy.requireProvenance ?? []).some((p) => matchPackage(p, audit.meta.name)) && audit.meta.provenance !== "verified";
+  const reqProv = (policy.requireProvenance ?? []).some((p) => matchPackage(p, audit.meta.name)) && (audit.meta.provenance !== "verified" || !audit.meta.provenanceIdentity);
 
   // Identity gate (ADR-0022): every matching entry must be satisfied (fail-closed
   // AND). "unknown" is exempt — an outage must not block ordinary installs; the

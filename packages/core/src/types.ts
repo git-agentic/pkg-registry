@@ -100,7 +100,11 @@ export interface PackageMeta {
   provenance: ProvenanceStatus;
   /** Identity from the verified SLSA attestation; null unless provenance is "verified". */
   provenanceIdentity?: ProvenanceIdentity | null;
-  /** Subresource Integrity string from the registry `dist` block. */
+  /**
+   * Subresource Integrity string recomputed from the actual served tarball
+   * bytes, not the registry's claimed `dist.integrity` (ADR-0022) — the
+   * registry's claimed value feeds the integrity-mismatch check instead.
+   */
   integrity: string | null;
   unpackedSize: number;
   fileCount: number;
