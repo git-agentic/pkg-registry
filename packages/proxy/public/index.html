@@ -56,6 +56,7 @@
   <header>
     <h1>🛡 SENTINEL</h1>
     <span class="sub">agent-auditable npm registry proxy · <span id="upstream">…</span> · policy <span id="policy">…</span></span>
+    <input id="op-token" type="password" placeholder="operator token (if auth enabled)" size="28" />
   </header>
   <div class="wrap">
     <div class="cards">
@@ -102,6 +103,17 @@
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const fmtBytes = (n) => n < 1024 ? n + " B" : n < 1048576 ? (n/1024).toFixed(1) + " KB" : (n/1048576).toFixed(1) + " MB";
+
+function opHeaders(extra) {
+  const h = Object.assign({ "content-type": "application/json" }, extra || {});
+  const t = ($("op-token") && $("op-token").value || localStorage.getItem("sentinel-op-token") || "").trim();
+  if (t) h.authorization = "Bearer " + t;
+  return h;
+}
+if ($("op-token")) {
+  $("op-token").value = localStorage.getItem("sentinel-op-token") || "";
+  $("op-token").addEventListener("change", () => localStorage.setItem("sentinel-op-token", $("op-token").value.trim()));
+}
 
 function row(r) {
   const m = r.meta;
@@ -151,7 +163,7 @@ async function loadApprovals() {
     : '<tr><td colspan="5" class="empty">No approvals recorded.</td></tr>';
   for (const btn of document.querySelectorAll("[data-revoke]")) {
     btn.addEventListener("click", async () => {
-      await fetch(`/-/approvals/${encodeURIComponent(btn.getAttribute("data-revoke"))}`, { method: "DELETE" });
+      await fetch(`/-/approvals/${encodeURIComponent(btn.getAttribute("data-revoke"))}`, { method: "DELETE", headers: opHeaders() });
       await loadApprovals();
     });
   }
@@ -180,7 +192,7 @@ async function loadRequests() {
     btn.addEventListener("click", async () => {
       const approve = btn.hasAttribute("data-approve");
       const integrity = btn.getAttribute(approve ? "data-approve" : "data-deny");
-      await fetch("/-/approvals", { method: "POST", headers: { "content-type": "application/json" },
+      await fetch("/-/approvals", { method: "POST", headers: opHeaders(),
         body: JSON.stringify({ integrity, decision: approve ? "approved" : "denied" }) });
       await loadRequests();
     });
