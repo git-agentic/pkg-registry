@@ -30,9 +30,9 @@ export function classifyViolation(result: SandboxResult, denySet: DenySet): Sand
   if (!PERM_SIGNATURE.test(stderr)) return null;
 
   // Network: attributable host:port, or class-denied suspected.
-  const netLine = firstMatchingLine(stderr, NET_CLASS);
+  const netLine = firstMatchingLine(stderr, NET_ERROR) ?? firstMatchingLine(stderr, NET_CLASS);
   if (netLine && denySet.networkDenied) {
-    const m = NET_ERROR.exec(stderr);
+    const m = NET_ERROR.exec(netLine);
     const target = m ? `${m[1]}:${m[2]}` : null;
     return {
       kind: "network", target,
@@ -50,7 +50,7 @@ export function classifyViolation(result: SandboxResult, denySet: DenySet): Sand
     // pathCovers is segment-anchored: true iff denied path is an ancestor-or-equal of
     // the hit target. This IS the false-positive filter — an EPERM on a non-denied path
     // matches nothing and returns null (ambient, not our sandbox).
-    const matched = target ? denySet.deniedPaths.find((dp) => pathCovers(dp, target)) : undefined;
+    const matched = target ? (denySet.deniedPaths ?? []).find((dp) => pathCovers(dp, target)) : undefined;
     if (target && matched) {
       return {
         kind: "filesystem", target, confidence: "confirmed", deniedResource: matched,

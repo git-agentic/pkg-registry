@@ -62,4 +62,23 @@ describe("classifyViolation", () => {
     const v = classifyViolation(ok({ exitCode: 1, stderr: long }), denySet);
     assert.ok((v?.evidence.stderrExcerpt.length ?? 0) <= 200);
   });
+
+  test("network target and excerpt come from the same line", () => {
+    const r = ok({
+      exitCode: 1,
+      stderr: "Error: connect EPERM (address hidden)\nError: connect EPERM 198.51.100.7:443",
+    });
+    const v = classifyViolation(r, { deniedPaths: [], networkDenied: true });
+    assert.equal(v?.target, "198.51.100.7:443");
+    assert.ok(v?.evidence.stderrExcerpt.includes("198.51.100.7:443"));
+  });
+
+  test("does not throw on a malformed deny set", () => {
+    assert.doesNotThrow(() =>
+      classifyViolation(
+        { exitCode: 1, stdout: "", stderr: "EPERM: operation not permitted, open '/x/.ssh/id_rsa'" },
+        { networkDenied: false } as any,
+      ),
+    );
+  });
 });
