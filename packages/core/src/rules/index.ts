@@ -4,6 +4,7 @@ import { networkEgressRule } from "./network-egress.js";
 import { obfuscationRule } from "./obfuscation.js";
 import { provenanceRule } from "./provenance.js";
 import { secretExfilRule } from "./secret-exfil.js";
+import { typosquatRule } from "./typosquat.js";
 
 /** The registered rule pipeline. Order does not affect scoring (penalties sum). */
 export const RULES: Rule[] = [
@@ -12,6 +13,7 @@ export const RULES: Rule[] = [
   networkEgressRule,
   obfuscationRule,
   provenanceRule,
+  typosquatRule,
 ];
 
 export {
@@ -20,4 +22,5 @@ export {
   networkEgressRule,
   obfuscationRule,
   provenanceRule,
+  typosquatRule,
 };
