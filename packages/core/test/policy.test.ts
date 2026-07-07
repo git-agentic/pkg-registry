@@ -141,6 +141,28 @@ describe("privateNamespaces validation", () => {
   });
 });
 
+describe("provenanceIdentities parsing", () => {
+  test("valid entries parse through", () => {
+    const p = parsePolicy(Buffer.from(JSON.stringify({
+      ...JSON.parse(JSON.stringify(DEFAULT_POLICY)),
+      provenanceIdentities: [{ pattern: "@acme/*", repository: "https://github.com/acme/*", issuer: "https://token.actions.githubusercontent.com" }],
+    })));
+    assert.equal(p.provenanceIdentities?.[0]?.pattern, "@acme/*");
+  });
+  test("rejects entries without a pattern", () => {
+    assert.throws(() => parsePolicy(Buffer.from(JSON.stringify({
+      ...JSON.parse(JSON.stringify(DEFAULT_POLICY)),
+      provenanceIdentities: [{ repository: "x" }],
+    }))), /provenanceIdentities/);
+  });
+  test("rejects non-string constraint fields", () => {
+    assert.throws(() => parsePolicy(Buffer.from(JSON.stringify({
+      ...JSON.parse(JSON.stringify(DEFAULT_POLICY)),
+      provenanceIdentities: [{ pattern: "a", repository: 42 }],
+    }))), /provenanceIdentities/);
+  });
+});
+
 describe("treeGate policy field", () => {
   test("treeGateOf defaults to block and honors an explicit value", () => {
     assert.equal(treeGateOf(DEFAULT_POLICY), "block");

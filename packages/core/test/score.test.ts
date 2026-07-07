@@ -110,9 +110,9 @@ describe("score under policies", () => {
   });
 });
 
-function auditWith(signature: string, provenance: string, name = "acme-lib") {
+function auditWith(signature: string, provenance: string, provenanceIdentity?: object | null, name = "acme-lib") {
   return {
-    schema: 3 as const, meta: { name, version: "1.0.0", author: null, maintainers: [], license: null, hasInstallScripts: false, signature, provenance, integrity: "sha512-x", unpackedSize: 1, fileCount: 1 },
+    schema: 3 as const, meta: { name, version: "1.0.0", author: null, maintainers: [], license: null, hasInstallScripts: false, signature, provenance, provenanceIdentity: provenanceIdentity ?? null, integrity: "sha512-x", unpackedSize: 1, fileCount: 1 },
     findings: [], capabilities: [], capabilityDelta: null,
     engine: { version: "0.1.0", rules: [], mode: "full" as const }, auditedAt: "t", durationMs: 0,
   } as Parameters<typeof score>[0];
@@ -121,15 +121,50 @@ function auditWith(signature: string, provenance: string, name = "acme-lib") {
 describe("requireSignature / requireProvenance policy gate", () => {
   test("requireSignature blocks a non-verified package", () => {
     const p = { ...DEFAULT_POLICY, requireSignature: ["acme-*"] };
-    assert.equal(score(auditWith("unsigned", "present"), p).verdict, "block");
-    assert.equal(score(auditWith("verified", "present"), p).verdict, "allow");
+    assert.equal(score(auditWith("unsigned", "verified"), p).verdict, "block");
+    assert.equal(score(auditWith("verified", "verified"), p).verdict, "allow");
   });
-  test("requireProvenance blocks a package without provenance", () => {
+  test("requireProvenance blocks a package without verified provenance", () => {
     const p = { ...DEFAULT_POLICY, requireProvenance: ["acme-*"] };
     assert.equal(score(auditWith("verified", "absent"), p).verdict, "block");
-    assert.equal(score(auditWith("verified", "present"), p).verdict, "allow");
+    assert.equal(score(auditWith("verified", "verified"), p).verdict, "allow");
   });
   test("no requirement -> not gated on signature/provenance", () => {
     assert.equal(score(auditWith("unsigned", "absent"), DEFAULT_POLICY).verdict, "allow");
+  });
+});
+
+describe("provenance identity gate", () => {
+  const ID = {
+    workflow: "https://github.com/acme/pkg/.github/workflows/release.yml@refs/heads/main",
+    issuer: "https://token.actions.githubusercontent.com",
+    sourceRepository: "https://github.com/acme/pkg", ref: "refs/heads/main",
+    builder: "https://github.com/actions/runner/github-hosted", commit: "abc123",
+  };
+  const policyWith = (entry: object) => ({ ...DEFAULT_POLICY, provenanceIdentities: [entry] } as EnterprisePolicy);
+
+  test("verified + matching identity passes", () => {
+    const r = score(auditWith("verified", "verified", ID), policyWith({ pattern: "acme-lib", repository: "https://github.com/acme/*" }));
+    assert.equal(r.verdict, "allow");
+  });
+  test("verified + wrong repository blocks with a critical zero-weight finding", () => {
+    const r = score(auditWith("verified", "verified", ID), policyWith({ pattern: "acme-lib", repository: "https://github.com/evil/*" }));
+    assert.equal(r.verdict, "block");
+    const f = r.findings.find((x) => x.ruleId === "provenance-identity");
+    assert.ok(f); assert.equal(f!.severity, "critical"); assert.equal(f!.weight, 0);
+  });
+  test("absent provenance in an identity-constrained namespace blocks", () => {
+    assert.equal(score(auditWith("verified", "absent"), policyWith({ pattern: "acme-lib", repository: "https://github.com/acme/*" })).verdict, "block");
+  });
+  test("unknown provenance does NOT trip the identity gate (outage tolerance)", () => {
+    assert.equal(score(auditWith("verified", "unknown"), policyWith({ pattern: "acme-lib", repository: "https://github.com/acme/*" })).verdict, "allow");
+  });
+  test("non-matching pattern is unaffected", () => {
+    assert.equal(score(auditWith("verified", "absent"), policyWith({ pattern: "other-pkg", repository: "x" })).verdict, "allow");
+  });
+  test("requireProvenance demands verified: unknown trips it", () => {
+    const p = { ...DEFAULT_POLICY, requireProvenance: ["acme-lib"] } as EnterprisePolicy;
+    assert.equal(score(auditWith("verified", "unknown"), p).verdict, "block");
+    assert.equal(score(auditWith("verified", "verified"), p).verdict, "allow");
   });
 });
