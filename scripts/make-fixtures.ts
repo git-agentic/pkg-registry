@@ -19,7 +19,13 @@ interface IndexFile {
     string,
     {
       class: "benign" | "malicious";
-      versions: Record<string, { signature: "valid" | "tampered" | "unknown-key" | "none"; provenance: boolean }>;
+      versions: Record<
+        string,
+        {
+          signature: "valid" | "tampered" | "unknown-key" | "none";
+          provenance: false | "claimed" | { attestationsFile: string };
+        }
+      >;
     }
   >;
 }
@@ -32,6 +38,7 @@ interface RegistryVersion {
   dist: { tarballFile: string; integrity: string; unpackedSize: number; fileCount: number };
   signatures?: { keyid: string; sig: string }[] | null;
   attestations?: boolean;
+  attestationsFile?: string;
 }
 
 interface RegistryDoc {
@@ -123,11 +130,40 @@ function main(): void {
         hasInstallScripts,
         dist: { tarballFile: tarballName, integrity, unpackedSize, fileCount },
         signatures,
-        attestations: vmeta.provenance,
+        attestations: vmeta.provenance !== false,
+        attestationsFile: typeof vmeta.provenance === "object" ? vmeta.provenance.attestationsFile : undefined,
       };
       console.log(`packed ${name}@${version} -> ${tarballName} (${buf.length} B, integrity ${integrity.slice(0, 23)}…)`);
     }
     registry.packages[name] = entry;
+  }
+
+  // Vendored real packages: pre-built tarballs with real attestation bundles,
+  // for the end-to-end verified-provenance path. Bytes are copied verbatim so
+  // integrity is stable; unpackedSize/fileCount are recomputed at audit time
+  // from extraction, so 0 here is never observed by the engine.
+  const VENDORED = join(FIX, "vendored");
+  const vendoredManifest = join(VENDORED, "vendored.json");
+  if (existsSync(vendoredManifest)) {
+    const vendored = JSON.parse(readFileSync(vendoredManifest, "utf8")) as {
+      name: string; version: string; tarballFile: string; attestationsFile: string; license?: string;
+    }[];
+    for (const v of vendored) {
+      const buf = readFileSync(join(VENDORED, v.tarballFile));
+      writeFileSync(join(OUT_DIR, v.tarballFile), buf);
+      const integrity = `sha512-${createHash("sha512").update(buf).digest("base64")}`;
+      registry.packages[v.name] = {
+        name: v.name, author: null,
+        versions: {
+          [v.version]: {
+            version: v.version, author: null, license: v.license ?? null, hasInstallScripts: false,
+            dist: { tarballFile: v.tarballFile, integrity, unpackedSize: 0, fileCount: 0 },
+            signatures: null, attestations: true, attestationsFile: v.attestationsFile,
+          },
+        },
+      };
+      console.log(`vendored ${v.name}@${v.version} -> ${v.tarballFile} (${buf.length} B)`);
+    }
   }
 
   writeFileSync(join(FIX, "registry.json"), JSON.stringify(registry, null, 2) + "\n");

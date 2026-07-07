@@ -43,8 +43,8 @@ describe("registry signature verification (local fixtures, test keys)", () => {
   });
   after(() => server?.close());
 
-  test("a validly-signed fixture verifies with provenance present", async () => {
-    assert.equal(await sig(base, "leftpad-lite", "1.0.0"), "verified/present");
+  test("a validly-signed fixture verifies with provenance absent", async () => {
+    assert.equal(await sig(base, "leftpad-lite", "1.0.0"), "verified/absent");
   });
   test("a tampered signature is invalid", async () => {
     assert.equal((await sig(base, "sig-tampered", "1.0.0")).split("/")[0], "invalid");
@@ -86,7 +86,7 @@ describe("requireSignature / requireProvenance policy gate (proxy integration)",
     assert.equal(res.status, 403);
     assert.equal(res.headers.get("x-sentinel-verdict"), "block");
   });
-  test("a verified/present package not matching any requirement is allowed", async () => {
+  test("a verified-signature package not matching any requirement is allowed", async () => {
     const res = await fetch(`${base}/leftpad-lite/-/leftpad-lite-1.0.0.tgz`);
     assert.equal(res.status, 200);
     assert.equal(res.headers.get("x-sentinel-verdict"), "allow");

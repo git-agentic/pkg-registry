@@ -5,50 +5,50 @@
       "class": "benign",
       "expect": { "verdict": "allow" },
       "versions": {
-        "1.0.0": { "signature": "valid", "provenance": true },
-        "1.0.1": { "signature": "valid", "provenance": true }
+        "1.0.0": { "signature": "valid", "provenance": false },
+        "1.0.1": { "signature": "valid", "provenance": false }
       }
     },
     "net-fetch-lite": {
       "class": "benign",
       "expect": { "verdict": "allow" },
       "versions": {
-        "1.0.0": { "signature": "valid", "provenance": true },
-        "1.0.1": { "signature": "valid", "provenance": true },
-        "1.0.2": { "signature": "valid", "provenance": true }
+        "1.0.0": { "signature": "valid", "provenance": false },
+        "1.0.1": { "signature": "valid", "provenance": false },
+        "1.0.2": { "signature": "valid", "provenance": false }
       }
     },
     "color-stream": {
       "class": "malicious",
       "expect": { "1.4.0": "allow", "1.4.1": "block" },
       "versions": {
-        "1.4.0": { "signature": "valid", "provenance": true },
-        "1.4.1": { "signature": "valid", "provenance": true }
+        "1.4.0": { "signature": "valid", "provenance": false },
+        "1.4.1": { "signature": "valid", "provenance": false }
       }
     },
     "enforce-probe": {
       "class": "benign",
       "expect": { "verdict": "allow" },
       "versions": {
-        "1.0.0": { "signature": "valid", "provenance": true }
+        "1.0.0": { "signature": "valid", "provenance": false }
       }
     },
     "sig-tampered": {
       "class": "benign",
       "versions": {
-        "1.0.0": { "signature": "tampered", "provenance": true }
+        "1.0.0": { "signature": "tampered", "provenance": false }
       }
     },
     "sig-unsigned": {
       "class": "benign",
       "versions": {
-        "1.0.0": { "signature": "none", "provenance": true }
+        "1.0.0": { "signature": "none", "provenance": false }
       }
     },
     "sig-unknown": {
       "class": "benign",
       "versions": {
-        "1.0.0": { "signature": "unknown-key", "provenance": true }
+        "1.0.0": { "signature": "unknown-key", "provenance": false }
       }
     },
     "prov-absent": {
@@ -56,6 +56,14 @@
       "versions": {
         "1.0.0": { "signature": "valid", "provenance": false }
       }
+    },
+    "prov-unknown": {
+      "class": "benign",
+      "versions": { "1.0.0": { "signature": "valid", "provenance": "claimed" } }
+    },
+    "prov-mismatch": {
+      "class": "benign",
+      "versions": { "1.0.0": { "signature": "valid", "provenance": { "attestationsFile": "sigstore-3.0.0.attestations.json" } } }
     }
   }
 }
