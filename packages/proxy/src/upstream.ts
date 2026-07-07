@@ -44,6 +44,9 @@ export interface Upstream {
   readonly name: string;
   getPackument(pkg: string): Promise<UpstreamPackument>;
   getTarball(pkg: string, version: string): Promise<Buffer>;
+  /** Fetch the attestation-endpoint response for a version; null when unavailable.
+   *  Acquisition-path network (invariant #3 keeps the AUDIT offline, not this). */
+  getAttestations(pkg: string, version: string): Promise<unknown | null>;
 }
 
 function authorString(a: unknown): string | null {
@@ -94,6 +97,19 @@ export class NpmUpstream implements Upstream {
     if (!res.ok) throw new HttpError(res.status, `upstream tarball ${pkg}@${version}: ${res.status}`);
     return Buffer.from(await res.arrayBuffer());
   }
+
+  async getAttestations(pkg: string, version: string): Promise<unknown | null> {
+    try {
+      const name = encodeURIComponent(pkg).replace("%40", "@");
+      const res = await fetch(`${this.registry}/-/npm/v1/attestations/${name}@${version}`, {
+        headers: { accept: "application/json" },
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null; // fail-open to "unknown" — an outage must not break installs
+    }
+  }
 }
 
 interface RegistryDoc {
@@ -111,6 +127,7 @@ interface RegistryDoc {
           hasInstallScripts: boolean;
           signatures?: { keyid: string; sig: string }[] | null;
           attestations?: boolean;
+          attestationsFile?: string | null;
           dist: { tarballFile: string; integrity: string; unpackedSize: number; fileCount: number };
         }
       >;
@@ -178,6 +195,12 @@ export class LocalFixtureUpstream implements Upstream {
       throw new HttpError(502, `integrity mismatch for ${pkg}@${version}`);
     }
     return buf;
+  }
+
+  async getAttestations(pkg: string, version: string): Promise<unknown | null> {
+    const m = this.doc.packages[pkg]?.versions[version];
+    if (!m?.attestationsFile) return null;
+    return JSON.parse(readFileSync(join(this.fixturesDir, "attestations", m.attestationsFile), "utf8"));
   }
 }
 

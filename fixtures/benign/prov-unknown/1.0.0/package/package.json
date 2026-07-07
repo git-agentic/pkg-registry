@@ -1,0 +1,1 @@
+{ "name": "prov-unknown", "version": "1.0.0", "description": "benign fixture: provenance claimed but bundle unfetchable", "license": "MIT", "main": "index.js" }

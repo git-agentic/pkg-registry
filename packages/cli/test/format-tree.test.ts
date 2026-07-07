@@ -4,15 +4,21 @@ import type { TreeAuditResult } from "@sentinel/core";
 import { formatTree, treeExitCode } from "../src/format.js";
 
 const gated: TreeAuditResult = {
-  aggregate: { verdict: "block", gated: true, counts: { allow: 1, warn: 0, block: 1, error: 0 } },
+  aggregate: {
+    verdict: "block", gated: true, counts: { allow: 1, warn: 0, block: 1, error: 0 },
+    provenance: { verified: 0, invalid: 1, absent: 1, unknown: 0 },
+  },
   packages: [
-    { name: "leftpad-lite", version: "1.0.0", status: "allow", score: 100, topFinding: null, error: null },
-    { name: "color-stream", version: "1.4.1", status: "block", score: 10, topFinding: "exfiltrates env to network", error: null },
+    { name: "leftpad-lite", version: "1.0.0", status: "allow", score: 100, topFinding: null, error: null, provenance: "absent" },
+    { name: "color-stream", version: "1.4.1", status: "block", score: 10, topFinding: "exfiltrates env to network", error: null, provenance: "invalid" },
   ],
 };
 const clean: TreeAuditResult = {
-  aggregate: { verdict: "allow", gated: false, counts: { allow: 1, warn: 0, block: 0, error: 0 } },
-  packages: [{ name: "leftpad-lite", version: "1.0.0", status: "allow", score: 100, topFinding: null, error: null }],
+  aggregate: {
+    verdict: "allow", gated: false, counts: { allow: 1, warn: 0, block: 0, error: 0 },
+    provenance: { verified: 1, invalid: 0, absent: 0, unknown: 0 },
+  },
+  packages: [{ name: "leftpad-lite", version: "1.0.0", status: "allow", score: 100, topFinding: null, error: null, provenance: "verified" }],
 };
 
 describe("formatTree / treeExitCode", () => {

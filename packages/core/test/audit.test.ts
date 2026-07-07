@@ -12,8 +12,10 @@ const baseMeta = {
 };
 
 // A synthetic registry-signing key used to make these fixtures resolve to
-// signature: "verified" / provenance: "present" through the real runAudit
-// verification path (Task 4: the new provenance rule reads these fields).
+// signature: "verified" through the real runAudit verification path. These
+// fixtures don't claim provenance (no attestation bundles are wired here) —
+// hasProvenance stays false so provenance is "absent" and these signature-
+// focused tests aren't perturbed by the (Task 9) provenance-status finding.
 const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
 const spkiPem = publicKey.export({ type: "spki", format: "pem" }).toString();
 const spkiDer = publicKey.export({ type: "spki", format: "der" }) as Buffer;
@@ -33,7 +35,7 @@ async function audit(name: string, version: string, baselineVersion?: string): P
     tarball: tgz,
     baselineTarball: baselineVersion ? tarball(name, baselineVersion) : undefined,
     signatures: [signFor(name, version, integrity)],
-    hasProvenance: true,
+    hasProvenance: false,
     signingKeys: TEST_KEYS,
   });
 }
@@ -45,7 +47,10 @@ describe("audit engine", () => {
     const r = await audit("leftpad-lite", "1.0.1");
     assert.equal(r.verdict, "allow");
     assert.equal(r.score, 100);
-    assert.equal(r.findings.length, 0);
+    // The only finding is the informational "no provenance attestation" note
+    // (this fixture doesn't claim provenance) — info severity, zero weight.
+    assert.deepEqual(r.findings.map((f) => f.ruleId), ["provenance"]);
+    assert.equal(r.findings[0]!.severity, "info");
     assert.ok(r.meta.fileCount >= 2, "should count package files");
     assert.ok(r.meta.unpackedSize > 0);
   });
@@ -120,5 +125,39 @@ describe("audit engine", () => {
     });
     assert.equal(audit.meta.signature, "unsigned");
     assert.equal(audit.meta.provenance, "absent");
+  });
+});
+
+describe("phase 9: integrity recompute + provenance wiring", () => {
+  test("claimed integrity mismatch yields a critical integrity-mismatch finding and actual integrity on meta", async () => {
+    const tgz = tarball("leftpad-lite", "1.0.0");
+    const audit = await runAudit({
+      meta: { name: "leftpad-lite", version: "1.0.0", author: null, maintainers: [], license: null, hasInstallScripts: false, integrity: "sha512-BOGUSBOGUSBOGUSBOGUSBOGUSBOGUSBOGUSBOGUSBOGUSBOGUSBOGUSBOGUSBOGUSBOGUSBOGUSBOGUSBOGUS==" },
+      tarball: tgz, signatures: null, hasProvenance: false, attestations: null, trustMaterial: null,
+    });
+    const f = audit.findings.find((x) => x.ruleId === "integrity-mismatch");
+    assert.ok(f, "integrity-mismatch finding expected");
+    assert.equal(f!.severity, "critical");
+    assert.notEqual(audit.meta.integrity, "sha512-BOGUS…");
+    assert.match(audit.meta.integrity!, /^sha512-/);
+  });
+
+  test("matching claimed integrity yields no tamper finding", async () => {
+    const tgz = tarball("leftpad-lite", "1.0.0");
+    const { integrityOf } = await import("../src/extract.js");
+    const audit = await runAudit({
+      meta: { name: "leftpad-lite", version: "1.0.0", author: null, maintainers: [], license: null, hasInstallScripts: false, integrity: integrityOf(tgz) },
+      tarball: tgz, signatures: null, hasProvenance: false, attestations: null, trustMaterial: null,
+    });
+    assert.equal(audit.findings.find((x) => x.ruleId === "integrity-mismatch"), undefined);
+  });
+
+  test("provenance status flows to meta: claimed + no bundles + no trust = unknown", async () => {
+    const audit = await runAudit({
+      meta: { name: "x", version: "1.0.0", author: null, maintainers: [], license: null, hasInstallScripts: false },
+      tarball: tarball("leftpad-lite", "1.0.0"), signatures: null,
+      hasProvenance: true, attestations: null, trustMaterial: null,
+    });
+    assert.equal(audit.meta.provenance, "unknown");
   });
 });

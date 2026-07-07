@@ -23,6 +23,19 @@ export interface EnterprisePolicy {
   requireSignature?: string[];
   /** Package patterns that MUST carry a provenance attestation (ADR-0021). */
   requireProvenance?: string[];
+  /** Per-namespace provenance identity constraints (ADR-0022): matching packages
+   *  must have VERIFIED provenance whose identity satisfies every given field.
+   *  `repository`/`workflowRef`/`builder` are anchored globs (matchPackage);
+   *  `issuer` is exact. `workflowRef` matches the full signing identity (cert SAN). */
+  provenanceIdentities?: ProvenanceIdentityRequirement[];
+}
+
+export interface ProvenanceIdentityRequirement {
+  pattern: string;
+  repository?: string;
+  issuer?: string;
+  workflowRef?: string;
+  builder?: string;
 }
 
 /** Compiled-in default. Equals the historical POLICY so out-of-the-box behavior is unchanged. */
@@ -195,6 +208,23 @@ export function parsePolicy(raw: Buffer): EnterprisePolicy {
     }
   }
 
+  // Validate provenanceIdentities if present.
+  const pi = (p as { provenanceIdentities?: unknown }).provenanceIdentities;
+  if (pi !== undefined) {
+    if (!Array.isArray(pi)) throw new Error("invalid policy: provenanceIdentities must be an array");
+    for (let i = 0; i < pi.length; i++) {
+      const e = pi[i] as Record<string, unknown>;
+      if (!e || typeof e !== "object" || typeof e.pattern !== "string") {
+        throw new Error(`invalid policy: provenanceIdentities[${i}] must have a string "pattern"`);
+      }
+      for (const f of ["repository", "issuer", "workflowRef", "builder"] as const) {
+        if (e[f] !== undefined && typeof e[f] !== "string") {
+          throw new Error(`invalid policy: provenanceIdentities[${i}].${f} must be a string`);
+        }
+      }
+    }
+  }
+
   return {
     schema: 1,
     version: p.version,
@@ -206,6 +236,7 @@ export function parsePolicy(raw: Buffer): EnterprisePolicy {
     ...(p.treeGate !== undefined ? { treeGate: p.treeGate as Verdict } : {}),
     ...((p as { requireSignature?: string[] }).requireSignature !== undefined ? { requireSignature: (p as { requireSignature: string[] }).requireSignature } : {}),
     ...((p as { requireProvenance?: string[] }).requireProvenance !== undefined ? { requireProvenance: (p as { requireProvenance: string[] }).requireProvenance } : {}),
+    ...(pi !== undefined ? { provenanceIdentities: pi as ProvenanceIdentityRequirement[] } : {}),
   };
 }
 

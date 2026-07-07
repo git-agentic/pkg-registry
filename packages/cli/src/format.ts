@@ -43,7 +43,15 @@ export function formatReport(r: AuditReport): string {
     : m.signature === "invalid" ? c(C.red, "invalid")
     : m.signature === "unsigned" ? c(C.yellow, "unsigned") : c(C.gray, "unknown");
   L.push(`  signature  ${sig}`);
-  L.push(`  provenance ${m.provenance === "present" ? c(C.green, "present") : c(C.gray, "absent")}`);
+  const prov = m.provenance === "verified" ? c(C.green, "verified")
+    : m.provenance === "invalid" ? c(C.red, "invalid")
+    : m.provenance === "unknown" ? c(C.yellow, "unknown") : c(C.gray, "absent");
+  L.push(`  provenance ${prov}`);
+  const pid = m.provenanceIdentity;
+  if (m.provenance === "verified" && pid) {
+    const commit = pid.commit ? ` (commit ${pid.commit.slice(0, 7)})` : "";
+    L.push(`             ${c(C.gray, `built by ${pid.builder ?? "unknown builder"} from ${pid.sourceRepository ?? "?"}${pid.ref ? `@${pid.ref}` : ""}${commit}`)}`);
+  }
   L.push(`  install    ${m.hasInstallScripts ? c(C.yellow, "⚠ runs lifecycle scripts") : "no install scripts"}`);
   L.push(`  audit      ${r.engine.mode}-mode · ${r.engine.rules.length} rules · engine ${r.engine.version}`);
   L.push("");
@@ -134,6 +142,8 @@ export function formatTree(r: TreeAuditResult): string {
   const a = r.aggregate;
   L.push("");
   L.push(`  ${a.counts.allow} allow · ${a.counts.warn} warn · ${a.counts.block} block · ${a.counts.error} error`);
+  const pv = a.provenance;
+  L.push(c(C.gray, `  provenance: ${pv.verified} verified · ${pv.invalid} invalid · ${pv.absent} absent · ${pv.unknown} unknown`));
   L.push(
     `  verdict    ${c(C.bold + (verdictColor[a.verdict] ?? C.gray), a.verdict.toUpperCase())}` +
       (a.gated ? c(C.red, "  ✗ GATED") : c(C.green, "  ✓ ok")),

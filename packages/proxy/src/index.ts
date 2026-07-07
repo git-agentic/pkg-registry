@@ -2,7 +2,14 @@
 import { dirname, join, resolve } from "node:path";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { loadPolicy, DEFAULT_POLICY, policyHashOf, type EnterprisePolicy } from "@sentinel/core";
+import {
+  loadPolicy,
+  DEFAULT_POLICY,
+  policyHashOf,
+  loadTrustMaterial,
+  type EnterprisePolicy,
+  type ProvenanceTrustMaterial,
+} from "@sentinel/core";
 import { createServer, type ProxyPolicy } from "./server.js";
 import { AuditStore } from "./store.js";
 import { ApprovalStore } from "./approvals.js";
@@ -52,6 +59,17 @@ function resolveEnterprisePolicy(): { policy: EnterprisePolicy; hash: string } {
   }
 }
 
+function resolveTrustMaterial(): ProvenanceTrustMaterial | null | undefined {
+  const rootPath = process.env.SENTINEL_TRUSTED_ROOT;
+  if (!rootPath) return undefined; // bundled default
+  try {
+    return loadTrustMaterial({ trustedRootPath: rootPath, npmKeysPath: process.env.SENTINEL_NPM_ATTESTATION_KEYS });
+  } catch (err) {
+    console.error(`FATAL: cannot load trust material from SENTINEL_TRUSTED_ROOT: ${(err as Error).message}`);
+    process.exit(1);
+  }
+}
+
 function main(): void {
   const here = dirname(fileURLToPath(import.meta.url));
   const port = Number(env("SENTINEL_PORT", "4873"));
@@ -64,12 +82,14 @@ function main(): void {
   const publishTokens = (process.env.SENTINEL_PUBLISH_TOKENS ?? "").split(",").map((t) => t.trim()).filter(Boolean);
   // dist/index.js -> ../public ; src is run via tsx with the same relative layout.
   const publicDir = env("SENTINEL_PUBLIC", join(here, "..", "public"));
+  const trustMaterial = resolveTrustMaterial();
 
-  const app = createServer({ upstream, store, approvals, enterprisePolicy, policyHash, policy, publicDir, privateStore, publishTokens });
+  const app = createServer({ upstream, store, approvals, enterprisePolicy, policyHash, policy, publicDir, privateStore, publishTokens, trustMaterial });
   app.listen(port, () => {
     console.log(`Sentinel proxy listening on http://localhost:${port}`);
     console.log(`  upstream : ${upstream.name}`);
     console.log(`  policy   : ${policy}  (observe = audit+serve, block = 403 on block verdict)`);
+    console.log(`  trust    : ${trustMaterial === undefined ? "bundled Sigstore root" : "operator-supplied root"}`);
     console.log(`  dashboard: http://localhost:${port}/`);
     const claims = enterprisePolicy.privateNamespaces ?? [];
     console.log(`  private  : ${claims.length ? claims.join(", ") : "none"}  (publish ${publishTokens.length ? "enabled" : "disabled"})`);

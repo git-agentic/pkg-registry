@@ -241,6 +241,39 @@ alongside the other sync rules. A pure `provenance` rule turns the two fields in
 letting a policy require a verified signature or present provenance for matching package
 names without changing the rule itself.
 
+### 3.10 Provenance deep-verify (Phase 9, ADR-0022)
+
+Phase 8's `provenance` field only recorded whether the packument *claimed* an
+attestation existed; Phase 9 actually verifies it. When a packument's version
+metadata claims provenance, the acquisition path calls `Upstream.getAttestations`
+(a fetch failure yields `null`, never a crash) and `runAudit` recomputes the
+tarball's integrity from the bytes it actually holds (`actualIntegrity`) rather
+than trusting the claimed `dist.integrity` — a mismatch is a critical
+`integrity-mismatch` finding, and the proxy caches/reports by the actual hash,
+closing the cache-poisoning-by-claim gap ADR-0021 left open. `verifyProvenance`
+(pure, offline, never throws) then runs a single `@sigstore/verify` `Verifier`
+against pinned trust material in `packages/core/trust/` (`trusted-root.json` +
+a `keyFinder` over `npm-attestation-keys.json`), producing
+`verified | invalid | absent | unknown`: every present bundle must verify AND
+every subject's sha512 digest must bind to the *actual* integrity, or the
+result is `invalid` — including bundles that throw partway through verification
+(a crash over a present bundle is `invalid`, never `unknown`, so a crafted
+crash-bundle can't fail open past the identity gate). `unknown` is reserved for
+missing inputs (unfetchable bundle, empty list, no trust material configured).
+Identity (workflow SAN, issuer, source repository, ref, builder, commit) is
+extracted only from the verifier's authenticated result and the signed DSSE
+statement, never from unauthenticated packument fields, and attached as
+`provenanceIdentity`. Status and identity flow three ways: the `provenance` rule
+turns status into findings; `score.ts`'s `provenanceIdentities` gate enforces
+per-pattern identity requirements with fail-closed AND across matching entries
+(`unknown` is exempt from this gate but not from the upgraded
+`requireProvenance`, which now demands `verified`); and the status/identity
+surface on the `x-sentinel-provenance` header, the dashboard, and
+`audit-tree`'s per-row + aggregate provenance counts. Trust-root staleness is
+informational only — a zero-weight `trust-root-stale` finding via an injectable
+clock, conservative by design (stale only when *every* pinned CA's `validFor.end`
+has passed; the real Fulcio CA is open-ended, so it never reports stale today).
+
 ---
 
 ## 4. The audit engine (`@sentinel/core`)
@@ -336,8 +369,9 @@ interface PackageMeta {
   license: string | null;
   hasInstallScripts: boolean;
   signature: 'verified' | 'invalid' | 'unsigned' | 'unknown';   // verified npm registry-signature status
-  provenance: 'present' | 'absent';                             // build-provenance attestation
-  integrity: string | null;       // SRI from dist
+  provenance: 'verified' | 'invalid' | 'absent' | 'unknown';    // Sigstore attestation-bundle verification (Phase 9, ADR-0022)
+  provenanceIdentity?: { workflow; issuer; sourceRepository; ref; builder; commit } | null; // set only when provenance is "verified"
+  integrity: string | null;       // SRI of the ACTUAL served bytes (recomputed, not the claimed dist.integrity)
   unpackedSize: number; fileCount: number;
 }
 

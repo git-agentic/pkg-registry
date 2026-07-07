@@ -59,6 +59,9 @@ describe("POST /-/audit-tree (local fixtures)", () => {
     assert.equal(r.aggregate.verdict, "allow");
     assert.equal(r.aggregate.gated, false);
     assert.equal(r.packages.length, 2);
+    const pv = r.aggregate.provenance;
+    assert.equal(pv.verified + pv.invalid + pv.absent + pv.unknown, r.packages.length);
+    for (const p of r.packages) assert.notEqual(p.provenance, undefined);
   });
 
   test("a tree containing the malicious fixture is block / gated and names it", async () => {
@@ -80,6 +83,7 @@ describe("POST /-/audit-tree (local fixtures)", () => {
     const miss = r.packages.find((p) => p.name === "does-not-exist");
     assert.equal(miss?.status, "error");
     assert.ok(miss?.error);
+    assert.equal(miss?.provenance, null); // error rows never have a provenance status
     assert.equal(r.aggregate.counts.error, 1);
     assert.equal(r.aggregate.gated, false); // errors never gate
   });

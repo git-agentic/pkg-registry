@@ -38,6 +38,16 @@ key set (`NPM_SIGNING_KEYS`) — a static input, never fetched at audit time (in
 and `provenance` (`present|absent`); a pure `provenance` rule surfaces the status as findings
 (`invalid` is critical and hard-blocks), and an optional `requireSignature`/`requireProvenance`
 policy gate lives beside `deny` in `score.ts` (ADR-0021).
+Phase 9 upgrades `provenance` from presence-only to a deep verify: `verifyProvenance`
+(pure, offline, never throws) checks fetched attestation bundles against pinned trust
+material in `packages/core/trust/`, producing `verified|invalid|absent|unknown` with
+subject-digest binding to the *actual* served bytes — `runAudit` recomputes integrity from
+bytes in hand and a claimed≠actual mismatch is a critical `integrity-mismatch` finding, with
+the proxy caching by the actual hash. `requireProvenance` now demands `verified`, and a new
+`provenanceIdentities` policy gate in `score.ts` fail-closed-ANDs per-pattern identity
+requirements (repo/workflow/builder/issuer) against the attestation's authenticated identity;
+a verification error over a *present* bundle maps to `invalid`, never `unknown`, so a
+crash-bundle can't fail open past the gate (ADR-0022).
 
 We are the Socket/Chainguard wedge: **do not** try to replace npm. Resolve and
 serve real packages transparently; only attach signal.
@@ -103,15 +113,15 @@ don't downgrade majors without a reason.
 
 ```bash
 npm run build            # tsc --build (project references: core → proxy/cli)
-npm test                 # engine + end-to-end proxy: 219 tests on this host (217 pass, 2 skipped on darwin).
+npm test                 # engine + end-to-end proxy: 259 tests on this host (257 pass, 2 skipped on darwin).
                          # Skips are platform-gated enforcement: "non-darwin throws" skips on darwin
                          # (it verifies darwin-only behaviour), and the "no silent skip" CI guard skips
                          # off-CI. The BubblewrapSandbox enforcement suite and enforce-e2e tests skip as
-                         # describe-level blocks on darwin ("requires Linux") and are not in the 219 count.
-                         # Phase 7's audit-tree and Phase 8's signature/provenance tests are hermetic and
+                         # describe-level blocks on darwin ("requires Linux") and are not in the 259 count.
+                         # Phase 7's audit-tree and Phase 8/9's signature/provenance tests are hermetic and
                          # platform-neutral, so the darwin/Linux relationship from Phase 6 (Linux one test
                          # higher, one fewer skip) should hold, but hasn't been re-verified on Linux CI
-                         # since Phase 7/8 landed — confirm on the next Linux CI run rather than trusting
+                         # since Phase 7/8/9 landed — confirm on the next Linux CI run rather than trusting
                          # an extrapolated count here. Each platform's enforcement is verified on that
                          # platform (macOS dev host / ubuntu-latest CI).
 npm run demo             # offline malware-detection walkthrough

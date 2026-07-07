@@ -1,5 +1,5 @@
-import type { Audit, AuditReport, ScoredFinding, Severity, Verdict } from "./types.js";
-import { DEFAULT_POLICY, matchPackage, policyHashOf, type EnterprisePolicy } from "./policy.js";
+import type { Audit, AuditReport, ProvenanceIdentity, ScoredFinding, Severity, Verdict } from "./types.js";
+import { DEFAULT_POLICY, matchPackage, policyHashOf, type EnterprisePolicy, type ProvenanceIdentityRequirement } from "./policy.js";
 
 const SEVERITY_ORDER: Severity[] = ["info", "low", "medium", "high", "critical"];
 
@@ -46,10 +46,34 @@ export function score(
     (f) => !f.waived && severityRank(f.severity) >= severityRank(policy.scoring.hardBlockSeverity),
   );
   const reqSig = (policy.requireSignature ?? []).some((p) => matchPackage(p, audit.meta.name)) && audit.meta.signature !== "verified";
-  const reqProv = (policy.requireProvenance ?? []).some((p) => matchPackage(p, audit.meta.name)) && audit.meta.provenance !== "present";
+  const reqProv = (policy.requireProvenance ?? []).some((p) => matchPackage(p, audit.meta.name)) && (audit.meta.provenance !== "verified" || !audit.meta.provenanceIdentity);
+
+  // Identity gate (ADR-0022): every matching entry must be satisfied (fail-closed
+  // AND). "unknown" is exempt — an outage must not block ordinary installs; the
+  // requireProvenance gate is the opt-in fail-closed lever for that case.
+  let idViolation: string | null = null;
+  const idEntries = (policy.provenanceIdentities ?? []).filter((e) => matchPackage(e.pattern, audit.meta.name));
+  if (idEntries.length > 0 && audit.meta.provenance !== "unknown") {
+    if (audit.meta.provenance !== "verified") {
+      idViolation = `provenance is ${audit.meta.provenance}, policy requires verified provenance`;
+    } else {
+      const id = audit.meta.provenanceIdentity ?? null;
+      for (const e of idEntries) {
+        const v = identityViolation(e, id);
+        if (v) { idViolation = v; break; }
+      }
+    }
+  }
+  if (idViolation) {
+    scored.push({
+      ruleId: "provenance-identity", category: "provenance", severity: "critical",
+      message: `provenance identity policy violation — ${idViolation}`,
+      onChangedFile: false, evidence: [], weight: 0, waived: false,
+    });
+  }
 
   let verdict: Verdict;
-  if (denied || hardBlock || reqSig || reqProv) verdict = "block";
+  if (denied || hardBlock || reqSig || reqProv || idViolation !== null) verdict = "block";
   else if (value >= policy.scoring.thresholds.allow) verdict = "allow";
   else if (value >= policy.scoring.thresholds.warn) verdict = "warn";
   else verdict = "block";
@@ -72,4 +96,22 @@ export function score(
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, n));
+}
+
+function identityViolation(
+  e: ProvenanceIdentityRequirement,
+  id: ProvenanceIdentity | null,
+): string | null {
+  const checks: [string, string | undefined, string | null, boolean][] = [
+    ["repository", e.repository, id?.sourceRepository ?? null, true],
+    ["issuer", e.issuer, id?.issuer ?? null, false],
+    ["workflowRef", e.workflowRef, id?.workflow ?? null, true],
+    ["builder", e.builder, id?.builder ?? null, true],
+  ];
+  for (const [label, want, actual, glob] of checks) {
+    if (want === undefined) continue;
+    const ok = actual !== null && (glob ? matchPackage(want, actual) : want === actual);
+    if (!ok) return `${label} is ${actual ?? "unknown"}, policy requires ${want}`;
+  }
+  return null;
 }

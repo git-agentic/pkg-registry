@@ -1,0 +1,10 @@
+[
+  {
+    "name": "sigstore",
+    "version": "3.0.0",
+    "tarballFile": "sigstore-3.0.0.tgz",
+    "attestationsFile": "sigstore-3.0.0.attestations.json",
+    "license": "Apache-2.0",
+    "_comment": "Real, benign npm package vendored for the end-to-end verified-provenance path. Scored as data like every fixture; never executed."
+  }
+]

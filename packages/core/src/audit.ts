@@ -5,6 +5,7 @@ import { RULES } from "./rules/index.js";
 import { score } from "./score.js";
 import { DEFAULT_POLICY } from "./policy.js";
 import { verifyRegistrySignature, NPM_SIGNING_KEYS, type RegistrySignature, type NpmSigningKey } from "./signature.js";
+import { verifyProvenance, loadDefaultTrustMaterial, type ProvenanceTrustMaterial } from "./provenance.js";
 import type {
   Audit,
   AuditInput,
@@ -71,6 +72,12 @@ export interface AuditTarballInput {
   hasProvenance?: boolean;
   /** Trusted signing keys (default: bundled npm keys). Never fetched at audit time. */
   signingKeys?: NpmSigningKey[];
+  /** Fetched attestation-endpoint response (acquisition path), or null when unfetchable. */
+  attestations?: unknown | null;
+  /** Pinned Sigstore trust material. undefined ⇒ bundled default; null ⇒ none (provenance stays unknown when claimed). */
+  trustMaterial?: ProvenanceTrustMaterial | null;
+  /** Injectable clock (ISO) for trust-root staleness; defaults to now. */
+  verifyAt?: string;
 }
 
 /** Extract + diff + run rules + capabilities → policy-independent {@link Audit}. */
@@ -87,23 +94,54 @@ export async function runAudit(input: AuditTarballInput): Promise<Audit> {
   }
 
   const extracted = await extractTarball(input.tarball, baseline);
-  const integrity = input.meta.integrity ?? integrityOf(input.tarball);
+  // Always recompute from the served bytes (ADR-0022): the claimed integrity is
+  // an assertion to CHECK, not a value to trust. Mismatch ⇒ critical finding.
+  const actualIntegrity = integrityOf(input.tarball);
+  const claimedIntegrity = input.meta.integrity ?? null;
+  const integrityMismatch = claimedIntegrity !== null && claimedIntegrity !== actualIntegrity;
+  // The registry signature is over the CLAIMED integrity (npm's statement about
+  // its own dist entry); byte-tampering is carried by integrity-mismatch instead.
   const signature = verifyRegistrySignature(
-    { name: input.meta.name, version: input.meta.version, integrity },
+    { name: input.meta.name, version: input.meta.version, integrity: claimedIntegrity ?? actualIntegrity },
     input.signatures ?? null,
     input.signingKeys ?? NPM_SIGNING_KEYS,
   );
+  const prov = verifyProvenance({
+    name: input.meta.name,
+    version: input.meta.version,
+    integrity: actualIntegrity,
+    claimed: input.hasProvenance ?? false,
+    attestations: input.attestations ?? null,
+    trust: input.trustMaterial === undefined ? loadDefaultTrustMaterial() : input.trustMaterial,
+    now: input.verifyAt,
+  });
   const meta: PackageMeta = {
     ...input.meta,
-    integrity,
+    integrity: actualIntegrity,
     unpackedSize: extracted.unpackedSize,
     fileCount: extracted.fileCount,
     hasInstallScripts: detectInstallScripts(extracted.files) || input.meta.hasInstallScripts,
     signature,
-    provenance: input.hasProvenance ? "present" : "absent",
+    provenance: prov.status,
+    provenanceIdentity: prov.identity,
   };
 
-  return buildAudit(meta, extracted.files, { mode, durationMs: Date.now() - started, baselineCapabilities });
+  const audit = buildAudit(meta, extracted.files, { mode, durationMs: Date.now() - started, baselineCapabilities });
+  if (integrityMismatch) {
+    audit.findings.push({
+      ruleId: "integrity-mismatch", category: "provenance", severity: "critical",
+      message: `served tarball bytes do not match the claimed dist.integrity (${claimedIntegrity!.slice(0, 24)}…) — possible mirror tampering`,
+      onChangedFile: false, evidence: [],
+    });
+  }
+  if (prov.rootStale) {
+    audit.findings.push({
+      ruleId: "trust-root-stale", category: "provenance", severity: "info",
+      message: "pinned Sigstore trust root is past its validity window — update packages/core/trust/trusted-root.json",
+      onChangedFile: false, evidence: [],
+    });
+  }
+  return audit;
 }
 
 /**
