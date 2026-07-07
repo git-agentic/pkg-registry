@@ -274,6 +274,45 @@ informational only — a zero-weight `trust-root-stale` finding via an injectabl
 clock, conservative by design (stale only when *every* pinned CA's `validFor.end`
 has passed; the real Fulcio CA is open-ended, so it never reports stale today).
 
+### 3.11 Runtime violation telemetry (Phase 10, ADR-0023)
+
+Phases 3–6 made the sandbox *contain* a denied capability; Phase 10 makes it a
+*sensor* too. `computeDenySet(approved, { homeDir, platform })`
+(`packages/sandbox/src/deny-set.ts`) derives the same `deniedPaths`/
+`networkDenied` the profile/`bwrap` generators already enforce, so attribution
+can never drift from what's actually denied (locked by a non-drift test).
+`classifyViolation(result, denySet)` (`packages/sandbox/src/violation.ts`) is
+pure and total (never throws): given a failed sandboxed child, it matches
+`stderr` against a permission-error signature and attributes it —
+`confirmed` when a filesystem target falls inside `deniedPaths` or a
+`host:port` is parseable under a network deny, `suspected` for a class-level
+network deny with no parseable host, `null` otherwise (including a
+permission error on a path *not* in the deny set — the false-positive
+filter — and the swallowed case, `exitCode === 0`). Both `SeatbeltSandbox`
+and `BubblewrapSandbox` attach the result to `SandboxResult.violation`.
+`sentinel-script-shell` (the Phase 6 enforcement point) best-effort POSTs a
+detected violation to `POST /-/violations` — a reporting failure never
+changes the install's exit code — resolving the served integrity via the
+`/-/manifest` fetch it already makes; root-install scripts are never
+reported. The proxy's `ViolationStore` (`packages/proxy/src/violations.ts`)
+records by `integrity`: `confirmed` quarantines (and revokes any standing
+approval); `suspected` is record-only. **The quarantine is a serve-time
+overlay, not a score mutation**: `applyQuarantine` (`server.ts`) runs on
+every served report and, for a quarantined integrity, returns a shallow copy
+with `verdict` forced to `block` and a `weight: 0` critical
+`runtime-violation` finding prepended — the cached `AuditReport` in
+`AuditStore` is never written to, so invariant #1 (deterministic scoring)
+holds exactly as before; only the served *verdict* reflects runtime history,
+freshly on every request. `x-sentinel-violations` surfaces the flag as a
+header; `sentinel violations`, the dashboard's runtime-violations panel, and
+`audit-tree`'s per-row/aggregate output all read the same store. Best-effort
+limitation: the sensor only detects violations that surface as process
+failure — a swallowed denial (exit `0`) is invisible to telemetry but still
+contained by the sandbox, unchanged from Phase 6. `POST /-/violations` is
+unauthenticated (like `/-/approvals`); a spoofed report can only quarantine
+an *already-audited* integrity (the endpoint 400s otherwise) and can only
+force `block`, never relax a verdict — a fail-closed DoS, not a bypass.
+
 ---
 
 ## 4. The audit engine (`@sentinel/core`)
@@ -396,6 +435,8 @@ interface AuditReport {
 // AuditReport is schema 3: findings: ScoredFinding[], plus policy: { version, hash }.
 // Approval state is NOT in the report — it is mutable proxy state in ApprovalStore,
 // keyed by integrity (see ADR-0011/0013).
+// Runtime-violation state is likewise NOT in the report — it is mutable proxy state
+// in ViolationStore, keyed by integrity, applied as a serve-time overlay (ADR-0023).
 ```
 
 Storage in Phase 1 is a pluggable `AuditStore` (in-memory + JSON-file impl). The

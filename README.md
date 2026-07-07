@@ -79,6 +79,7 @@ node packages/cli/dist/index.js install lodash
 | `SENTINEL_PORT` | `4873` | proxy port (verdaccio's conventional local-registry port) |
 | `SENTINEL_REGISTRY` | `https://registry.npmjs.org` | upstream registry when in npm mode |
 | `SENTINEL_STORE` | _(memory only)_ | path to a JSON file to persist the audit log |
+| `SENTINEL_VIOLATIONS` | _(memory only)_ | path to a JSON file to persist runtime-violation records (quarantine state) |
 | `SENTINEL_TRUSTED_ROOT` | _(bundled root)_ | path to a Sigstore `trusted_root.json` for provenance verification (fatal error on a bad path) |
 | `SENTINEL_NPM_ATTESTATION_KEYS` | _(bundled keys)_ | path to an npm publish-attestation keys JSON, used alongside `SENTINEL_TRUSTED_ROOT` |
 
@@ -89,6 +90,7 @@ sentinel audit <pkg> [version]   pre-install verdict panel (exit 0 allow / 1 war
 sentinel scan  <file.tgz>        audit a local tarball offline (no proxy)
 sentinel install [args…]         npm install routed through the proxy
 sentinel npx     [args…]         npx routed through the proxy
+sentinel violations              list runtime violations recorded by the proxy (quarantined builds)
   -p, --proxy <url>   proxy base URL (default http://localhost:4873)
   --json              raw JSON report
 ```
@@ -98,6 +100,26 @@ The exit codes make `sentinel audit` usable as an agent tool or a CI gate.
 ### Sandbox (Phase 3, macOS)
 
 On macOS, `sentinel run-scripts <package-dir> [--approve network:host …]` runs the package's lifecycle scripts under a Seatbelt sandbox generated from its approved capabilities; un-approved reads of sensitive **files** (credential paths such as `~/.npmrc`, `.aws/credentials`) and network egress are denied by the kernel. Note: **environment-variable**-borne secrets (e.g. `NPM_TOKEN`, `AWS_SECRET_ACCESS_KEY`) are NOT scrubbed — the process inherits `process.env`; the `secret-exfil` audit rule flags env reads at audit time.
+
+### Runtime violation telemetry (Phase 10)
+
+The sandbox has always **contained** a denied capability; it now also reports it. When
+an enforced lifecycle script's denied read or network egress *surfaces as a process
+failure*, `sentinel-script-shell` best-effort reports the detected violation to the
+proxy, which quarantines that exact tarball (by integrity) fleet-wide — every future
+serve of the same bytes comes back `block`, on top of the deterministic score, without
+ever mutating the cached audit. This is best-effort: a denial the package's own code
+silently swallows (process exits `0`) leaves no signal for telemetry, but it is still
+denied at the kernel level exactly as before — containment is unaffected either way.
+
+- `sentinel violations [--json]` — list recorded violations and their quarantine state.
+- `POST /-/violations` — report a violation `{ name, version, integrity, kind, target,
+  confidence, deniedResource, evidence }`; `confirmed` quarantines and revokes any
+  standing approval, `suspected` is record-only. Requires the integrity to already have
+  an audited report.
+- `GET /-/violations` — the 50 most recent violation records.
+- `DELETE /-/violations/:integrity` — clear a quarantine.
+- `x-sentinel-violations` response header on every served tarball (`1`/`0`).
 
 ---
 
@@ -153,7 +175,7 @@ score. Weights live in one policy object (`packages/core/src/score.ts`).
 
 ## Status
 
-Phases 1–8 are built. Phase 1 is the transparent auditing proxy. Phase 2 adds the
+Phases 1–10 are built. Phase 1 is the transparent auditing proxy. Phase 2 adds the
 install-time permission manifest + approval gate, signed per-enterprise policy, and
 the private-namespace registry. Phases 3–6 add cross-platform sandbox enforcement
 (macOS Seatbelt, Linux bubblewrap) up through `sentinel install --enforce`, which
@@ -167,6 +189,11 @@ Phase 9 deep-verifies build provenance: real Sigstore attestation bundles are ch
 offline against pinned trust material, `provenance` becomes `verified|invalid|absent|unknown`
 with subject-digest binding to the actual served bytes, and a policy can require a verified
 attestation from a specific repository, workflow, or builder for matching package names.
+Phase 10 turns the enforcing sandbox into a sensor: a denied capability that surfaces as a
+process failure is classified and reported to the proxy, which quarantines that exact
+tarball fleet-wide (`sentinel violations`, `/-/violations`) as a serve-time overlay — the
+cached, deterministic score is never touched, and a denial the package silently swallows is
+still contained, just not visible to telemetry.
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full design and [docs/adr/](./docs/adr/)
 for the decision log.
 
