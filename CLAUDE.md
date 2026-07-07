@@ -91,6 +91,20 @@ findings (never a hard block on their own), both are deterministic and
 inert by default (no `privateNamespaces` ⇒ the confusion check never fires),
 and the confusion check never flags the legitimate claimed package itself
 (ADR-0026).
+Phase 14 adds **ecosystem breadth + SBOM** to `audit-tree`: `parseAnyLockfile`
+(`packages/core/src/lockfile.ts`) dispatches by filename/content sniff across
+npm `package-lock.json`, `yarn.lock` (bespoke v1 text parser + YAML for
+berry), and `pnpm-lock.yaml` (YAML, v5/v6/v9 key shapes, peer-suffix
+stripped) into the same `Coordinate[]`; `audit-tree --sbom <file>` writes a
+pure, injected-`now` CycloneDX 1.6 BOM (`toCycloneDX` in
+`packages/core/src/sbom.ts`, `sentinel:*` properties carrying verdict/score/
+top-finding/integrity-mismatch); the proxy route cross-checks a claimed
+lockfile integrity against Phase 9's recomputed served hash and force-blocks
+a mismatch (`TreePackageRow.integrityMismatch`); `--fail-on-error` opts the
+tree into gating on unresolvable-package rows (`aggregateTree`'s
+`failOnError`, default off — ADR-0020's fail-open stance unchanged). Parsing
+and SBOM export are pure; the per-package score path is untouched
+(ADR-0027).
 
 We are the Socket/Chainguard wedge: **do not** try to replace npm. Resolve and
 serve real packages transparently; only attach signal.
@@ -147,7 +161,8 @@ serve real packages transparently; only attach signal.
 
 ## Stack & versions (June 2026)
 
-Node + TypeScript, npm workspaces, Express 5, `tar` 7, `commander` 15, tests on
+Node + TypeScript, npm workspaces, Express 5, `tar` 7, `commander` 15, `yaml` 2
+(`@sentinel/core` only — pnpm/yarn-berry lockfile parsing), tests on
 `node:test` + `tsx`. Developed against **Node 24 (Active LTS)**; Node 22
 (Maintenance LTS) also supported — `engines.node` is `>=22`. Pin to current latest;
 don't downgrade majors without a reason.
@@ -156,24 +171,24 @@ don't downgrade majors without a reason.
 
 ```bash
 npm run build            # tsc --build (project references: core → proxy/cli)
-npm test                 # engine + end-to-end proxy: 373 tests on this host (371 pass, 2 skipped on darwin).
+npm test                 # engine + end-to-end proxy: 394 tests on this host (392 pass, 2 skipped on darwin).
                          # Skips are platform-gated enforcement: "non-darwin throws" skips on darwin
                          # (it verifies darwin-only behaviour), and the "no silent skip" CI guard skips
                          # off-CI. The BubblewrapSandbox enforcement suite and the Linux enforce-e2e tests
-                         # skip as describe-level blocks on darwin ("requires Linux") and are not in the 373
+                         # skip as describe-level blocks on darwin ("requires Linux") and are not in the 394
                          # count. Phase 10's violation-enforce e2e and the darwin-gated runtime-violation
                          # effect test (SeatbeltSandbox: "a denied credential read surfaces a confirmed
                          # runtime violation") RUN on darwin via Seatbelt, the same way the rest of the
-                         # Seatbelt effect suite does, and ARE in the 373 count.
+                         # Seatbelt effect suite does, and ARE in the 394 count.
                          # Phase 7's audit-tree, Phase 8/9's signature/provenance, Phase 10's
                          # classifyViolation/deny-set/violations-store, Phase 11's MCP/approval-request,
-                         # Phase 12's auth/authz-e2e, and Phase 13's typosquat/dependency-confusion tests
-                         # are hermetic and platform-neutral, so the darwin/Linux relationship from Phase 6
-                         # (Linux one test higher, one fewer skip) should hold, but hasn't been
-                         # re-verified on Linux CI since Phase 7/8/9/10/11/12/13 landed — confirm on the
-                         # next Linux CI run rather than trusting an extrapolated count here. Each
-                         # platform's enforcement is verified on that platform (macOS dev host /
-                         # ubuntu-latest CI).
+                         # Phase 12's auth/authz-e2e, Phase 13's typosquat/dependency-confusion, and
+                         # Phase 14's lockfile/SBOM/integrity-cross-check tests are hermetic and
+                         # platform-neutral, so the darwin/Linux relationship from Phase 6 (Linux one
+                         # test higher, one fewer skip) should hold, but hasn't been re-verified on
+                         # Linux CI since Phase 7/8/9/10/11/12/13/14 landed — confirm on the next Linux
+                         # CI run rather than trusting an extrapolated count here. Each platform's
+                         # enforcement is verified on that platform (macOS dev host / ubuntu-latest CI).
 npm run demo             # offline malware-detection walkthrough
 node packages/proxy/dist/index.js   # run the proxy (see README for env vars)
 ```

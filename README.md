@@ -91,6 +91,10 @@ node packages/cli/dist/index.js install lodash
 ```
 sentinel audit <pkg> [version]   pre-install verdict panel (exit 0 allow / 1 warn / 2 block)
 sentinel scan  <file.tgz>        audit a local tarball offline (no proxy)
+sentinel audit-tree [lockfile]   audit an entire resolved tree (npm/yarn/pnpm); exit non-zero if gated
+  --sbom <file>                    write a CycloneDX 1.6 SBOM of the audited tree
+  --fail-on-error                  also gate when any package fails to audit (default off)
+  --omit <type>                    omit a dependency group (only 'dev' is supported)
 sentinel install [args…]         npm install routed through the proxy
 sentinel npx     [args…]         npx routed through the proxy
 sentinel violations              list runtime violations recorded by the proxy (quarantined builds)
@@ -102,6 +106,28 @@ sentinel token verify <token> --pubkey             verify a token, print role/su
 ```
 
 The exit codes make `sentinel audit` usable as an agent tool or a CI gate.
+
+### Whole-tree audit (Phase 7, ADR-0020; ecosystem breadth + SBOM, Phase 14, ADR-0027)
+
+`sentinel audit-tree [lockfile]` audits every resolved package in a lockfile in one
+pass and exits non-zero if the aggregate verdict trips the policy's `treeGate`
+(default `block`). It auto-detects the format — `package-lock.json`/
+`npm-shrinkwrap.json` (npm v2/v3), `yarn.lock` (v1 text or berry YAML), and
+`pnpm-lock.yaml` (v5/v6/v9) — by filename first, falling back to a content sniff.
+
+- `--sbom <file>` writes the audited tree as a CycloneDX 1.6 JSON BOM: one
+  `library` component per package (`purl: pkg:npm/<name>@<version>`) carrying
+  Sentinel's verdict/score/top-finding as `sentinel:*` properties. Written even
+  when the tree is gated — it's informational output, not the gate itself.
+- The proxy cross-checks each lockfile-pinned integrity against the hash it
+  actually recomputed from the served bytes (Phase 9); a mismatch force-blocks
+  that row, surfaces a `lockfile-integrity-mismatch` finding, and is counted in
+  the aggregate — but only when both sides are present and disagree (an absent
+  integrity, e.g. yarn-berry's non-SRI checksum, never false-flags).
+- `--fail-on-error` opts the tree into gating on unresolvable-package rows too
+  (default: `error` rows are surfaced but never gate, per ADR-0020's fail-open
+  stance).
+- `--omit dev` skips dev dependencies where the lockfile format records them.
 
 ### Sandbox (Phase 3, macOS)
 
@@ -306,7 +332,7 @@ Both are weighted findings that raise the score, not automatic blocks — see
 
 ## Status
 
-Phases 1–13 are built. Phase 1 is the transparent auditing proxy. Phase 2 adds the
+Phases 1–14 are built. Phase 1 is the transparent auditing proxy. Phase 2 adds the
 install-time permission manifest + approval gate, signed per-enterprise policy, and
 the private-namespace registry. Phases 3–6 add cross-platform sandbox enforcement
 (macOS Seatbelt, Linux bubblewrap) up through `sentinel install --enforce`, which
@@ -328,6 +354,11 @@ still contained, just not visible to telemetry.
 Phase 11 adds `sentinel-mcp`, a stdio MCP server that is a thin client to the running
 proxy: five read tools plus `sentinel_request_approval`, which only ever records a pending
 request (`/-/approval-requests`) for a human to approve — the agent requests, never grants.
+Phase 14 broadens `audit-tree` beyond npm: `parseAnyLockfile` also reads `yarn.lock`
+(v1 and berry) and `pnpm-lock.yaml`, `--sbom <file>` writes a CycloneDX 1.6 BOM of the
+audited tree, a lockfile-vs-served integrity cross-check force-blocks a coordinate
+whose pinned integrity disagrees with what's actually served, and `--fail-on-error`
+opts the tree into gating on unresolvable packages.
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full design and [docs/adr/](./docs/adr/)
 for the decision log.
 

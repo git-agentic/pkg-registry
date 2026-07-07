@@ -214,18 +214,40 @@ registry but runs scripts unsandboxed. `scrubEnv` now narrows the `npm_` allowli
 sub-groups and drops any credential-shaped var (ADR-0017's pre-condition, met). Fail-closed:
 sandbox unavailable / unapproved dependency ⇒ the wrapper exits non-zero and npm aborts.
 
-### 3.8 Whole-tree audit (Phase 7, ADR-0020)
+### 3.8 Whole-tree audit (Phase 7, ADR-0020; ecosystem breadth + SBOM, Phase 14, ADR-0027)
 
 `sentinel audit-tree [lockfile]` audits an entire resolved dependency graph in one pass.
-The CLI parses the npm `package-lock.json` (v2/v3) `packages` map into deduped, sorted
-`{name, version, integrity?}` coordinates (skipping the root entry and `link:`/`file:`
-deps) and POSTs them to `POST /-/audit-tree`. The proxy fans out with bounded concurrency
-over the same integrity-cached `auditVersion()` path used by the tarball route, then rolls
-the per-package verdicts into a worst-case-wins aggregate and a gate decision — both
-computed server-side under the loaded policy. The gate trips at the policy's `treeGate`
-level (default `block`); a gated tree makes the CLI exit non-zero (the CI contract).
-Unresolvable packages become surfaced `error` rows and never trip the gate (invariant #6).
-This is a `/-/` batch endpoint, never on the inline tarball request path (invariant #3).
+The CLI parses the lockfile through `parseAnyLockfile(raw, {filename, omitDev})`
+(`packages/core/src/lockfile.ts`), which dispatches by filename suffix (falling back to a
+content sniff) across three formats — npm `package-lock.json`/`npm-shrinkwrap.json` (v2/v3
+`packages` map), `yarn.lock` (a bespoke v1 text parser plus a YAML parse for berry, chosen
+by sniffing for `__metadata:`), and `pnpm-lock.yaml` (YAML across lockfile versions v5's
+`/name/version` and v6/v9's `name@version` keys, peer-dep suffix `(a@1)(b@2)` stripped) —
+into the same deduped, sorted `{name, version, integrity?}` `Coordinate[]` regardless of
+format (skipping the root entry and `link:`/`file:` deps). Berry checksums are not
+SRI-shaped, so berry-parsed coordinates carry no `integrity`. The `yaml` package
+(`^2.9.0`) backing the pnpm/berry parsers is a dependency of `@sentinel/core` only. The CLI
+POSTs the coordinates (plus an optional `failOnError` flag) to `POST /-/audit-tree`. The
+proxy fans out with bounded concurrency over the same integrity-cached `auditVersion()`
+path used by the tarball route, then rolls the per-package verdicts into a worst-case-wins
+aggregate and a gate decision — both computed server-side under the loaded policy. The gate
+trips at the policy's `treeGate` level (default `block`); a gated tree makes the CLI exit
+non-zero (the CI contract). Unresolvable packages become surfaced `error` rows and never
+trip the gate (invariant #6) unless the caller opts into `--fail-on-error`, which threads
+through to `aggregateTree(rows, treeGate, {failOnError})` and also gates on any `error` row.
+When a coordinate carries an `integrity` (from the lockfile) that disagrees with
+`report.meta.integrity` — the hash Sentinel actually recomputed from the served bytes
+(ADR-0022's `actualIntegrity`), not a claimed value — the route forces that row to `block`,
+sets `TreePackageRow.integrityMismatch: true`, and injects a `lockfile-integrity-mismatch`
+top finding; `TreeAggregate.integrityMismatch` counts these across the tree. The check only
+fires when both sides are present and disagree — an absent lockfile integrity (e.g. a
+berry-parsed row) never false-flags. `audit-tree --sbom <file>` writes the audited tree as a
+CycloneDX 1.6 JSON BOM via `toCycloneDX(tree, {now})` (`packages/core/src/sbom.ts`) — pure,
+with `now` injected rather than read from the clock — one `library` component per package
+(`purl: pkg:npm/<name>@<version>`, scoped names `%40`-encoded) carrying Sentinel's
+verdict/score/top-finding/integrity-mismatch as `sentinel:*` custom properties. The SBOM is
+written even when the tree is gated (it's informational output, not the gate itself). This
+is a `/-/` batch endpoint, never on the inline tarball request path (invariant #3).
 
 ### 3.9 Signature & provenance verification (Phase 8, ADR-0021)
 
