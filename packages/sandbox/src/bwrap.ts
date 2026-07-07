@@ -1,5 +1,6 @@
 import { sensitivePathsFor, type Capability } from "@sentinel/core";
 import { pathCovers } from "./path-cover.js";
+import { expandHome } from "./deny-set.js";
 
 /**
  * Generate `bwrap` argv from a package's APPROVED capabilities, replicating the macOS
@@ -14,7 +15,6 @@ import { pathCovers } from "./path-cover.js";
  * Pure: same inputs ⇒ same argv. No firmlink canonicalization (Linux has no firmlinks).
  */
 export function generateBwrapArgs(approved: Capability[], opts: { homeDir: string }): string[] {
-  const expand = (p: string) => (p.startsWith("~") ? opts.homeDir + p.slice(1) : p);
   const approvedFs = approved.filter((c) => c.kind === "filesystem").map((c) => c.target);
   const hasNetwork = approved.some((c) => c.kind === "network");
 
@@ -22,7 +22,7 @@ export function generateBwrapArgs(approved: Capability[], opts: { homeDir: strin
   for (const sp of sensitivePathsFor("linux")) {
     for (const dp of sp.denyPaths) {
       if (approvedFs.some((t) => pathCovers(t, dp))) continue;
-      const target = expand(dp);
+      const target = expandHome(dp, opts.homeDir);
       if (sp.denyKind === "subpath") args.push("--tmpfs", target);
       else args.push("--ro-bind", "/dev/null", target);
     }
