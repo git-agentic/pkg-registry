@@ -85,6 +85,12 @@
       <tbody id="approval-rows"><tr><td colspan="5" class="empty">No approvals recorded.</td></tr></tbody>
     </table>
 
+    <h2 style="font-size:14px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin:28px 0 8px">Pending approval requests</h2>
+    <table>
+      <thead><tr><th>Package</th><th>Requester</th><th>Reason</th><th>Capabilities</th><th></th></tr></thead>
+      <tbody id="request-rows"><tr><td colspan="5" class="empty">No pending requests.</td></tr></tbody>
+    </table>
+
     <h2 style="font-size:14px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin:28px 0 8px">Runtime violations</h2>
     <table>
       <thead><tr><th>Package</th><th>Kind</th><th>Target</th><th>Confidence</th><th>Status</th></tr></thead>
@@ -151,6 +157,36 @@ async function loadApprovals() {
   }
 }
 
+function requestRow(r) {
+  const caps = (r.capabilities || []).map((c) => `${c.kind}:${c.target}`).join(", ") || "none";
+  return `<tr>
+    <td><div class="pkg">${esc(r.name)}</div><div class="meta">v${esc(r.version)}</div></td>
+    <td class="meta">${esc(r.requestedBy ? r.requestedBy.type + ":" + r.requestedBy.id : "—")}</td>
+    <td class="meta">${esc(r.reason || "")}</td>
+    <td class="meta">${esc(caps)}</td>
+    <td>
+      <button class="ghost" data-approve="${esc(r.integrity)}">Approve</button>
+      <button class="ghost" data-deny="${esc(r.integrity)}">Deny</button>
+    </td>
+  </tr>`;
+}
+
+async function loadRequests() {
+  const data = await (await fetch("/-/approval-requests")).json();
+  const rows = data.requests || [];
+  $("request-rows").innerHTML = rows.length ? rows.map(requestRow).join("")
+    : '<tr><td colspan="5" class="empty">No pending requests.</td></tr>';
+  for (const btn of document.querySelectorAll("[data-approve],[data-deny]")) {
+    btn.addEventListener("click", async () => {
+      const approve = btn.hasAttribute("data-approve");
+      const integrity = btn.getAttribute(approve ? "data-approve" : "data-deny");
+      await fetch("/-/approvals", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ integrity, decision: approve ? "approved" : "denied" }) });
+      await loadRequests();
+    });
+  }
+}
+
 function violationRow(v) {
   return `<tr>
     <td><div class="pkg">${esc(v.name)}</div><div class="meta">v${esc(v.version)}</div></td>
@@ -195,8 +231,9 @@ $("refresh").addEventListener("click", load);
 health();
 load();
 loadApprovals();
+loadRequests();
 loadViolations();
-setInterval(() => { load(); loadApprovals(); loadViolations(); }, 5000);
+setInterval(() => { load(); loadApprovals(); loadRequests(); loadViolations(); }, 5000);
 </script>
 </body>
 </html>
