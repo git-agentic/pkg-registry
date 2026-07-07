@@ -74,6 +74,19 @@ describe("SeatbeltSandbox enforcement", { skip: darwin ? false : "requires macOS
     new SeatbeltSandbox().run(`echo INJECTED >> "${rc}"`, { cwd: home, approved, homeDir: home });
     assert.ok(readFileSync(rc, "utf8").includes("INJECTED"), "an approved filesystem write must succeed");
   });
+
+  test("a denied credential read surfaces a confirmed runtime violation", () => {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "sentinel-home-")));
+    mkdirSync(join(home, ".ssh"));
+    writeFileSync(join(home, ".ssh", "id_rsa"), "TOPSECRET-XYZ");
+    // A propagating probe: let the EPERM print to stderr and exit non-zero.
+    const cmd = `node -e "require('fs').readFileSync(require('path').join(process.env.HOME,'.ssh','id_rsa'))"`;
+    const r = new SeatbeltSandbox().run(cmd, { cwd: tmpdir(), approved: [], homeDir: home, env: { ...process.env, HOME: home } });
+    assert.notEqual(r.exitCode, 0, "positive control: the denied read must fail the process");
+    assert.equal(r.violation?.kind, "filesystem");
+    assert.equal(r.violation?.confidence, "confirmed");
+    assert.ok(r.violation?.target?.includes(".ssh"), "target must name the ssh path");
+  });
 });
 
 describe("runLifecycleScripts", { skip: darwin ? false : "requires macOS sandbox-exec" }, () => {
