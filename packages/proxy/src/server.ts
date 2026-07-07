@@ -220,33 +220,44 @@ export function createServer(opts: ServerOptions) {
   // Whole-tree audit: fan out over the integrity-cached auditVersion path and
   // roll up a policy-gated aggregate (ADR-0020). Batch endpoint, not the gate path.
   app.post("/-/audit-tree", async (req, res) => {
-    const body = req.body as { packages?: unknown };
+    const body = req.body as { packages?: unknown; failOnError?: unknown };
     if (!body || !Array.isArray(body.packages)) {
-      return res.status(400).json({ error: "expected { packages: [{ name, version }] }" });
+      return res.status(400).json({ error: "expected { packages: [{ name, version, integrity? }] }" });
     }
-    const coords = body.packages as { name?: unknown; version?: unknown }[];
+    const coords = body.packages as { name?: unknown; version?: unknown; integrity?: unknown }[];
     for (const cc of coords) {
       if (!cc || typeof cc.name !== "string" || typeof cc.version !== "string") {
         return res.status(400).json({ error: "each package needs a string name and version" });
       }
     }
+    const failOnError = body.failOnError === true;
     const rows: TreePackageRow[] = await mapPool(
-      coords as { name: string; version: string }[],
+      coords as { name: string; version: string; integrity?: string }[],
       8,
       async (co) => {
         try {
           const { report: audited } = await auditVersion(co.name, co.version);
           const report = applyQuarantine(audited);
+          const claimed = typeof co.integrity === "string" ? co.integrity : null;
+          const served = report.meta.integrity;
+          // Only compare same-algorithm SRIs; a sha1/sha256 lockfile pin vs our sha512 recompute
+          // is not comparable (and must NOT be treated as tampering).
+          const sameAlgo = claimed !== null && served !== null && claimed.split("-", 1)[0] === served.split("-", 1)[0];
+          const mismatch = sameAlgo && claimed !== served;
           return {
-            name: co.name, version: co.version, status: report.verdict,
-            score: report.score, topFinding: report.findings[0]?.message ?? null, error: null,
-            provenance: report.meta.provenance,
+            name: co.name, version: co.version,
+            status: mismatch ? "block" as const : report.verdict,
+            score: report.score,
+            topFinding: mismatch
+              ? `lockfile-integrity-mismatch: lockfile pins ${co.integrity!.slice(0, 20)}… but the registry serves a different hash`
+              : (report.findings[0]?.message ?? null),
+            error: null, provenance: report.meta.provenance, integrityMismatch: mismatch,
           };
         } catch (err) {
           return {
             name: co.name, version: co.version, status: "error" as const,
             score: null, topFinding: null, error: (err as Error)?.message ?? "audit failed",
-            provenance: null,
+            provenance: null, integrityMismatch: false,
           };
         }
       },
@@ -255,7 +266,7 @@ export function createServer(opts: ServerOptions) {
       const ka = `${a.name}@${a.version}`, kb = `${b.name}@${b.version}`;
       return ka < kb ? -1 : ka > kb ? 1 : 0;
     });
-    const aggregate = aggregateTree(rows, treeGateOf(enterprisePolicy));
+    const aggregate = aggregateTree(rows, treeGateOf(enterprisePolicy), { failOnError });
     const result: TreeAuditResult = { aggregate, packages: rows };
     res.json(result);
   });

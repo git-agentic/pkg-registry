@@ -3,7 +3,7 @@
 **Date:** 2026-07-07
 **Status:** Approved design, pre-implementation
 **Extends:** ADR-0020 (whole-tree lockfile audit — this closes its own deferred
-list), ADR-0009 (integrity-hash cache key — the cross-check reuses the recomputed
+list), ADR-0004 (integrity-hash cache key — the cross-check reuses the recomputed
 served integrity from Phase 9), ADR-0002 (deterministic scoring — untouched; this is
 tree/CLI tooling). Supersedes nothing.
 
