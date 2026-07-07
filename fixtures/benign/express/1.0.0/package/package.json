@@ -1,0 +1,1 @@
+{ "name": "express", "version": "1.0.0", "description": "SYNTHETIC BENIGN FIXTURE — a name that IS in the corpus; must NOT be flagged as a typosquat (proves the name-in-corpus FP control).", "license": "MIT", "main": "index.js" }
