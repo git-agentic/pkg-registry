@@ -111,6 +111,19 @@ unrelated to our sandbox; **attribution is the filter**.
 - **none** — non-zero exit with no permission-error signature (ordinary build
   failure) → `null`.
 
+**Best-effort scope (honest limitation).** The sensor only sees violations that
+*surface as process failure* — an uncaught permission error yielding a non-zero exit
+with a stderr signature. A script that deliberately catches the `EPERM` and continues
+(exit 0, clean stderr — what sophisticated malware does) leaves **no trace** observable
+to the parent (OS denial logs are unavailable unprivileged, as probed). This does not
+weaken security: **containment is always enforced** (the sandbox blocked the access
+regardless, unchanged from Phase 6); Phase 10 adds *telemetry* on top, and telemetry
+captures the surfacing subset. Fleet quarantine therefore triggers on the noisy
+majority of real payloads (which crash or log), not on a perfectly-silent swallow.
+The effect-test and demo fixtures use a **propagating** probe (lets the `EPERM` throw,
+or writes it to stderr and exits non-zero) to exercise the detectable path; the ADR
+states the swallow-evasion limitation explicitly.
+
 **Event shape (`SandboxViolation`):**
 
 ```ts
@@ -172,8 +185,9 @@ capture, not a recomputation. For `confirmed`, the extracted `target` must match
   prints a red one-line notice.
 
 *Fixtures (safety-first, mirrors Phase 6's `enforce-probe`):* a new **benign** probe
-package whose postinstall *attempts* one denied action and is built to be caught, not
-to succeed:
+package whose postinstall *attempts* one denied action and, unlike `enforce-probe`,
+**lets the error propagate** (writes the `EPERM` to stderr and exits non-zero) so the
+telemetry sensor has a surfacing signal to detect:
 - a **filesystem** probe that constructs a `SENSITIVE_PATHS` target from string
   fragments (no `.ssh/id_rsa` literal even in comments), so static analysis emits only
   generic `filesystem:*` (which `pathCovers` treats as covering nothing → approving
@@ -181,8 +195,10 @@ to succeed:
   backstops what static analysis missed);
 - a **network** probe connecting to an RFC 5737 documentation IP (`198.51.100.0/24`).
 
-Synthetic, inert, `SYNTHETIC FIXTURE` header; the scripts only try-and-fail — no live
-malware, ever. Packed via `make-fixtures` like every fixture.
+Synthetic, inert, `SYNTHETIC FIXTURE` header; the scripts only try-and-fail then
+report the failure — no live malware, ever. Packed via `make-fixtures` like every
+fixture. (`enforce-probe` stays as-is — it demonstrates *containment* of a swallowed
+denial; the new probes demonstrate *telemetry* of a propagating one.)
 
 *Testing:*
 - **Pure unit** (`packages/sandbox/test/violation.test.ts`): `classifyViolation`
