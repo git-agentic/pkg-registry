@@ -29,6 +29,7 @@ import { PrivatePackageStore } from "./private-store.js";
 import { isClaimed, parsePublishBody, publishTokenValid } from "./private.js";
 import { ViolationStore, type ViolationInput } from "./violations.js";
 import { ApprovalRequestStore } from "./approval-requests.js";
+import { makeAuthz } from "./authz.js";
 
 export type ProxyPolicy = "observe" | "block";
 
@@ -56,6 +57,8 @@ export interface ServerOptions {
   violations: ViolationStore;
   /** Pending approval requests store (agent asks, human grants) — Phase 11. */
   approvalRequests: ApprovalRequestStore;
+  /** Operator Ed25519 public key PEM. Undefined ⇒ control-plane auth disabled (open mode). */
+  authPublicKey?: string;
 }
 
 const TARBALL_RE = /^(.+)\/-\/([^/]+\.tgz)$/;
@@ -82,6 +85,7 @@ export function createServer(opts: ServerOptions) {
   const privateStore = opts.privateStore;
   const publishTokens = opts.publishTokens ?? [];
   const signingKeys = opts.signingKeys ?? NPM_SIGNING_KEYS;
+  const authz = makeAuthz(opts.authPublicKey);
   const app = express();
   app.disable("x-powered-by");
   const jsonSmall = express.json({ limit: "1mb" });
@@ -274,7 +278,7 @@ export function createServer(opts: ServerOptions) {
     }
   });
 
-  app.post("/-/approvals", (req, res) => {
+  app.post("/-/approvals", authz.requireRole(["operator"]), (req, res) => {
     const body = Array.isArray(req.body) ? req.body : [req.body];
     const recorded: Approval[] = [];
     try {
@@ -306,12 +310,12 @@ export function createServer(opts: ServerOptions) {
     res.json({ approvals: approvals.recent(50) });
   });
 
-  app.delete(/^\/-\/approvals\/(.+)$/, (req, res) => {
+  app.delete(/^\/-\/approvals\/(.+)$/, authz.requireRole(["operator"]), (req, res) => {
     const integrity = decodeURIComponent(req.params[0] ?? "");
     res.json({ revoked: approvals.remove(integrity) });
   });
 
-  app.post("/-/approval-requests", (req, res) => {
+  app.post("/-/approval-requests", authz.requireRole(["agent"]), (req, res) => {
     const b = req.body as { name?: unknown; version?: unknown; integrity?: unknown; reason?: unknown; requestedBy?: { type?: string; id?: string } };
     if (typeof b?.name !== "string" || typeof b.version !== "string" || typeof b.integrity !== "string" || typeof b.reason !== "string") {
       return res.status(400).json({ error: "need name, version, integrity, reason" });
@@ -334,7 +338,7 @@ export function createServer(opts: ServerOptions) {
     res.json({ requests: approvalRequests.recent(50) });
   });
 
-  app.post("/-/violations", (req, res) => {
+  app.post("/-/violations", authz.requireRole(["agent"]), (req, res) => {
     const v = req.body as Partial<ViolationInput>;
     if (!v || typeof v.integrity !== "string" || typeof v.name !== "string" || typeof v.version !== "string" ||
         (v.confidence !== "confirmed" && v.confidence !== "suspected") ||
@@ -360,7 +364,7 @@ export function createServer(opts: ServerOptions) {
     res.json({ violations: violations.recent(50) });
   });
 
-  app.delete(/^\/-\/violations\/(.+)$/, (req, res) => {
+  app.delete(/^\/-\/violations\/(.+)$/, authz.requireRole(["operator"]), (req, res) => {
     const integrity = decodeURIComponent(req.params[0] ?? "");
     res.json({ cleared: violations.clear(integrity) });
   });
@@ -381,7 +385,8 @@ export function createServer(opts: ServerOptions) {
     next();
   }
 
-  app.put(/^\/(.+)$/, requirePublishAuth, jsonPublish, async (req, res) => {
+  const publishAuth = authz.enabled ? authz.requireRole(["publisher"]) : requirePublishAuth;
+  app.put(/^\/(.+)$/, publishAuth, jsonPublish, async (req, res) => {
     try {
       const name = decodeURIComponent(req.params[0] ?? "");
       if (!isClaimed(name, enterprisePolicy)) {
