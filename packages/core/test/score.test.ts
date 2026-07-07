@@ -10,10 +10,9 @@ const baseMeta = {
 };
 
 // A synthetic registry-signing key so these fixtures resolve to
-// signature: "verified" / provenance: "present" through the real runAudit
-// verification path (Task 4: the provenance rule reads these fields, and a
-// hand-built "unsigned"/"absent" meta would otherwise add unwaived findings
-// that shift these policy-comparison tests' scores).
+// signature: "verified" through the real runAudit verification path. No
+// attestation bundles are wired here, so provenance stays "absent" (info,
+// zero weight) rather than claiming provenance we can't actually verify.
 const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
 const spkiPem = publicKey.export({ type: "spki", format: "pem" }).toString();
 const spkiDer = publicKey.export({ type: "spki", format: "der" }) as Buffer;
@@ -31,7 +30,7 @@ const auditOf = (name: string, version: string, baseline?: string) => {
   return runAudit({ meta: { name, version, ...baseMeta, integrity }, tarball: tgz,
     baselineTarball: baseline ? tarball(name, baseline) : undefined,
     signatures: [signFor(name, version, integrity)],
-    hasProvenance: true,
+    hasProvenance: false,
     signingKeys: TEST_KEYS,
   });
 };
@@ -77,7 +76,7 @@ describe("score under policies", () => {
     const audit = await auditOf("color-stream", "1.4.1", "1.4.0");
     // Waive every rule that fires, for this package only.
     const waived = score(audit, policy({
-      allow: [{ package: "color-stream", rules: ["secret-exfil", "install-scripts", "network-egress", "obfuscation"], reason: "test" }],
+      allow: [{ package: "color-stream", rules: ["secret-exfil", "install-scripts", "network-egress", "obfuscation", "provenance"], reason: "test" }],
     }));
     assert.equal(waived.verdict, "allow", "no non-waived critical remains to hard-block");
     assert.ok(waived.findings.length > 0, "findings still present");
