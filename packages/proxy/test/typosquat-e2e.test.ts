@@ -34,7 +34,7 @@ function boot(policy: EnterprisePolicy): Promise<{ server: Server; base: string 
 const report = async (base: string, pkg: string, v: string): Promise<AuditReport> =>
   (await (await fetch(`${base}/-/audit/${pkg}/${v}`)).json()) as AuditReport;
 
-describe("typosquat + dependency-confusion (e2e)", () => {
+describe("typosquat (e2e)", () => {
   let server: Server; let base: string;
   before(async () => { ensureFixtures(); ({ server, base } = await boot({ ...DEFAULT_POLICY, privateNamespaces: ["@acme/*"] })); });
   after(() => server?.close());

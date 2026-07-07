@@ -454,9 +454,15 @@ Each rule is a pure function `(files, ctx) => Finding[]`. Phase 1 ships four:
    long base64/hex blobs, `\xNN` string arrays, `charCodeAt` decode loops,
    dynamic `require` of decoded strings.
 
-Phase 13 adds a fifth, name-only rule (§3.13, ADR-0026):
+Phase 8 adds a fifth rule (§3.9, ADR-0021):
 
-5. **`typosquat`** (`metadata` category) — flags a package name that is a
+5. **`provenance`** (`metadata` category) — turns the `signature` and
+   `provenance` fields on `PackageMeta` into findings; an `invalid` signature is
+   `critical` and hard-blocks.
+
+Phase 13 adds a sixth, name-only rule (§3.13, ADR-0026):
+
+6. **`typosquat`** (`metadata` category) — flags a package name that is a
    likely typosquat (edit-distance/homoglyph match) of a name in a bundled
    static popular-package corpus. `medium` severity; never flags a name
    already in the corpus.

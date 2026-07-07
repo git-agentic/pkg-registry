@@ -5,7 +5,7 @@
 
 ## Context
 
-The six rules that exist before this phase (`install-scripts`, `secret-exfil`,
+The five rules that exist before this phase (`install-scripts`, `secret-exfil`,
 `network-egress`, `obfuscation`, `provenance`) plus the signature/provenance
 verification machinery (ADR-0021/0022) all detect **what a package does** or
 **verify its cryptographic identity**. None of them detect the older,

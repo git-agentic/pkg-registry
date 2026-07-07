@@ -21,7 +21,7 @@ export const POPULAR_NPM_NAMES: readonly string[] = [
   "puppeteer", "playwright", "cheerio", "jsdom", "sharp", "jimp", "canvas",
   "form-data", "qs", "query-string", "cookie", "cookie-parser", "express-session",
   "multer", "concurrently", "nodemon", "ts-node", "tsx", "husky", "lint-staged",
-  "typedoc", "jsonwebtoken", "aws-sdk", "@aws-sdk/client-s3", "firebase", "stripe",
+  "typedoc", "aws-sdk", "@aws-sdk/client-s3", "firebase", "stripe",
   "twilio", "openai", "@anthropic-ai/sdk", "googleapis", "octokit", "simple-git",
   "fs-extra", "chokidar", "execa", "shelljs", "tar", "archiver", "adm-zip",
   "handlebars", "ejs", "pug", "marked", "markdown-it", "highlight.js", "prismjs",
