@@ -11,6 +11,7 @@ import { createServer } from "../src/server.js";
 import { AuditStore } from "../src/store.js";
 import { ApprovalStore } from "../src/approvals.js";
 import { PrivatePackageStore } from "../src/private-store.js";
+import { ViolationStore } from "../src/violations.js";
 import { LocalFixtureUpstream } from "../src/upstream.js";
 import { DEFAULT_POLICY, integrityOf, type EnterprisePolicy } from "@sentinel/core";
 
@@ -44,6 +45,7 @@ describe("publish route (PUT /:pkg)", () => {
       upstream: new LocalFixtureUpstream(FIXTURES),
       store: new AuditStore(), approvals: new ApprovalStore(), privateStore: priv,
       enterprisePolicy: policy(["@acme/*"]), publishTokens: ["tok-1"], policy: "block",
+      violations: new ViolationStore(),
     });
     await new Promise<void>((r) => { server = app.listen(0, () => { base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`; r(); }); });
   });

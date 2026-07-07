@@ -27,6 +27,7 @@ import { ApprovalStore, type Approval } from "./approvals.js";
 import { reconcileApproval, type ApprovalState } from "./reconcile.js";
 import { PrivatePackageStore } from "./private-store.js";
 import { isClaimed, parsePublishBody, publishTokenValid } from "./private.js";
+import { ViolationStore, type ViolationInput } from "./violations.js";
 
 export type ProxyPolicy = "observe" | "block";
 
@@ -50,6 +51,8 @@ export interface ServerOptions {
   signingKeys?: NpmSigningKey[];
   /** Pinned Sigstore trust material. undefined ⇒ bundled default; null ⇒ disabled. */
   trustMaterial?: ProvenanceTrustMaterial | null;
+  /** Runtime-violation telemetry store (Phase 10). */
+  violations: ViolationStore;
 }
 
 const TARBALL_RE = /^(.+)\/-\/([^/]+\.tgz)$/;
@@ -69,7 +72,7 @@ async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise
 }
 
 export function createServer(opts: ServerOptions) {
-  const { upstream, store, approvals } = opts;
+  const { upstream, store, approvals, violations } = opts;
   const enterprisePolicy = opts.enterprisePolicy;
   const policyHash = opts.policyHash ?? policyHashOf(enterprisePolicy);
   const policy: ProxyPolicy = opts.policy ?? "observe";
@@ -134,10 +137,24 @@ export function createServer(opts: ServerOptions) {
     return { report, tarball };
   }
 
+  /** Overlay a quarantine on a served report: inject a critical runtime-violation finding + force block. */
+  function applyQuarantine(report: AuditReport): AuditReport {
+    const rec = violations.get(report.meta.integrity);
+    if (!rec?.quarantined) return report;
+    const finding = {
+      ruleId: "runtime-violation", category: "install-script" as const, severity: "critical" as const,
+      message: `runtime violation: ${rec.kind} access to ${rec.target ?? rec.deniedResource ?? "a denied resource"} blocked at install time — build quarantined`,
+      onChangedFile: false, evidence: [], weight: 0, waived: false,
+    };
+    return { ...report, verdict: "block", findings: [finding, ...report.findings] };
+  }
+
   function gateAndSend(res: Response, pkg: string, version: string, report: AuditReport, tarball: Buffer, isPrivate: boolean): Response | void {
+    report = applyQuarantine(report);
     const rec = reconcile(report);
     res.setHeader("x-sentinel-score", String(report.score));
     res.setHeader("x-sentinel-verdict", report.verdict);
+    res.setHeader("x-sentinel-violations", String(violations.get(report.meta.integrity) ? 1 : 0));
     res.setHeader("x-sentinel-findings", String(report.findings.length));
     res.setHeader("x-sentinel-capabilities", String(report.capabilities.length));
     res.setHeader("x-sentinel-approval", rec.state);
@@ -287,6 +304,37 @@ export function createServer(opts: ServerOptions) {
   app.delete(/^\/-\/approvals\/(.+)$/, (req, res) => {
     const integrity = decodeURIComponent(req.params[0] ?? "");
     res.json({ revoked: approvals.remove(integrity) });
+  });
+
+  app.post("/-/violations", (req, res) => {
+    const v = req.body as Partial<ViolationInput>;
+    if (!v || typeof v.integrity !== "string" || typeof v.name !== "string" || typeof v.version !== "string" ||
+        (v.confidence !== "confirmed" && v.confidence !== "suspected") ||
+        (v.kind !== "filesystem" && v.kind !== "network" && v.kind !== "process")) {
+      return res.status(400).json({ error: "invalid violation: need name, version, integrity, kind, confidence" });
+    }
+    if (!store.get(v.integrity)) {
+      return res.status(400).json({ error: `no audited report for integrity ${v.integrity} — audit before reporting` });
+    }
+    const rec = violations.record({
+      name: v.name, version: v.version, integrity: v.integrity, kind: v.kind,
+      target: v.target ?? null, confidence: v.confidence, deniedResource: v.deniedResource ?? null,
+      evidence: { exitCode: v.evidence?.exitCode ?? 0, stderrExcerpt: String(v.evidence?.stderrExcerpt ?? "").slice(0, 200) },
+    });
+    if (rec.quarantined) {
+      approvals.remove(v.integrity); // revoke any standing approval for a quarantined build
+      console.log(`[violation] quarantined ${v.name}@${v.version} (${rec.kind} → ${rec.target ?? rec.deniedResource})`);
+    }
+    res.json({ recorded: rec });
+  });
+
+  app.get("/-/violations", (_req, res) => {
+    res.json({ violations: violations.recent(50) });
+  });
+
+  app.delete(/^\/-\/violations\/(.+)$/, (req, res) => {
+    const integrity = decodeURIComponent(req.params[0] ?? "");
+    res.json({ cleared: violations.clear(integrity) });
   });
 
   app.get("/-/private", (_req, res) => {

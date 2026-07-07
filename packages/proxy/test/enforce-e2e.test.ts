@@ -12,6 +12,7 @@ import { createServer } from "../src/server.js";
 import { AuditStore } from "../src/store.js";
 import { ApprovalStore } from "../src/approvals.js";
 import { LocalFixtureUpstream } from "../src/upstream.js";
+import { ViolationStore } from "../src/violations.js";
 import { DEFAULT_POLICY } from "@sentinel/core";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -50,6 +51,7 @@ describe("install --enforce (e2e) blocks an undeclared action; install otherwise
       upstream: new LocalFixtureUpstream(FIXTURES),
       store: new AuditStore(), approvals: new ApprovalStore(),
       enterprisePolicy: DEFAULT_POLICY, policy: "block",
+      violations: new ViolationStore(),
     });
     await new Promise<void>((r) => { server = app.listen(0, () => { base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`; r(); }); });
   });

@@ -15,11 +15,13 @@ import { AuditStore } from "./store.js";
 import { ApprovalStore } from "./approvals.js";
 import { LocalFixtureUpstream, NpmUpstream, type Upstream } from "./upstream.js";
 import { PrivatePackageStore } from "./private-store.js";
+import { ViolationStore } from "./violations.js";
 
 export { createServer } from "./server.js";
 export { AuditStore } from "./store.js";
 export { ApprovalStore } from "./approvals.js";
 export { PrivatePackageStore } from "./private-store.js";
+export { ViolationStore } from "./violations.js";
 export * from "./upstream.js";
 
 function env(name: string, fallback: string): string {
@@ -83,13 +85,15 @@ function main(): void {
   // dist/index.js -> ../public ; src is run via tsx with the same relative layout.
   const publicDir = env("SENTINEL_PUBLIC", join(here, "..", "public"));
   const trustMaterial = resolveTrustMaterial();
+  const violations = new ViolationStore(process.env.SENTINEL_VIOLATIONS);
 
-  const app = createServer({ upstream, store, approvals, enterprisePolicy, policyHash, policy, publicDir, privateStore, publishTokens, trustMaterial });
+  const app = createServer({ upstream, store, approvals, enterprisePolicy, policyHash, policy, publicDir, privateStore, publishTokens, trustMaterial, violations });
   app.listen(port, () => {
     console.log(`Sentinel proxy listening on http://localhost:${port}`);
     console.log(`  upstream : ${upstream.name}`);
     console.log(`  policy   : ${policy}  (observe = audit+serve, block = 403 on block verdict)`);
     console.log(`  trust    : ${trustMaterial === undefined ? "bundled Sigstore root" : "operator-supplied root"}`);
+    console.log(`  violations: ${process.env.SENTINEL_VIOLATIONS ? "persisted" : "in-memory"}`);
     console.log(`  dashboard: http://localhost:${port}/`);
     const claims = enterprisePolicy.privateNamespaces ?? [];
     console.log(`  private  : ${claims.length ? claims.join(", ") : "none"}  (publish ${publishTokens.length ? "enabled" : "disabled"})`);
