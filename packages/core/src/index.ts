@@ -62,5 +62,5 @@ export {
   type ProvenanceVerification,
   type NpmAttestationKey,
 } from "./provenance.js";
-export { parseLockfile, parseYarnLock, type Coordinate } from "./lockfile.js";
+export { parseLockfile, parseYarnLock, parsePnpmLock, parseAnyLockfile, type Coordinate } from "./lockfile.js";
 export { signToken, verifyToken, type Role, type TokenPayload } from "./auth.js";

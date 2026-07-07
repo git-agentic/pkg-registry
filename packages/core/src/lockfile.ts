@@ -115,6 +115,61 @@ export function parseYarnLock(raw: string, _opts: { omitDev?: boolean } = {}): C
   return parseYarnV1(raw);
 }
 
+/** Strip a pnpm peer-dep suffix `(a@1)(b@2)` and a leading `/`. */
+function pnpmStripKey(key: string): string {
+  return key.replace(/\([^)]*\)/g, "").replace(/^\//, "");
+}
+
+/** Split a `name@version` (v6/v9) or `name/version` (v5) key into [name, version]. */
+function pnpmNameVersion(key: string, slashStyle: boolean): [string, string] | null {
+  const k = pnpmStripKey(key);
+  if (slashStyle) {
+    const at = k.lastIndexOf("/");
+    if (at <= 0) return null;
+    return [k.slice(0, at), k.slice(at + 1)];
+  }
+  const at = k.lastIndexOf("@");
+  if (at <= 0) return null;
+  return [k.slice(0, at), k.slice(at + 1)];
+}
+
+export function parsePnpmLock(raw: string, _opts: { omitDev?: boolean } = {}): Coordinate[] {
+  const doc = parseYaml(raw) as { lockfileVersion?: string | number; packages?: Record<string, { resolution?: { integrity?: string } }> };
+  const packages = doc.packages;
+  if (!packages || typeof packages !== "object") {
+    throw new Error("unsupported pnpm lockfile: no 'packages' map");
+  }
+  const lv = String(doc.lockfileVersion ?? "");
+  const slashStyle = lv.startsWith("5"); // v5 uses /name/version; v6+ uses name@version
+  const byKey = new Map<string, Coordinate>();
+  for (const [key, entry] of Object.entries(packages)) {
+    if (key.startsWith("link:") || key.startsWith("file:")) continue;
+    const nv = pnpmNameVersion(key, slashStyle);
+    if (!nv) continue;
+    const [name, version] = nv;
+    if (!name || !version) continue;
+    const coord: Coordinate = { name, version };
+    const integrity = entry?.resolution?.integrity;
+    if (integrity) coord.integrity = integrity;
+    byKey.set(`${name}@${version}`, coord);
+  }
+  return sortCoords([...byKey.values()]);
+}
+
+/** Detect the lockfile format (filename first, then content sniff) and parse. */
+export function parseAnyLockfile(raw: string, opts: { filename?: string; omitDev?: boolean } = {}): Coordinate[] {
+  const fn = (opts.filename ?? "").toLowerCase();
+  if (fn.endsWith("package-lock.json") || fn.endsWith("npm-shrinkwrap.json")) return parseLockfile(raw, opts);
+  if (fn.endsWith("yarn.lock")) return parseYarnLock(raw, opts);
+  if (fn.endsWith("pnpm-lock.yaml")) return parsePnpmLock(raw, opts);
+  // content sniff:
+  const trimmed = raw.trimStart();
+  if (trimmed.startsWith("{")) return parseLockfile(raw, opts);
+  if (/# yarn lockfile v1/.test(raw) || (/__metadata:/.test(raw) && /resolution:/.test(raw) && /@npm:/.test(raw))) return parseYarnLock(raw, opts);
+  if (/^lockfileVersion:/m.test(raw)) return parsePnpmLock(raw, opts);
+  throw new Error("unrecognized lockfile format (expected package-lock.json, yarn.lock, or pnpm-lock.yaml)");
+}
+
 function sortCoords(coords: Coordinate[]): Coordinate[] {
   return coords.sort((a, b) => {
     const ka = `${a.name}@${a.version}`, kb = `${b.name}@${b.version}`;
