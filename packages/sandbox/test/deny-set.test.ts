@@ -1,0 +1,41 @@
+import assert from "node:assert/strict";
+import { describe, test } from "node:test";
+import type { Capability } from "@sentinel/core";
+import { computeDenySet } from "../src/deny-set.js";
+import { generateProfile } from "../src/profile.js";
+
+const HOME = "/Users/test";
+const fsCap = (target: string): Capability => ({ kind: "filesystem", target, evidence: [] });
+const netCap = (): Capability => ({ kind: "network", target: "*", evidence: [] });
+
+describe("computeDenySet", () => {
+  test("no approvals: denies sensitive paths and network", () => {
+    const ds = computeDenySet([], { homeDir: HOME, platform: "darwin" });
+    assert.ok(ds.networkDenied);
+    assert.ok(ds.deniedPaths.some((p) => p.includes(".ssh")), "ssh must be denied");
+    assert.ok(ds.deniedPaths.every((p) => !p.startsWith("~")), "paths must be home-expanded");
+  });
+
+  test("an approved network capability lifts networkDenied", () => {
+    assert.equal(computeDenySet([netCap()], { homeDir: HOME, platform: "darwin" }).networkDenied, false);
+  });
+
+  test("an approved filesystem capability covering ~/.ssh removes it from deniedPaths", () => {
+    const ds = computeDenySet([fsCap("~/.ssh")], { homeDir: HOME, platform: "darwin" });
+    assert.ok(!ds.deniedPaths.some((p) => p.includes(".ssh")), "approved ssh must not be denied");
+  });
+
+  test("darwin canonicalizes /etc to /private/etc", () => {
+    const ds = computeDenySet([], { homeDir: HOME, platform: "darwin" });
+    assert.ok(ds.deniedPaths.includes("/private/etc/passwd"), "must canonicalize /etc → /private/etc");
+  });
+
+  test("non-drift: every deniedPath appears in the generated Seatbelt profile", () => {
+    const approved: Capability[] = [fsCap("~/.aws")];
+    const ds = computeDenySet(approved, { homeDir: HOME, platform: "darwin" });
+    const profile = generateProfile(approved, { homeDir: HOME });
+    for (const p of ds.deniedPaths) {
+      assert.ok(profile.includes(p), `profile must deny ${p} (deny-set/profile drift)`);
+    }
+  });
+});

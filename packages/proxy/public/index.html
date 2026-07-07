@@ -37,6 +37,7 @@
   .badge.allow { background: rgba(46,160,67,.15); }
   .badge.warn  { background: rgba(210,153,34,.15); }
   .badge.block { background: rgba(248,81,73,.15); }
+  .badge.quarantined { background: rgba(248,81,73,.15); }
   .score { font-weight: 700; }
   .meta { color: var(--muted); font-size: 12px; }
   .findings { margin: 6px 0 0; padding: 0; list-style: none; }
@@ -82,6 +83,12 @@
     <table>
       <thead><tr><th>Package</th><th>Decision</th><th>Actor</th><th>Capabilities</th><th></th></tr></thead>
       <tbody id="approval-rows"><tr><td colspan="5" class="empty">No approvals recorded.</td></tr></tbody>
+    </table>
+
+    <h2 style="font-size:14px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin:28px 0 8px">Runtime violations</h2>
+    <table>
+      <thead><tr><th>Package</th><th>Kind</th><th>Target</th><th>Confidence</th><th>Status</th></tr></thead>
+      <tbody id="violation-rows"><tr><td colspan="5" class="empty">No violations recorded.</td></tr></tbody>
     </table>
   </div>
 
@@ -144,6 +151,23 @@ async function loadApprovals() {
   }
 }
 
+function violationRow(v) {
+  return `<tr>
+    <td><div class="pkg">${esc(v.name)}</div><div class="meta">v${esc(v.version)}</div></td>
+    <td class="meta">${esc(v.kind)}</td>
+    <td class="meta">${esc(v.target ?? v.deniedResource ?? "?")}</td>
+    <td class="meta">${esc(v.confidence)}</td>
+    <td>${v.quarantined ? '<span class="badge quarantined">QUARANTINED</span>' : '<span class="meta">recorded</span>'}</td>
+  </tr>`;
+}
+
+async function loadViolations() {
+  const data = await (await fetch("/-/violations")).json();
+  const rows = data.violations || [];
+  $("violation-rows").innerHTML = rows.length ? rows.map(violationRow).join("")
+    : '<tr><td colspan="5" class="empty">No violations recorded.</td></tr>';
+}
+
 async function health() {
   try {
     const h = await (await fetch("/-/health")).json();
@@ -171,7 +195,8 @@ $("refresh").addEventListener("click", load);
 health();
 load();
 loadApprovals();
-setInterval(() => { load(); loadApprovals(); }, 5000);
+loadViolations();
+setInterval(() => { load(); loadApprovals(); loadViolations(); }, 5000);
 </script>
 </body>
 </html>

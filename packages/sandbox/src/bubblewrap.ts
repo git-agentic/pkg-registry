@@ -2,6 +2,8 @@ import { spawnSync } from "node:child_process";
 import { generateBwrapArgs } from "./bwrap.js";
 import type { Sandbox, SandboxResult } from "./types.js";
 import type { Capability } from "@sentinel/core";
+import { computeDenySet } from "./deny-set.js";
+import { classifyViolation } from "./violation.js";
 
 /** bwrap's own errors when the kernel refuses unprivileged user namespaces (Ubuntu 24.04 AppArmor, etc.). */
 const NS_FAILURE = /Creating new namespace failed|No permissions to create new namespace|setting up uid map/i;
@@ -28,10 +30,13 @@ export class BubblewrapSandbox implements Sandbox {
     if (NS_FAILURE.test(res.stderr ?? "")) {
       throw new Error(`bubblewrap enforcement unavailable: kernel refused user-namespace creation — ${res.stderr?.trim()}`);
     }
-    return {
+    const result: SandboxResult = {
       exitCode: res.status ?? (res.signal ? 1 : 0),
       stdout: res.stdout ?? "",
       stderr: res.stderr ?? "",
     };
+    const denySet = computeDenySet(opts.approved, { homeDir: opts.homeDir, platform: "linux" });
+    const violation = classifyViolation(result, denySet);
+    return violation ? { ...result, violation } : result;
   }
 }

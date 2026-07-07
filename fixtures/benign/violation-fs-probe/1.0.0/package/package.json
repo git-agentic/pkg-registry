@@ -1,0 +1,6 @@
+{
+  "name": "violation-fs-probe",
+  "version": "1.0.0",
+  "description": "SYNTHETIC BENIGN FIXTURE — postinstall attempts an undeclared ssh read and lets the EPERM propagate (exit non-zero) so the telemetry sensor detects it. Reads nothing it isn't denied; no exfiltration.",
+  "scripts": { "postinstall": "node probe.js" }
+}

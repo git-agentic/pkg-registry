@@ -1,17 +1,6 @@
 import { sensitivePathsFor, type Capability } from "@sentinel/core";
 import { pathCovers } from "./path-cover.js";
-
-/**
- * macOS firmlinks: sandbox-exec matches the canonical /private path, not the alias.
- * /etc, /var, /tmp are firmlinks to /private/etc, /private/var, /private/tmp.
- * This is a pure mapping (no fs calls) — these roots are stable macOS facts.
- */
-function canonicalizeMacPath(p: string): string {
-  for (const root of ["/etc", "/var", "/tmp"]) {
-    if (p === root || p.startsWith(root + "/")) return "/private" + p;
-  }
-  return p;
-}
+import { canonicalizeMacPath, expandHome } from "./deny-set.js";
 
 /**
  * Generate a macOS Seatbelt (SBPL) profile from a package's APPROVED capabilities.
@@ -19,7 +8,6 @@ function canonicalizeMacPath(p: string): string {
  * inputs ⇒ same string. `homeDir` expands `~`-relative SENSITIVE_PATHS.
  */
 export function generateProfile(approved: Capability[], opts: { homeDir: string }): string {
-  const expand = (p: string) => (p.startsWith("~") ? opts.homeDir + p.slice(1) : p);
   const approvedFs = approved.filter((c) => c.kind === "filesystem").map((c) => c.target);
   const hasNetwork = approved.some((c) => c.kind === "network");
 
@@ -29,7 +17,7 @@ export function generateProfile(approved: Capability[], opts: { homeDir: string 
       if (!sp.modes.includes(mode)) continue;
       const uncovered = sp.denyPaths.filter((dp) => !approvedFs.some((t) => pathCovers(t, dp)));
       if (uncovered.length === 0) continue;
-      const items = uncovered.map((dp) => `(${sp.denyKind} "${canonicalizeMacPath(expand(dp))}")`).join(" ");
+      const items = uncovered.map((dp) => `(${sp.denyKind} "${canonicalizeMacPath(expandHome(dp, opts.homeDir))}")`).join(" ");
       lines.push(`(deny ${op} ${items})`);
     }
   };

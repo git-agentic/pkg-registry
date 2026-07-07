@@ -156,3 +156,20 @@ export function formatTree(r: TreeAuditResult): string {
 export function treeExitCode(r: TreeAuditResult): number {
   return r.aggregate.gated ? 2 : 0;
 }
+
+export interface ViolationRow {
+  name: string; version: string; kind: string; target: string | null;
+  confidence: string; quarantined: boolean; evidence: { exitCode: number; stderrExcerpt: string };
+}
+
+/** Runtime violation list surfaced from the proxy's `/-/violations` feed. */
+export function formatViolations(rows: ViolationRow[]): string {
+  const L: string[] = ["", c(C.bold, `  runtime violations (${rows.length})`), c(C.gray, `  ${"─".repeat(56)}`)];
+  if (rows.length === 0) L.push(c(C.gray, "  none recorded"));
+  for (const v of rows) {
+    const tag = v.quarantined ? c(C.red, "QUARANTINED") : c(C.yellow, v.confidence.toUpperCase());
+    L.push(`  ${tag} ${v.name}@${v.version} ${c(C.gray, `${v.kind} → ${v.target ?? "?"}`)}`);
+  }
+  L.push("");
+  return L.join("\n");
+}

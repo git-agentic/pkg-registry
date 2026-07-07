@@ -64,6 +64,14 @@
     "prov-mismatch": {
       "class": "benign",
       "versions": { "1.0.0": { "signature": "valid", "provenance": { "attestationsFile": "sigstore-3.0.0.attestations.json" } } }
+    },
+    "violation-fs-probe": {
+      "class": "benign",
+      "versions": { "1.0.0": { "signature": "valid", "provenance": false } }
+    },
+    "violation-net-probe": {
+      "class": "benign",
+      "versions": { "1.0.0": { "signature": "valid", "provenance": false } }
     }
   }
 }

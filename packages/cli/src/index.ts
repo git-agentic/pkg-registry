@@ -14,7 +14,7 @@ import {
   type TreeAuditResult,
 } from "@sentinel/core";
 import { createSandbox, runLifecycleScripts } from "@sentinel/sandbox";
-import { formatReport, formatManifest, verdictExitCode, formatTree, treeExitCode, type Manifest } from "./format.js";
+import { formatReport, formatManifest, verdictExitCode, formatTree, treeExitCode, formatViolations, type Manifest, type ViolationRow } from "./format.js";
 import { parseLockfile, type Coordinate } from "./lockfile.js";
 
 const DEFAULT_PROXY = process.env.SENTINEL_PROXY ?? "http://localhost:4873";
@@ -143,6 +143,19 @@ program
     } catch (err) {
       fail(err, opts.proxy);
     }
+  });
+
+program
+  .command("violations")
+  .description("List runtime violations recorded by the proxy (quarantined builds).")
+  .option("--proxy <url>", "proxy base URL", DEFAULT_PROXY)
+  .option("--json", "output raw JSON", false)
+  .action(async (opts: { proxy: string; json: boolean }) => {
+    const res = await fetch(`${opts.proxy}/-/violations`);
+    if (!res.ok) { console.error(`failed: ${res.status}`); process.exit(1); }
+    const { violations } = (await res.json()) as { violations: ViolationRow[] };
+    if (opts.json) console.log(JSON.stringify(violations, null, 2));
+    else console.log(formatViolations(violations));
   });
 
 program

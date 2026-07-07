@@ -48,6 +48,17 @@ the proxy caching by the actual hash. `requireProvenance` now demands `verified`
 requirements (repo/workflow/builder/issuer) against the attestation's authenticated identity;
 a verification error over a *present* bundle maps to `invalid`, never `unknown`, so a
 crash-bundle can't fail open past the gate (ADR-0022).
+Phase 10 turns the enforcing sandbox into a **sensor**: `computeDenySet` (shared with the
+profile/`bwrap` generators, non-drift-tested) plus `classifyViolation` (pure, total, never
+throws) infer a `confirmed`/`suspected`/`null` runtime violation from a sandboxed child's
+failure — `null` on a swallowed denial (`exitCode === 0`) or a permission error outside the
+deny set (the false-positive filter). `sentinel-script-shell` best-effort reports a detected
+violation to `POST /-/violations`; the proxy's `ViolationStore` records it integrity-keyed,
+and `confirmed` revokes any standing approval and quarantines. Quarantine is a **serve-time
+overlay** (`applyQuarantine` in `server.ts`) — it forces `block` and prepends a `weight: 0`
+finding on a *copy* of the served report, never mutating the cached score (invariant #1).
+Best-effort/containment-unchanged: a swallowed denial evades telemetry, not containment —
+the sandbox still denied the syscall exactly as it did before Phase 10 (ADR-0023).
 
 We are the Socket/Chainguard wedge: **do not** try to replace npm. Resolve and
 serve real packages transparently; only attach signal.
@@ -113,17 +124,22 @@ don't downgrade majors without a reason.
 
 ```bash
 npm run build            # tsc --build (project references: core → proxy/cli)
-npm test                 # engine + end-to-end proxy: 259 tests on this host (257 pass, 2 skipped on darwin).
+npm test                 # engine + end-to-end proxy: 290 tests on this host (288 pass, 2 skipped on darwin).
                          # Skips are platform-gated enforcement: "non-darwin throws" skips on darwin
                          # (it verifies darwin-only behaviour), and the "no silent skip" CI guard skips
-                         # off-CI. The BubblewrapSandbox enforcement suite and enforce-e2e tests skip as
-                         # describe-level blocks on darwin ("requires Linux") and are not in the 259 count.
-                         # Phase 7's audit-tree and Phase 8/9's signature/provenance tests are hermetic and
-                         # platform-neutral, so the darwin/Linux relationship from Phase 6 (Linux one test
-                         # higher, one fewer skip) should hold, but hasn't been re-verified on Linux CI
-                         # since Phase 7/8/9 landed — confirm on the next Linux CI run rather than trusting
-                         # an extrapolated count here. Each platform's enforcement is verified on that
-                         # platform (macOS dev host / ubuntu-latest CI).
+                         # off-CI. The BubblewrapSandbox enforcement suite and the Linux enforce-e2e tests
+                         # skip as describe-level blocks on darwin ("requires Linux") and are not in the 290
+                         # count. Phase 10's violation-enforce e2e and the darwin-gated runtime-violation
+                         # effect test (SeatbeltSandbox: "a denied credential read surfaces a confirmed
+                         # runtime violation") RUN on darwin via Seatbelt, the same way the rest of the
+                         # Seatbelt effect suite does, and ARE in the 290 count.
+                         # Phase 7's audit-tree, Phase 8/9's signature/provenance, and Phase 10's
+                         # classifyViolation/deny-set/violations-store tests are hermetic and platform-neutral,
+                         # so the darwin/Linux relationship from Phase 6 (Linux one test higher, one fewer
+                         # skip) should hold, but hasn't been re-verified on Linux CI since Phase 7/8/9/10
+                         # landed — confirm on the next Linux CI run rather than trusting an extrapolated
+                         # count here. Each platform's enforcement is verified on that platform (macOS dev
+                         # host / ubuntu-latest CI).
 npm run demo             # offline malware-detection walkthrough
 node packages/proxy/dist/index.js   # run the proxy (see README for env vars)
 ```

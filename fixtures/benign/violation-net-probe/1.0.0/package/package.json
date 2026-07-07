@@ -1,0 +1,6 @@
+{
+  "name": "violation-net-probe",
+  "version": "1.0.0",
+  "description": "SYNTHETIC BENIGN FIXTURE — postinstall attempts an undeclared connect to an RFC 5737 documentation IP and lets the EPERM propagate. No data sent; connection is denied by the sandbox.",
+  "scripts": { "postinstall": "node probe.js" }
+}

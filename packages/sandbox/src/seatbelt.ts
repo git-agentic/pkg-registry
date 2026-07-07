@@ -5,6 +5,8 @@ import { join } from "node:path";
 import type { Capability } from "@sentinel/core";
 import type { Sandbox, SandboxResult } from "./types.js";
 import { generateProfile } from "./profile.js";
+import { computeDenySet } from "./deny-set.js";
+import { classifyViolation } from "./violation.js";
 
 /** Enforces an SBPL profile via macOS `sandbox-exec`. Fails closed on non-darwin. */
 export class SeatbeltSandbox implements Sandbox {
@@ -30,11 +32,14 @@ export class SeatbeltSandbox implements Sandbox {
           stderr: res.error.message,
         };
       }
-      return {
+      const result: SandboxResult = {
         exitCode: res.status ?? (res.signal ? 1 : 0),
         stdout: res.stdout ?? "",
         stderr: res.stderr ?? "",
       };
+      const denySet = computeDenySet(opts.approved, { homeDir: opts.homeDir, platform: "darwin" });
+      const violation = classifyViolation(result, denySet);
+      return violation ? { ...result, violation } : result;
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
