@@ -7,3 +7,5 @@ export { createSandbox } from "./factory.js";
 export { runLifecycleScripts, type ScriptResult } from "./runner.js";
 export { scrubEnv, ENV_ALLOWLIST } from "./env.js";
 export { computeDenySet, expandHome, canonicalizeMacPath, type DenySet } from "./deny-set.js";
+export { classifyViolation } from "./violation.js";
+export type { SandboxViolation } from "./types.js";
