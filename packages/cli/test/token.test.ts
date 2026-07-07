@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, existsSync } from "node:fs";
+import { mkdtempSync, existsSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,6 +16,7 @@ describe("sentinel token", () => {
     const prefix = join(dir, "auth");
     run(["token", "keygen", "--out", prefix]);
     assert.ok(existsSync(`${prefix}.pub.pem`) && existsSync(`${prefix}.key.pem`));
+    assert.equal(statSync(`${prefix}.key.pem`).mode & 0o777, 0o600);
     const token = run(["token", "mint", "--role", "operator", "--sub", "alice", "--ttl", "3600", "--key", `${prefix}.key.pem`]).trim();
     assert.match(token, /^[\w-]+\.[\w-]+$/);
     const out = run(["token", "verify", token, "--pubkey", `${prefix}.pub.pem`]);

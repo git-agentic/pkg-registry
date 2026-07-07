@@ -208,7 +208,7 @@ policyCmd
     const { publicKey, privateKey } = generateKeypair();
     if (opts.out) {
       writeFileSync(`${opts.out}.pub.pem`, publicKey);
-      writeFileSync(`${opts.out}.key.pem`, privateKey);
+      writeFileSync(`${opts.out}.key.pem`, privateKey, { mode: 0o600 });
       console.log(`wrote ${opts.out}.pub.pem and ${opts.out}.key.pem`);
     } else {
       console.log(publicKey + "\n" + privateKey);
@@ -254,7 +254,7 @@ tokenCmd
   .action((opts: { out: string }) => {
     const { publicKey, privateKey } = generateKeypair();
     writeFileSync(`${opts.out}.pub.pem`, publicKey);
-    writeFileSync(`${opts.out}.key.pem`, privateKey);
+    writeFileSync(`${opts.out}.key.pem`, privateKey, { mode: 0o600 });
     console.log(`wrote ${opts.out}.pub.pem and ${opts.out}.key.pem`);
   });
 
