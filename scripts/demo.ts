@@ -11,6 +11,7 @@ import { createServer } from "../packages/proxy/src/server.js";
 import { AuditStore } from "../packages/proxy/src/store.js";
 import { ApprovalStore } from "../packages/proxy/src/approvals.js";
 import { PrivatePackageStore } from "../packages/proxy/src/private-store.js";
+import { ViolationStore } from "../packages/proxy/src/violations.js";
 import { LocalFixtureUpstream } from "../packages/proxy/src/upstream.js";
 import { formatReport } from "../packages/cli/src/format.js";
 import type { AuditReport } from "../packages/core/src/index.js";
@@ -24,6 +25,7 @@ async function main(): Promise<void> {
     store: new AuditStore(),
     approvals: new ApprovalStore(),
     privateStore: new PrivatePackageStore(),
+    violations: new ViolationStore(),
     enterprisePolicy: DEFAULT_POLICY,
     policy: "block",
   });
