@@ -54,3 +54,11 @@ export {
   type RegistrySignature,
   type NpmSigningKey,
 } from "./signature.js";
+export {
+  verifyProvenance,
+  loadDefaultTrustMaterial,
+  loadTrustMaterial,
+  type ProvenanceTrustMaterial,
+  type ProvenanceVerification,
+  type NpmAttestationKey,
+} from "./provenance.js";

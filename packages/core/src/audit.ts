@@ -100,7 +100,7 @@ export async function runAudit(input: AuditTarballInput): Promise<Audit> {
     fileCount: extracted.fileCount,
     hasInstallScripts: detectInstallScripts(extracted.files) || input.meta.hasInstallScripts,
     signature,
-    provenance: input.hasProvenance ? "present" : "absent",
+    provenance: input.hasProvenance ? "unknown" : "absent",
   };
 
   return buildAudit(meta, extracted.files, { mode, durationMs: Date.now() - started, baselineCapabilities });

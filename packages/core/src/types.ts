@@ -13,6 +13,25 @@ export type Severity = "info" | "low" | "medium" | "high" | "critical";
 /** Result of verifying a package's npm registry signature. */
 export type SignatureVerdict = "verified" | "invalid" | "unsigned" | "unknown";
 
+/** Result of verifying a package's provenance attestation bundles (Phase 9). */
+export type ProvenanceStatus = "verified" | "invalid" | "absent" | "unknown";
+
+/** Identity extracted from a verified SLSA provenance attestation. */
+export interface ProvenanceIdentity {
+  /** Signing workflow identity (Fulcio cert SAN), e.g. "https://github.com/o/r/.github/workflows/release.yml@refs/heads/main". */
+  workflow: string | null;
+  /** OIDC issuer, e.g. "https://token.actions.githubusercontent.com". */
+  issuer: string | null;
+  /** Source repository URL from the signed SLSA predicate. */
+  sourceRepository: string | null;
+  /** Git ref the build ran from, e.g. "refs/heads/main". */
+  ref: string | null;
+  /** Builder id, e.g. "https://github.com/actions/runner/github-hosted". */
+  builder: string | null;
+  /** Resolved source commit SHA. */
+  commit: string | null;
+}
+
 export type Category =
   | "obfuscation"
   | "network"
@@ -77,8 +96,10 @@ export interface PackageMeta {
   hasInstallScripts: boolean;
   /** Verified npm registry-signature status. */
   signature: SignatureVerdict;
-  /** Whether the packument declares a build-provenance attestation. */
-  provenance: "present" | "absent";
+  /** Verified provenance-attestation status (ADR-0022). */
+  provenance: ProvenanceStatus;
+  /** Identity from the verified SLSA attestation; null unless provenance is "verified". */
+  provenanceIdentity?: ProvenanceIdentity | null;
   /** Subresource Integrity string from the registry `dist` block. */
   integrity: string | null;
   unpackedSize: number;

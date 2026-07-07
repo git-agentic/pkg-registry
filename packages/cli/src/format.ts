@@ -43,7 +43,7 @@ export function formatReport(r: AuditReport): string {
     : m.signature === "invalid" ? c(C.red, "invalid")
     : m.signature === "unsigned" ? c(C.yellow, "unsigned") : c(C.gray, "unknown");
   L.push(`  signature  ${sig}`);
-  L.push(`  provenance ${m.provenance === "present" ? c(C.green, "present") : c(C.gray, "absent")}`);
+  L.push(`  provenance ${m.provenance === "verified" ? c(C.green, "verified") : c(C.gray, m.provenance)}`);
   L.push(`  install    ${m.hasInstallScripts ? c(C.yellow, "⚠ runs lifecycle scripts") : "no install scripts"}`);
   L.push(`  audit      ${r.engine.mode}-mode · ${r.engine.rules.length} rules · engine ${r.engine.version}`);
   L.push("");
