@@ -33,6 +33,9 @@ export class ViolationStore {
 
   record(v: ViolationInput, now = new Date().toISOString()): ViolationRecord {
     const existing = this.byIntegrity.get(v.integrity);
+    // Quarantine is sticky: only clear() (operator override) may lift it. A later,
+    // lower-confidence report must not evict a confirmed quarantine record.
+    if (existing?.quarantined && v.confidence !== "confirmed") return existing;
     if (existing && existing.kind === v.kind && existing.target === v.target) return existing;
     const rec: ViolationRecord = { ...v, quarantined: v.confidence === "confirmed", reportedAt: now };
     this.index(rec);

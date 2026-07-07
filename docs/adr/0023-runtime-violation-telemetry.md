@@ -50,9 +50,13 @@ the deterministic score.
   `integrity`: **confirmed ⇒ quarantined** (and the standing approval, if any,
   is revoked); **suspected ⇒ record-only**, surfaced but not gated.
 - **The quarantine is a serve-time overlay, never a score mutation.**
-  `applyQuarantine` (`packages/proxy/src/server.ts`) runs on every served
-  report — the tarball route, `audit-tree`'s per-row audit, the manifest
-  route — and, when the integrity is quarantined, returns a **shallow copy**
+  `applyQuarantine` (`packages/proxy/src/server.ts`) runs at the tarball
+  serve gate (`gateAndSend`) and in `audit-tree`'s per-row audit — the two
+  places a gated verdict actually blocks something. `/-/audit` and
+  `/-/manifest` return the un-overlaid static report; the tarball route's
+  403 at install time is the actual enforcement point, so those read-only
+  endpoints reporting the pre-overlay verdict doesn't open a gap. When the
+  integrity is quarantined, `applyQuarantine` returns a **shallow copy**
   of the report (`{ ...report, verdict: "block", findings: [finding,
   ...report.findings] }`) with a `weight: 0` critical `runtime-violation`
   finding prepended. The cached `AuditReport` in `AuditStore` is never

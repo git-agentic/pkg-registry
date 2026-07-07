@@ -32,6 +32,14 @@ describe("ViolationStore", () => {
     assert.equal(s.recent().length, 1);
   });
 
+  test("a suspected report does NOT lift a confirmed quarantine", () => {
+    const s = new ViolationStore();
+    s.record(base);
+    const rec = s.record({ ...base, confidence: "suspected", kind: "network", target: null, deniedResource: null });
+    assert.equal(s.isQuarantined("sha512-AAA"), true);
+    assert.equal(rec.confidence, "confirmed");
+  });
+
   test("clear removes the quarantine", () => {
     const s = new ViolationStore();
     s.record(base);

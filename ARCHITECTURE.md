@@ -297,10 +297,13 @@ changes the install's exit code — resolving the served integrity via the
 reported. The proxy's `ViolationStore` (`packages/proxy/src/violations.ts`)
 records by `integrity`: `confirmed` quarantines (and revokes any standing
 approval); `suspected` is record-only. **The quarantine is a serve-time
-overlay, not a score mutation**: `applyQuarantine` (`server.ts`) runs on
-every served report and, for a quarantined integrity, returns a shallow copy
-with `verdict` forced to `block` and a `weight: 0` critical
-`runtime-violation` finding prepended — the cached `AuditReport` in
+overlay, not a score mutation**: `applyQuarantine` (`server.ts`) runs at the
+tarball serve gate (`gateAndSend`) and in `audit-tree`'s per-row audit — the
+enforcement points where a gated verdict blocks the install — and, for a
+quarantined integrity, returns a shallow copy with `verdict` forced to
+`block` and a `weight: 0` critical `runtime-violation` finding prepended.
+`/-/audit` and `/-/manifest` return the un-overlaid static report; they're
+read-only, so the tarball route's 403 remains the actual gate. The cached `AuditReport` in
 `AuditStore` is never written to, so invariant #1 (deterministic scoring)
 holds exactly as before; only the served *verdict* reflects runtime history,
 freshly on every request. `x-sentinel-violations` surfaces the flag as a
