@@ -27,6 +27,8 @@ export {
   extractTarball,
   baselineFrom,
   integrityOf,
+  integrityOfAlgo,
+  type SriAlgorithm,
   type ExtractResult,
 } from "./extract.js";
 export { RULES } from "./rules/index.js";

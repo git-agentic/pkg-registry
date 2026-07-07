@@ -5,6 +5,7 @@ import {
   score,
   policyHashOf,
   integrityOf,
+  integrityOfAlgo,
   aggregateTree,
   treeGateOf,
   NPM_SIGNING_KEYS,
@@ -236,14 +237,18 @@ export function createServer(opts: ServerOptions) {
       8,
       async (co) => {
         try {
-          const { report: audited } = await auditVersion(co.name, co.version);
+          const { report: audited, tarball } = await auditVersion(co.name, co.version);
           const report = applyQuarantine(audited);
           const claimed = typeof co.integrity === "string" ? co.integrity : null;
-          const served = report.meta.integrity;
-          // Only compare same-algorithm SRIs; a sha1/sha256 lockfile pin vs our sha512 recompute
-          // is not comparable (and must NOT be treated as tampering).
-          const sameAlgo = claimed !== null && served !== null && claimed.split("-", 1)[0] === served.split("-", 1)[0];
-          const mismatch = sameAlgo && claimed !== served;
+          // Verify same-algorithm: recompute the SERVED bytes' digest in the lockfile's
+          // own algorithm so a legacy sha1/sha256 pin is genuinely checked (not skipped —
+          // skipping would fail-open) and never false-flagged against our sha512 recompute.
+          // A truly-unknown algorithm can't be recomputed, so it's left unverified (skip).
+          const algo = claimed?.split("-", 1)[0];
+          const mismatch =
+            claimed !== null && (algo === "sha1" || algo === "sha256" || algo === "sha512")
+              ? claimed !== integrityOfAlgo(tarball, algo)
+              : false;
           return {
             name: co.name, version: co.version,
             status: mismatch ? "block" as const : report.verdict,
