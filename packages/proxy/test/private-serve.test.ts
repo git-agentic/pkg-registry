@@ -12,6 +12,7 @@ import { AuditStore } from "../src/store.js";
 import { ApprovalStore } from "../src/approvals.js";
 import { PrivatePackageStore } from "../src/private-store.js";
 import { ViolationStore } from "../src/violations.js";
+import { ApprovalRequestStore } from "../src/approval-requests.js";
 import { LocalFixtureUpstream } from "../src/upstream.js";
 import { DEFAULT_POLICY, runAudit, integrityOf, type EnterprisePolicy } from "@sentinel/core";
 
@@ -40,6 +41,7 @@ describe("private serve routing", () => {
       store: new AuditStore(), approvals: new ApprovalStore(), privateStore: priv,
       enterprisePolicy: policy(["@acme/*"]), policy: "block",
       violations: new ViolationStore(),
+      approvalRequests: new ApprovalRequestStore(),
     });
     await new Promise<void>((r) => { server = app.listen(0, () => { base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`; r(); }); });
   });

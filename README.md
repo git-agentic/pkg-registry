@@ -22,7 +22,7 @@ audit placement, data model, npm hooks, stack justification).
 npm install          # install workspace deps
 npm run build        # compile all packages (tsc --build)
 npm run fixtures     # pack the test fixtures into real .tgz tarballs
-npm test             # 15 tests: engine + end-to-end proxy
+npm test             # 308 tests: engine + end-to-end proxy (see CLAUDE.md for the exact/skip breakdown)
 npm run demo         # self-contained malware-detection demo (no network)
 ```
 
@@ -80,6 +80,7 @@ node packages/cli/dist/index.js install lodash
 | `SENTINEL_REGISTRY` | `https://registry.npmjs.org` | upstream registry when in npm mode |
 | `SENTINEL_STORE` | _(memory only)_ | path to a JSON file to persist the audit log |
 | `SENTINEL_VIOLATIONS` | _(memory only)_ | path to a JSON file to persist runtime-violation records (quarantine state) |
+| `SENTINEL_APPROVAL_REQUESTS` | _(memory only)_ | path to a JSON file to persist pending approval requests (MCP `sentinel_request_approval` and any other caller) |
 | `SENTINEL_TRUSTED_ROOT` | _(bundled root)_ | path to a Sigstore `trusted_root.json` for provenance verification (fatal error on a bad path) |
 | `SENTINEL_NPM_ATTESTATION_KEYS` | _(bundled keys)_ | path to an npm publish-attestation keys JSON, used alongside `SENTINEL_TRUSTED_ROOT` |
 
@@ -121,6 +122,57 @@ denied at the kernel level exactly as before — containment is unaffected eithe
 - `DELETE /-/violations/:integrity` — clear a quarantine.
 - `x-sentinel-violations` response header on every served tarball (`1`/`0`).
 
+## MCP server (Phase 11)
+
+`sentinel-mcp` is a stdio [MCP](https://modelcontextprotocol.io/) server for
+agent hosts that speak MCP directly instead of shelling out to the CLI. It is
+a **thin client** to the running proxy — it audits nothing itself and does
+zero scoring; every tool call is a fetch to the proxy's `/-/*` endpoints, so
+the verdict an agent sees is byte-identical to what a real install would see.
+If the proxy is unreachable, a tool call fails explicitly — it never
+fabricates a verdict.
+
+Point an agent host at it (e.g. in an MCP client config):
+
+```json
+{
+  "mcpServers": {
+    "sentinel": {
+      "command": "node",
+      "args": ["packages/mcp/dist/index.js"],
+      "env": { "SENTINEL_PROXY": "http://localhost:4873" }
+    }
+  }
+}
+```
+
+Tools:
+
+- `sentinel_audit` — verdict/score/findings/capabilities/signature/provenance
+  for a package version, plus whether it's quarantined by a runtime violation.
+- `sentinel_audit_tree` — audits every package in a `package-lock.json` and
+  returns the aggregate verdict and gate state.
+- `sentinel_capabilities` — the capability manifest, delta vs. the prior
+  version, and approval state.
+- `sentinel_check_provenance` — provenance status and, when verified, the
+  attested build identity (repo/workflow/builder/commit).
+- `sentinel_list_violations` — recorded runtime violations and which builds
+  are quarantined.
+- `sentinel_request_approval` — records a **pending** approval request; it
+  never grants approval. Only a human can approve, via the dashboard's
+  "Pending approval requests" panel or `POST /-/approvals`.
+
+The privilege boundary is deliberate: the agent can request, never grant.
+There is no auto-approve or clear-quarantine tool, and none is planned — see
+[ADR-0024](./docs/adr/0024-agent-native-mcp-surface.md).
+
+- `POST /-/approval-requests` — record a pending request
+  `{ name, version, integrity, reason, requestedBy? }`. Requires the integrity
+  to already have an audited report.
+- `GET /-/approval-requests` — the 50 most recent pending requests.
+- A `POST /-/approvals` decision for an integrity auto-clears its pending
+  request.
+
 ---
 
 ## How the malware demo works (and why it's synthetic)
@@ -159,6 +211,7 @@ packages/
   core/    @sentinel/core   audit engine — rules, scoring, data model, LLM adapter (no I/O, fully unit-tested)
   proxy/   @sentinel/proxy  Express registry proxy, pluggable upstream, audit store, dashboard
   cli/     @sentinel/cli    pre-install verdicts + registry-redirected npm/npx
+  mcp/     @sentinel/mcp    sentinel-mcp: stdio MCP server, thin client to the proxy (Phase 11)
 fixtures/  benign + synthetic-malicious packages; make-fixtures.ts packs real .tgz tarballs
 scripts/   make-fixtures.ts, demo.ts
 ARCHITECTURE.md   full design   ·   CLAUDE.md   working agreement for this repo
@@ -194,6 +247,9 @@ process failure is classified and reported to the proxy, which quarantines that 
 tarball fleet-wide (`sentinel violations`, `/-/violations`) as a serve-time overlay — the
 cached, deterministic score is never touched, and a denial the package silently swallows is
 still contained, just not visible to telemetry.
+Phase 11 adds `sentinel-mcp`, a stdio MCP server that is a thin client to the running
+proxy: five read tools plus `sentinel_request_approval`, which only ever records a pending
+request (`/-/approval-requests`) for a human to approve — the agent requests, never grants.
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full design and [docs/adr/](./docs/adr/)
 for the decision log.
 

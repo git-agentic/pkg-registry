@@ -13,6 +13,7 @@ import { LocalFixtureUpstream } from "../src/upstream.js";
 import { ApprovalStore } from "../src/approvals.js";
 import { PrivatePackageStore } from "../src/private-store.js";
 import { ViolationStore } from "../src/violations.js";
+import { ApprovalRequestStore } from "../src/approval-requests.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, "..", "..", "..");
@@ -33,6 +34,7 @@ describe("runtime violation reporting + quarantine (e2e)", () => {
       upstream: new LocalFixtureUpstream(FIXTURES), store: new AuditStore(),
       approvals, enterprisePolicy: DEFAULT_POLICY, policy: "block",
       privateStore: new PrivatePackageStore(), violations,
+      approvalRequests: new ApprovalRequestStore(),
     });
     await new Promise<void>((r) => { server = app.listen(0, () => { base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`; r(); }); });
   });

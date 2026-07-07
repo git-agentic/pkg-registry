@@ -13,6 +13,7 @@ import { LocalFixtureUpstream } from "../src/upstream.js";
 import { ApprovalStore } from "../src/approvals.js";
 import { PrivatePackageStore } from "../src/private-store.js";
 import { ViolationStore } from "../src/violations.js";
+import { ApprovalRequestStore } from "../src/approval-requests.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, "..", "..", "..");
@@ -40,6 +41,7 @@ describe("registry signature verification (local fixtures, test keys)", () => {
       approvals: new ApprovalStore(), enterprisePolicy: DEFAULT_POLICY,
       privateStore: new PrivatePackageStore(), signingKeys,
       violations: new ViolationStore(),
+      approvalRequests: new ApprovalRequestStore(),
     });
     await new Promise<void>((res) => { server = app.listen(0, () => { base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`; res(); }); });
   });
@@ -74,6 +76,7 @@ describe("requireSignature / requireProvenance policy gate (proxy integration)",
       policy: "block",
       privateStore: new PrivatePackageStore(), signingKeys,
       violations: new ViolationStore(),
+      approvalRequests: new ApprovalRequestStore(),
     });
     await new Promise<void>((res) => { server = app.listen(0, () => { base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`; res(); }); });
   });

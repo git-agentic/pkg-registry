@@ -12,10 +12,10 @@ import {
   type EnterprisePolicy,
   extractCapabilities, capabilityAtom, type Capability, type PackageFile,
   type TreeAuditResult,
+  parseLockfile, type Coordinate,
 } from "@sentinel/core";
 import { createSandbox, runLifecycleScripts } from "@sentinel/sandbox";
 import { formatReport, formatManifest, verdictExitCode, formatTree, treeExitCode, formatViolations, type Manifest, type ViolationRow } from "./format.js";
-import { parseLockfile, type Coordinate } from "./lockfile.js";
 
 const DEFAULT_PROXY = process.env.SENTINEL_PROXY ?? "http://localhost:4873";
 

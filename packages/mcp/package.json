@@ -1,0 +1,15 @@
+{
+  "name": "@sentinel/mcp",
+  "version": "0.1.0",
+  "description": "Sentinel MCP server: agent-native pre-install audit tools backed by the proxy.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "bin": { "sentinel-mcp": "./dist/index.js" },
+  "dependencies": {
+    "@sentinel/core": "0.1.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": { "@types/node": "^24.13.2" }
+}
