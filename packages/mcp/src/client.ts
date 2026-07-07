@@ -29,7 +29,10 @@ export interface ViolationRecordDTO {
 /** Thin HTTP client over the proxy's /-/* endpoints. Every method returns parsed
  *  JSON or throws ProxyError — never a fabricated verdict. */
 export class ProxyClient {
-  constructor(private readonly baseUrl: string) {}
+  constructor(
+    private readonly baseUrl: string,
+    private readonly authToken: string | undefined = process.env.SENTINEL_AUTH_TOKEN,
+  ) {}
 
   private async getJson<T>(path: string): Promise<T> {
     let res: Response;
@@ -45,12 +48,11 @@ export class ProxyClient {
   }
 
   private async postJson<T>(path: string, body: unknown): Promise<T> {
+    const headers: Record<string, string> = { "content-type": "application/json", accept: "application/json" };
+    if (this.authToken) headers.authorization = `Bearer ${this.authToken}`;
     let res: Response;
     try {
-      res = await fetch(`${this.baseUrl}${path}`, {
-        method: "POST", headers: { "content-type": "application/json", accept: "application/json" },
-        body: JSON.stringify(body),
-      });
+      res = await fetch(`${this.baseUrl}${path}`, { method: "POST", headers, body: JSON.stringify(body) });
     } catch (e) {
       throw new ProxyError(`cannot reach Sentinel proxy at ${this.baseUrl}: ${(e as Error).message}`);
     }

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { dirname, join, resolve } from "node:path";
 import { readFileSync } from "node:fs";
+import { validateAuthPublicKey } from "./auth-config.js";
 import { fileURLToPath } from "node:url";
 import {
   loadPolicy,
@@ -63,6 +64,24 @@ function resolveEnterprisePolicy(): { policy: EnterprisePolicy; hash: string } {
   }
 }
 
+export function resolveAuthPublicKey(): string | undefined {
+  const path = process.env.SENTINEL_AUTH_PUBKEY;
+  if (!path) return undefined; // open mode (explicitly unset)
+  let content: string;
+  try {
+    content = readFileSync(path, "utf8");
+  } catch (err) {
+    console.error(`FATAL: cannot read SENTINEL_AUTH_PUBKEY: ${(err as Error).message}`);
+    process.exit(1);
+  }
+  try {
+    return validateAuthPublicKey(content);
+  } catch {
+    console.error(`FATAL: SENTINEL_AUTH_PUBKEY is not a valid public key PEM (${path})`);
+    process.exit(1);
+  }
+}
+
 function resolveTrustMaterial(): ProvenanceTrustMaterial | null | undefined {
   const rootPath = process.env.SENTINEL_TRUSTED_ROOT;
   if (!rootPath) return undefined; // bundled default
@@ -89,13 +108,15 @@ function main(): void {
   const trustMaterial = resolveTrustMaterial();
   const violations = new ViolationStore(process.env.SENTINEL_VIOLATIONS);
   const approvalRequests = new ApprovalRequestStore(process.env.SENTINEL_APPROVAL_REQUESTS);
+  const authPublicKey = resolveAuthPublicKey();
 
-  const app = createServer({ upstream, store, approvals, enterprisePolicy, policyHash, policy, publicDir, privateStore, publishTokens, trustMaterial, violations, approvalRequests });
+  const app = createServer({ upstream, store, approvals, enterprisePolicy, policyHash, policy, publicDir, privateStore, publishTokens, trustMaterial, violations, approvalRequests, authPublicKey });
   app.listen(port, () => {
     console.log(`Sentinel proxy listening on http://localhost:${port}`);
     console.log(`  upstream : ${upstream.name}`);
     console.log(`  policy   : ${policy}  (observe = audit+serve, block = 403 on block verdict)`);
     console.log(`  trust    : ${trustMaterial === undefined ? "bundled Sigstore root" : "operator-supplied root"}`);
+    console.log(`  auth     : ${authPublicKey ? "enabled (signed role tokens)" : "disabled (open control plane)"}`);
     console.log(`  violations: ${process.env.SENTINEL_VIOLATIONS ? "persisted" : "in-memory"}`);
     console.log(`  approval-requests: ${process.env.SENTINEL_APPROVAL_REQUESTS ? "persisted" : "in-memory"}`);
     console.log(`  dashboard: http://localhost:${port}/`);
