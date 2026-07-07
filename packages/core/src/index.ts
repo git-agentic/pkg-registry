@@ -62,3 +62,4 @@ export {
   type ProvenanceVerification,
   type NpmAttestationKey,
 } from "./provenance.js";
+export { parseLockfile, type Coordinate } from "./lockfile.js";
