@@ -331,8 +331,9 @@ it. Three roles: `operator`, `agent`, `publisher`.
 **Opt-in, not on by default.** `makeAuthz(publicKeyPem)`
 (`packages/proxy/src/authz.ts`) is disabled (`enabled: false`, every
 `requireRole` a pass-through) unless `SENTINEL_AUTH_PUBKEY` (a path to a PEM
-public key) is set at proxy startup, in which case a bad path is a fatal
-startup error rather than a silent fall-back to open mode. With auth
+public key) is set at proxy startup, in which case a bad path *or* content
+that doesn't parse as a public-key PEM (empty, whitespace-only, or garbage)
+is a fatal startup error rather than a silent fall-back to open mode. With auth
 disabled — the default — every existing test and deployment behaves exactly
 as before this phase.
 

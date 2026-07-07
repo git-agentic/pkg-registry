@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { dirname, join, resolve } from "node:path";
 import { readFileSync } from "node:fs";
+import { validateAuthPublicKey } from "./auth-config.js";
 import { fileURLToPath } from "node:url";
 import {
   loadPolicy,
@@ -63,13 +64,20 @@ function resolveEnterprisePolicy(): { policy: EnterprisePolicy; hash: string } {
   }
 }
 
-function resolveAuthPublicKey(): string | undefined {
+export function resolveAuthPublicKey(): string | undefined {
   const path = process.env.SENTINEL_AUTH_PUBKEY;
-  if (!path) return undefined; // open mode
+  if (!path) return undefined; // open mode (explicitly unset)
+  let content: string;
   try {
-    return readFileSync(path, "utf8");
+    content = readFileSync(path, "utf8");
   } catch (err) {
     console.error(`FATAL: cannot read SENTINEL_AUTH_PUBKEY: ${(err as Error).message}`);
+    process.exit(1);
+  }
+  try {
+    return validateAuthPublicKey(content);
+  } catch {
+    console.error(`FATAL: SENTINEL_AUTH_PUBKEY is not a valid public key PEM (${path})`);
     process.exit(1);
   }
 }

@@ -56,8 +56,9 @@ Phase 12 closes that gap: every caller of a gate-mutating endpoint now proves
   returns a pass-through middleware — the control plane behaves exactly as it
   always has. `packages/proxy/src/index.ts` reads `SENTINEL_AUTH_PUBKEY` (a
   path to a PEM public key) at startup and fails fast with a clear error if
-  the path is set but unreadable, rather than silently falling back to open
-  mode. This mirrors the opt-in postures of policy signing (ADR-0014) and
+  the path is set but unreadable, *or* readable but not a valid public-key
+  PEM (empty, whitespace-only, or garbage content), rather than silently
+  falling back to open mode. This mirrors the opt-in postures of policy signing (ADR-0014) and
   private namespaces (ADR-0015): the feature exists, but a deployment that
   hasn't configured it sees no change in behavior.
 - **`requireRole([...roles])` gates six routes:**
