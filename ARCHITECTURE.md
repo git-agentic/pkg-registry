@@ -377,6 +377,56 @@ is authentication, not scoring, and touches nothing in `runAudit`/`score.ts`;
 invariant #1 is untouched. There is no token store or revocation list: a
 compromised token is bounded by its TTL, and full revocation is key rotation.
 
+### 3.13 Supply-chain identity heuristics (Phase 13, ADR-0026)
+
+The rules through Phase 12 detect behavior or verify cryptographic identity;
+none of them detect the naming-based social-engineering class — typosquat,
+dependency confusion. Phase 13 adds two checks, sharing one distance library
+(`packages/core/src/name-distance.ts`): `canonical` (lowercase, strip
+separators, fold a small homoglyph set — `rn`→`m`, `0`→`o`, `1|`→`l`, `5`→`s`),
+`normalizeName` (flatten `@acme/utils`/`@acme/*` → `acme`, for comparing a
+name against a namespace *claim* rather than another package name), and
+`damerauLevenshtein` (optimal-string-alignment; insertion/deletion/
+substitution/adjacent-transposition all cost 1). `typosquatMatch(name,
+target)` is true when the names differ and either their canonical forms
+collide or their edit distance sits within a length-scaled threshold (`≤2`
+once the target's canonical form is 7+ characters, else `≤1`).
+
+- **`typosquat` — a pure rule** (`packages/core/src/rules/typosquat.ts`,
+  registered in `RULES`). It scans a bundled, static, dated corpus of ~150
+  popular npm names (`packages/core/src/typosquat-corpus.ts` — never fetched
+  at audit time, invariant #3), bucketed by canonical length for a bounded
+  lookup, and flags the first corpus name the package's name is a likely
+  typosquat of. `metadata` category, `medium` severity. FP controls: never
+  flags a name already in the corpus, skips names under 4 characters, and
+  `typosquatMatch` requires distinct names.
+- **`dependency-confusion` — a score-time check**, not a rule, because it
+  needs `policy.privateNamespaces` (ADR-0010/0015) and a pure rule can't see
+  policy — the same pure-rule/score-time-gate split ADR-0014/0021 established
+  for `requireSignature`/`requireProvenance`. `dependencyConfusion(name,
+  privateNamespaces)` in `score.ts` normalizes each claimed namespace and
+  flags a *public* package name whose canonical form equals, prefixes, or is
+  a `typosquatMatch` of the normalized claim — `metadata` category, `high`
+  severity. It never flags the legitimate claimed package itself: a name
+  that already matches one of its own claims (`matchPackage`) short-circuits
+  before any distance comparison runs. The finding is spliced into
+  `rawFindings` before the normal weight/waiver pipeline (`score()`), so it
+  gets ordinary `allow`/`disabled` treatment, but it is **not** added to the
+  hard-block condition.
+
+Both findings use the existing `metadata` `Category` (no new category). Both
+are weighted, not hard-blocking, and both are deterministic and inert by
+default: the default policy ships no `privateNamespaces`, so
+`dependencyConfusion` returns `null` for every package until an operator
+opts in, and the corpus is a static committed input, so `typosquat` never
+changes behavior between runs. Under the default policy (`medium: 12, high:
+25`, `thresholds: { allow: 80, warn: 50 }`), a lone typosquat finding drops a
+clean package 100→88 (still `allow`); a lone dependency-confusion finding
+drops it 100→75 (`warn`, not `block`) — both compound with any other
+findings the package trips, and an operator escalates to a hard block via
+`deny`/`hardBlockSeverity` or waives a known false positive via
+`policy.allow`/`policy.rules.disabled`, exactly as with any other finding.
+
 ---
 
 ## 4. The audit engine (`@sentinel/core`)
@@ -403,6 +453,13 @@ Each rule is a pure function `(files, ctx) => Finding[]`. Phase 1 ships four:
 4. **`obfuscation`** — `eval`, `Function(...)` constructor, `atob`/`unescape`,
    long base64/hex blobs, `\xNN` string arrays, `charCodeAt` decode loops,
    dynamic `require` of decoded strings.
+
+Phase 13 adds a fifth, name-only rule (§3.13, ADR-0026):
+
+5. **`typosquat`** (`metadata` category) — flags a package name that is a
+   likely typosquat (edit-distance/homoglyph match) of a name in a bundled
+   static popular-package corpus. `medium` severity; never flags a name
+   already in the corpus.
 
 Rules are registered in a list, so adding a rule (typosquat detection, license
 risk, provenance) is additive and never touches scoring or the proxy.
