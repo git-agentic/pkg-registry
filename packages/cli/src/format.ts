@@ -43,7 +43,15 @@ export function formatReport(r: AuditReport): string {
     : m.signature === "invalid" ? c(C.red, "invalid")
     : m.signature === "unsigned" ? c(C.yellow, "unsigned") : c(C.gray, "unknown");
   L.push(`  signature  ${sig}`);
-  L.push(`  provenance ${m.provenance === "verified" ? c(C.green, "verified") : c(C.gray, m.provenance)}`);
+  const prov = m.provenance === "verified" ? c(C.green, "verified")
+    : m.provenance === "invalid" ? c(C.red, "invalid")
+    : m.provenance === "unknown" ? c(C.yellow, "unknown") : c(C.gray, "absent");
+  L.push(`  provenance ${prov}`);
+  const pid = m.provenanceIdentity;
+  if (m.provenance === "verified" && pid) {
+    const commit = pid.commit ? ` (commit ${pid.commit.slice(0, 7)})` : "";
+    L.push(`             ${c(C.gray, `built by ${pid.builder ?? "unknown builder"} from ${pid.sourceRepository ?? "?"}${pid.ref ? `@${pid.ref}` : ""}${commit}`)}`);
+  }
   L.push(`  install    ${m.hasInstallScripts ? c(C.yellow, "⚠ runs lifecycle scripts") : "no install scripts"}`);
   L.push(`  audit      ${r.engine.mode}-mode · ${r.engine.rules.length} rules · engine ${r.engine.version}`);
   L.push("");

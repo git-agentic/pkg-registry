@@ -47,6 +47,7 @@
   .sev.low, .sev.info { color: var(--muted); }
   .empty { color: var(--muted); padding: 30px 0; text-align: center; }
   .sig-verified { color: var(--allow); } .sig-invalid { color: var(--block); } .sig-unsigned { color: var(--warn); } .sig-unknown { color: var(--muted); }
+  .prov-verified { color: var(--allow); } .prov-invalid { color: var(--block); } .prov-unknown { color: var(--warn); } .prov-absent { color: var(--muted); }
   a { color: var(--accent); }
 </style>
 </head>
@@ -100,7 +101,7 @@ function row(r) {
     <td><span class="badge ${r.verdict}">${r.verdict}</span></td>
     <td class="meta">
       ${fmtBytes(m.unpackedSize)} · ${m.fileCount} files<br/>
-      sig: <span class="sig-${m.signature}">${m.signature}</span> · prov: ${m.provenance}<br/>
+      sig: <span class="sig-${m.signature}">${m.signature}</span> · prov: <span class="prov-${m.provenance}">${m.provenance}</span>${m.provenanceIdentity && m.provenance === "verified" ? ` · <span class="meta" title="${esc(m.provenanceIdentity.workflow || "")}">${esc((m.provenanceIdentity.sourceRepository || "").replace("https://github.com/", ""))}</span>` : ""}<br/>
       install scripts: ${m.hasInstallScripts ? "⚠ yes" : "no"} · mode: ${esc(r.engine.mode)}
     </td>
     <td>${findings ? `<ul class="findings">${findings}${more}</ul>` : '<span class="meta">none</span>'}</td>
