@@ -124,14 +124,15 @@ don't downgrade majors without a reason.
 
 ```bash
 npm run build            # tsc --build (project references: core → proxy/cli)
-npm test                 # engine + end-to-end proxy: 289 tests on this host (287 pass, 2 skipped on darwin).
+npm test                 # engine + end-to-end proxy: 290 tests on this host (288 pass, 2 skipped on darwin).
                          # Skips are platform-gated enforcement: "non-darwin throws" skips on darwin
                          # (it verifies darwin-only behaviour), and the "no silent skip" CI guard skips
-                         # off-CI. The BubblewrapSandbox enforcement suite, enforce-e2e tests, and Phase 10's
-                         # violation-enforce e2e all skip as describe-level blocks on darwin ("requires
-                         # Linux") and are not in the 289 count; the darwin-gated runtime-violation effect
-                         # test (SeatbeltSandbox: "a denied credential read surfaces a confirmed runtime
-                         # violation") runs on darwin the same way the rest of the Seatbelt effect suite does.
+                         # off-CI. The BubblewrapSandbox enforcement suite and the Linux enforce-e2e tests
+                         # skip as describe-level blocks on darwin ("requires Linux") and are not in the 290
+                         # count. Phase 10's violation-enforce e2e and the darwin-gated runtime-violation
+                         # effect test (SeatbeltSandbox: "a denied credential read surfaces a confirmed
+                         # runtime violation") RUN on darwin via Seatbelt, the same way the rest of the
+                         # Seatbelt effect suite does, and ARE in the 290 count.
                          # Phase 7's audit-tree, Phase 8/9's signature/provenance, and Phase 10's
                          # classifyViolation/deny-set/violations-store tests are hermetic and platform-neutral,
                          # so the darwin/Linux relationship from Phase 6 (Linux one test higher, one fewer
