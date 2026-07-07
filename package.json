@@ -13,7 +13,8 @@
     "packages/core",
     "packages/proxy",
     "packages/sandbox",
-    "packages/cli"
+    "packages/cli",
+    "packages/mcp"
   ],
   "scripts": {
     "build": "tsc --build",
