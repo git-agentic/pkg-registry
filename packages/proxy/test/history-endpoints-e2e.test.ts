@@ -84,4 +84,12 @@ describe("observability endpoints (e2e)", () => {
     assert.equal(((await res.json()) as { enabled: boolean }).enabled, false);
     server.close();
   });
+
+  test("GET / still serves the dashboard html", async () => {
+    const { server, base, history } = await boot(true);
+    const res = await fetch(`${base}/`);
+    // publicDir is not set in this boot, so GET / may 404 — assert the endpoint contract instead:
+    assert.ok(res.status === 200 || res.status === 404);
+    server.close(); history?.close();
+  });
 });

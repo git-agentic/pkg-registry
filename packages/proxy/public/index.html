@@ -97,6 +97,11 @@
       <thead><tr><th>Package</th><th>Kind</th><th>Target</th><th>Confidence</th><th>Status</th></tr></thead>
       <tbody id="violation-rows"><tr><td colspan="5" class="empty">No violations recorded.</td></tr></tbody>
     </table>
+
+    <h2 style="font-size:14px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin:28px 0 8px">Observability</h2>
+    <div id="observability" class="card">
+      <div class="empty">Loading…</div>
+    </div>
   </div>
 
 <script>
@@ -216,6 +221,83 @@ async function loadViolations() {
     : '<tr><td colspan="5" class="empty">No violations recorded.</td></tr>';
 }
 
+function trendSvg(trends) {
+  if (!trends.length) return '<p class="meta">no trend data yet</p>';
+  const W = 320, H = 80, bw = Math.max(4, Math.floor(W / (trends.length * 3)));
+  const max = Math.max(1, ...trends.map((t) => t.allow + t.warn + t.block));
+  const colors = { allow: "#3fb950", warn: "#d29922", block: "#f85149" };
+  let x = 0, bars = "";
+  for (const t of trends) {
+    let y = H;
+    for (const k of ["block", "warn", "allow"]) {
+      const h = Math.round((t[k] / max) * (H - 10));
+      y -= h;
+      if (h > 0) bars += `<rect x="${x}" y="${y}" width="${bw}" height="${h}" fill="${colors[k]}"><title>${esc(t.date)} ${k}: ${t[k]}</title></rect>`;
+    }
+    x += bw + 3;
+  }
+  return `<svg width="${W}" height="${H}" role="img" aria-label="verdict trend">${bars}</svg>`;
+}
+
+function observabilitySummary(s) {
+  return `<div class="meta">
+    ${s.total} audited · <span class="allow">${s.verdict.allow} allow</span> · <span class="warn">${s.verdict.warn} warn</span> · <span class="block">${s.verdict.block} block</span><br/>
+    signature: verified ${s.signature.verified ?? 0} · invalid ${s.signature.invalid ?? 0} · unsigned ${s.signature.unsigned ?? 0} · unknown ${s.signature.unknown ?? 0}<br/>
+    provenance: verified ${s.provenance.verified ?? 0} · invalid ${s.provenance.invalid ?? 0} · absent ${s.provenance.absent ?? 0} · unknown ${s.provenance.unknown ?? 0}<br/>
+    violations: ${s.violations} · quarantined: ${s.quarantined}
+  </div>`;
+}
+
+function observabilityTopFlagged(list) {
+  if (!list || !list.length) return '<p class="meta">no flagged packages yet</p>';
+  const items = list.map((t) => `<li><span class="pkg">${esc(t.name)}</span> <span class="meta">warn:${t.warn} block:${t.block}</span></li>`).join("");
+  return `<ul class="findings">${items}</ul>`;
+}
+
+function observabilityTimeline(list) {
+  if (!list || !list.length) return '<p class="meta">no violations recorded</p>';
+  const items = list.map((v) =>
+    `<li><span class="pkg">${esc(v.name)}</span> <span class="meta">v${esc(v.version)} · ${esc(v.status)}${v.quarantined ? " · <span class=\"badge quarantined\">QUARANTINED</span>" : ""} · ${esc(v.detail || "")} · ${esc(v.recordedAt)}</span></li>`
+  ).join("");
+  return `<ul class="findings">${items}</ul>`;
+}
+
+async function loadObservability() {
+  const el = $("observability");
+  try {
+    const res = await fetch("/-/metrics");
+    if (res.status === 501) {
+      el.innerHTML = '<div class="empty">History not enabled on this proxy.</div>';
+      return;
+    }
+    const m = await res.json();
+    if (m.enabled === false) {
+      el.innerHTML = '<div class="empty">History not enabled on this proxy.</div>';
+      return;
+    }
+    let timelineHtml = '<p class="meta">no violations recorded</p>';
+    try {
+      const tRes = await fetch("/-/violations/timeline");
+      if (tRes.status !== 501) {
+        const t = await tRes.json();
+        if (t.enabled !== false) timelineHtml = observabilityTimeline(t.timeline);
+      }
+    } catch {}
+    el.innerHTML = `
+      <h3 style="margin-top:0;font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Summary</h3>
+      ${observabilitySummary(m.summary)}
+      <h3 style="font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Verdict trend</h3>
+      ${trendSvg(m.trends)}
+      <h3 style="font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Top flagged</h3>
+      ${observabilityTopFlagged(m.topFlagged)}
+      <h3 style="font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Violation timeline</h3>
+      ${timelineHtml}
+    `;
+  } catch {
+    el.innerHTML = '<div class="empty">History not enabled on this proxy.</div>';
+  }
+}
+
 async function health() {
   try {
     const h = await (await fetch("/-/health")).json();
@@ -245,7 +327,8 @@ load();
 loadApprovals();
 loadRequests();
 loadViolations();
-setInterval(() => { load(); loadApprovals(); loadRequests(); loadViolations(); }, 5000);
+loadObservability();
+setInterval(() => { load(); loadApprovals(); loadRequests(); loadViolations(); loadObservability(); }, 5000);
 </script>
 </body>
 </html>
