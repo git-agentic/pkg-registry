@@ -160,6 +160,15 @@ reintroduces a clock read fails CI rather than silently breaking the pinned
   test. Every signal in this ADR compares two points already fixed in the
   immutable packument (previous publish vs. current publish, or previous
   maintainers vs. current maintainers) — never "now."
+  - *Nuance (invariant #4, not #1):* `versionCount`/`previousVersion` are
+    derived from the packument, which grows as sibling versions publish — so
+    the same tarball `integrity` can rescore over a package's life (e.g. a
+    first release's `new-package-risk` finding disappears once a v2 exists).
+    This is not a wall-clock read (a given run is still fully deterministic and
+    the pinned test holds); the drift is monotonic and *conservative* — the
+    `versionCount === 1` penalty only ever *lifts* as a package matures, never
+    tightens — and every signal is weighted-never-block, so a re-score can't
+    flip a benign verdict to `block`.
 - **A standalone hard-block for maintainer change** — rejected as too
   false-positive-prone: legitimate ownership transfers (a maintainer
   handing a package to a new owner, a company reorganizing its npm org)
