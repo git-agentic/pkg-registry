@@ -65,7 +65,10 @@ export async function runCi(opts: RunCiOptions): Promise<CiResult> {
     privateStore: new PrivatePackageStore(), violations: new ViolationStore(),
     approvalRequests: new ApprovalRequestStore(),
   });
-  const server: Server = await new Promise((r) => { const s = app.listen(0, () => r(s)); });
+  const server: Server = await new Promise((resolve, reject) => {
+    const s = app.listen(0, () => resolve(s));
+    s.once("error", reject);
+  });
   try {
     const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     const res = await fetch(`${base}/-/audit-tree`, {

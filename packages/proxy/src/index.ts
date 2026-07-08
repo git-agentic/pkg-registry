@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { dirname, join, resolve } from "node:path";
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { validateAuthPublicKey } from "./auth-config.js";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   loadPolicy,
   DEFAULT_POLICY,
@@ -130,4 +130,10 @@ function main(): void {
   });
 }
 
-main();
+// Run only when invoked as the entrypoint (not when imported for its exports).
+function isEntrypoint(): boolean {
+  const a = process.argv[1];
+  if (!a) return false;
+  try { return import.meta.url === pathToFileURL(realpathSync(a)).href; } catch { return false; }
+}
+if (isEntrypoint()) main();
