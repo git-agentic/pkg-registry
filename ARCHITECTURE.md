@@ -706,6 +706,56 @@ across a pipeline boundary. The custom `predicateType` keeps the envelope
 DSSE/in-toto-compliant but bounds interop with a generic SLSA verifier
 expecting a standard predicate shape — see [ADR-0032](./docs/adr/0032-signed-audit-attestations.md).
 
+### 3.19 Policy authoring + impact preview (Phase 20, ADR-0033)
+
+The policy governs every verdict (ADR-0002/0012/0014), but authoring one is
+hand-edited JSON with no help beyond keygen/sign/verify — nothing catches an
+inverted threshold or a zero critical-weight before it's signed, and nothing
+shows an operator what a candidate edit *does* to real traffic before they
+sign it. Phase 20 adds a lint + dry-run impact layer on top of the existing,
+unchanged scoring path.
+
+- **`lintPolicy(policy): {errors, warnings}`** (`packages/core/src/
+  policy-lint.ts`, pure, total) structurally + semantically inspects an
+  `EnterprisePolicy` alone — no scoring, no I/O. **Errors** (a policy an
+  operator should not sign): out-of-range or inverted thresholds, an invalid
+  `hardBlockSeverity`, a non-finite/negative `severityWeight`, a
+  non-positive `diffMultiplier`, a malformed list entry, or a package in
+  both `allow` and `deny`. **Warnings** (legal but suspicious): non-monotonic
+  severity weights, an aggressively low `hardBlockSeverity`, an `allow`
+  threshold a lone critical finding still clears, an `allow` threshold of
+  `100`, or a `diffMultiplier` below `1`. `DEFAULT_POLICY` lints clean.
+- **`HistoryDb.allReports(limit = 1000)`** (§3.14) reads back stored
+  `audit_events.report_json` rows, newest-first, bounded, skipping a
+  corrupt row rather than throwing (invariant #6).
+- **`POST /-/policy/preview`** (`server.ts`, open read route — it mutates
+  nothing) takes a candidate policy, calls `allReports()`, and re-scores
+  each stored report under the candidate via the *same* pure `score()` the
+  live gate calls — a stored `ScoredFinding` is structurally a `Finding`,
+  so the cast-back-and-rescore needs no bespoke replay path. Response:
+  `{enabled, total, transitions, changed}` — `transitions` buckets every
+  report into one of six verdict-flip counts plus `unchanged`; `changed`
+  lists up to 100 flipped packages, worst-first, with
+  `{name, version, from, to, fromScore, toScore}`. No `HistoryDb` ⇒ `501
+  {enabled: false}`; a malformed candidate ⇒ `400` via `parsePolicy`'s
+  existing validation.
+- **CLI:** `sentinel policy init --out <file>` (scaffold `DEFAULT_POLICY`);
+  `sentinel policy validate <file>` (parse + lint; exits non-zero **iff**
+  there are errors — warnings-only still exits `0`, a clean CI gate);
+  `sentinel policy preview <file> [-p proxy]` (POST + render the impact;
+  `501` prints a "history not enabled" hint).
+- **Dry-run, always.** The candidate policy is never applied to the live
+  server, stored, or signed by the preview endpoint — signing
+  (`sentinel policy sign`, §3.4/ADR-0012) and loading the signed policy
+  onto the proxy remain separate, deliberate, existing steps.
+
+Invariant #1 is exercised here, not endangered: the preview replays the
+*same* `score()` the live gate uses, so an identical candidate against the
+same history replays to `unchanged === total`. `lintPolicy` is pure; the
+live scoring path (`runAudit`, the inline gate, `AuditStore`) gains no new
+branch. The preview requires the opt-in `HistoryDb` and is bounded by
+`allReports`'s 1000-row cap — see [ADR-0033](./docs/adr/0033-policy-authoring-impact-preview.md).
+
 ---
 
 ## 4. The audit engine (`@sentinel/core`)
