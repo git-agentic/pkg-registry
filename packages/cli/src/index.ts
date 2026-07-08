@@ -10,6 +10,7 @@ import { Command } from "commander";
 import {
   auditTarball, type AuditReport,
   loadPolicy, signPolicy, generateKeypair, policyHashOfBytes,
+  parsePolicy, lintPolicy, DEFAULT_POLICY,
   type EnterprisePolicy,
   extractCapabilities, capabilityAtom, type Capability, type PackageFile,
   type TreeAuditResult,
@@ -19,7 +20,7 @@ import {
   buildAuditStatement, signAttestation, verifyAttestation, attestationKeyid,
 } from "@sentinel/core";
 import { createSandbox, runLifecycleScripts } from "@sentinel/sandbox";
-import { formatReport, formatManifest, verdictExitCode, formatTree, treeExitCode, formatViolations, formatStats, formatHistory, formatExplain, type Manifest, type ViolationRow, type ExplainResult } from "./format.js";
+import { formatReport, formatManifest, verdictExitCode, formatTree, treeExitCode, formatViolations, formatStats, formatHistory, formatExplain, formatLint, formatPreview, type Manifest, type ViolationRow, type ExplainResult, type PreviewResult } from "./format.js";
 
 const DEFAULT_PROXY = process.env.SENTINEL_PROXY ?? "http://localhost:4873";
 
@@ -299,6 +300,46 @@ policyCmd
       console.error(`✗ ${(err as Error).message}`);
       process.exit(2);
     }
+  });
+
+policyCmd
+  .command("init")
+  .description("Scaffold a policy file from the built-in default (edit, then validate + sign).")
+  .requiredOption("--out <file>", "where to write the policy JSON")
+  .action((opts: { out: string }) => {
+    writeFileSync(opts.out, JSON.stringify(DEFAULT_POLICY, null, 2) + "\n");
+    console.log(`wrote ${opts.out}\nnext: edit weights/thresholds/namespaces → \`sentinel policy validate ${opts.out}\` → \`sentinel policy sign ${opts.out} --key <priv>\``);
+  });
+
+policyCmd
+  .command("validate")
+  .description("Parse + lint a policy file. Exits non-zero if it has errors.")
+  .argument("<file>", "path to the policy JSON")
+  .action((file: string) => {
+    let policy: EnterprisePolicy;
+    try {
+      policy = parsePolicy(readFileSync(file));
+    } catch (err) {
+      console.error(`✗ ${(err as Error).message}`);
+      process.exit(2);
+    }
+    const r = lintPolicy(policy);
+    console.log(formatLint(r));
+    if (r.errors.length) process.exitCode = 2;
+  });
+
+policyCmd
+  .command("preview")
+  .description("Replay the proxy's audit history under a candidate policy and show the verdict deltas.")
+  .argument("<file>", "path to the candidate policy JSON")
+  .option("-p, --proxy <url>", "Sentinel proxy base URL", DEFAULT_PROXY)
+  .action(async (file: string, opts: { proxy: string }) => {
+    let policy: EnterprisePolicy;
+    try { policy = parsePolicy(readFileSync(file)); } catch (err) { return fail(err, opts.proxy); }
+    const res = await fetch(`${opts.proxy}/-/policy/preview`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ policy }) });
+    if (res.status === 501) { console.log("history not enabled — set SENTINEL_HISTORY_DB on the proxy to preview impact."); return; }
+    if (!res.ok) return fail(new Error(`preview failed: ${res.status}`), opts.proxy);
+    console.log(formatPreview(await res.json() as PreviewResult));
   });
 
 const tokenCmd = program.command("token").description("Mint and verify signed control-plane auth tokens.");

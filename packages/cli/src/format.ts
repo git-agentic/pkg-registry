@@ -1,4 +1,4 @@
-import type { AuditReport, Capability, CapabilityKind, Remediation, Severity, Verdict, TreeAuditResult } from "@sentinel/core";
+import type { AuditReport, Capability, CapabilityKind, Remediation, Severity, Verdict, TreeAuditResult, LintFinding } from "@sentinel/core";
 
 const C = {
   reset: "\x1b[0m", bold: "\x1b[1m", dim: "\x1b[2m",
@@ -245,5 +245,34 @@ export function formatExplain(r: ExplainResult): string {
     L.push(`      ${r.remediation.waiver.approveCommand}`);
     L.push("");
   }
+  return L.join("\n");
+}
+
+export function formatLint(r: { errors: LintFinding[]; warnings: LintFinding[] }): string {
+  const L: string[] = [];
+  for (const e of r.errors) L.push(c(C.red, `  ✗ ${e.code}: ${e.message}`));
+  for (const w of r.warnings) L.push(c(C.yellow, `  ⚠ ${w.code}: ${w.message}`));
+  if (!r.errors.length && !r.warnings.length) L.push(c(C.green, "  ✓ policy is valid — no issues."));
+  else L.push(`  ${r.errors.length} error(s), ${r.warnings.length} warning(s).`);
+  return L.join("\n");
+}
+
+export interface PreviewResult {
+  enabled: boolean;
+  total: number;
+  transitions: Record<string, number>;
+  changed: { name: string; version: string; from: string; to: string; fromScore: number; toScore: number }[];
+}
+
+export function formatPreview(r: PreviewResult): string {
+  const L: string[] = ["", `  ${r.total} audit(s) replayed · ${c(C.bold, String(r.changed.length))} would change`, ""];
+  const t = r.transitions;
+  const parts = Object.entries(t).filter(([k, v]) => k !== "unchanged" && v > 0).map(([k, v]) => `${k}: ${v}`);
+  if (parts.length) L.push("  " + parts.join(" · "));
+  L.push("");
+  for (const ch of r.changed) {
+    L.push(`  ${ch.name}@${ch.version}  ${c(verdictColor[ch.from as Verdict] ?? C.gray, ch.from)} → ${c(verdictColor[ch.to as Verdict] ?? C.gray, ch.to)}  (${ch.fromScore} → ${ch.toScore})`);
+  }
+  if (r.changed.length) L.push("");
   return L.join("\n");
 }
