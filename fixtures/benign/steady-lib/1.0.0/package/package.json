@@ -1,0 +1,10 @@
+{
+  "name": "steady-lib",
+  "version": "1.0.0",
+  "description": "Sum an array of numbers. Benign, no install scripts, same maintainer across versions.",
+  "main": "index.js",
+  "license": "MIT",
+  "author": "alice <alice@example.com>",
+  "keywords": ["math", "sum"],
+  "repository": { "type": "git", "url": "git+https://github.com/example/steady-lib.git" }
+}

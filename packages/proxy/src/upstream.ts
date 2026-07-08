@@ -130,6 +130,8 @@ interface RegistryDoc {
         {
           version: string;
           author: string | null;
+          /** Per-version maintainer names (Phase 16); absent on older fixture registries. */
+          maintainers?: string[];
           license: string | null;
           hasInstallScripts: boolean;
           signatures?: { keyid: string; sig: string }[] | null;
@@ -165,7 +167,7 @@ export class LocalFixtureUpstream implements Upstream {
       versions[v] = {
         version: v,
         author: m.author,
-        maintainers: [],
+        maintainers: m.maintainers ?? [],
         license: m.license,
         signatures: m.signatures ?? null,
         hasProvenance: Boolean(m.attestations),
