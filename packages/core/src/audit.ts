@@ -2,6 +2,7 @@ import { Buffer } from "node:buffer";
 import { baselineFrom, extractTarball, integrityOf } from "./extract.js";
 import { extractCapabilities, diffCapabilities } from "./capabilities.js";
 import { RULES } from "./rules/index.js";
+import { capabilityNoveltyFindings } from "./rules/capability-novelty.js";
 import { score } from "./score.js";
 import { DEFAULT_POLICY } from "./policy.js";
 import { verifyRegistrySignature, NPM_SIGNING_KEYS, type RegistrySignature, type NpmSigningKey } from "./signature.js";
@@ -14,6 +15,7 @@ import type {
   Finding,
   PackageFile,
   PackageMeta,
+  ReleaseContext,
 } from "./types.js";
 
 export const ENGINE_VERSION = "0.1.0";
@@ -38,14 +40,16 @@ export function buildAudit(
     mode: "full" | "diff";
     durationMs: number;
     baselineCapabilities?: Capability[];
+    releaseContext?: ReleaseContext;
   } = { mode: "full", durationMs: 0 },
 ): Audit {
-  const input: AuditInput = { meta, files, mode: opts.mode };
-  const findings = runRules(input);
+  const input: AuditInput = { meta, files, mode: opts.mode, releaseContext: opts.releaseContext };
+  const ruleFindings = runRules(input);
   const capabilities = extractCapabilities(input);
   const capabilityDelta = opts.baselineCapabilities
     ? diffCapabilities(capabilities, opts.baselineCapabilities)
     : null;
+  const findings = [...ruleFindings, ...capabilityNoveltyFindings(capabilityDelta, opts.releaseContext)];
   return {
     schema: 3,
     meta,
@@ -78,6 +82,7 @@ export interface AuditTarballInput {
   trustMaterial?: ProvenanceTrustMaterial | null;
   /** Injectable clock (ISO) for trust-root staleness; defaults to now. */
   verifyAt?: string;
+  releaseContext?: ReleaseContext;
 }
 
 /** Extract + diff + run rules + capabilities → policy-independent {@link Audit}. */
@@ -126,7 +131,7 @@ export async function runAudit(input: AuditTarballInput): Promise<Audit> {
     provenanceIdentity: prov.identity,
   };
 
-  const audit = buildAudit(meta, extracted.files, { mode, durationMs: Date.now() - started, baselineCapabilities });
+  const audit = buildAudit(meta, extracted.files, { mode, durationMs: Date.now() - started, baselineCapabilities, releaseContext: input.releaseContext });
   if (integrityMismatch) {
     audit.findings.push({
       ruleId: "integrity-mismatch", category: "provenance", severity: "critical",
