@@ -163,6 +163,25 @@ inline gate. Surfaced via `sentinel explain <package> <version>`, a PR-comment
 and an MCP `sentinel_explain` read tool. Advisory-only — nothing here writes
 to a lockfile or auto-selects a version; `remediate` never feeds `score.ts`
 (invariant #1, ADR-0031).
+Phase 19 adds **signed audit attestations (VSA)**: a pure `attest.ts`
+(`packages/core/src/attest.ts`) builds an in-toto `Statement` v1 over an
+audited tree (`buildAuditStatement` — subject = SBOM sha256 digest,
+predicate = a VSA-style summary of verdict/gated/counts/`policyHash`),
+wraps it in a DSSE envelope, and Ed25519-signs the PAE (`signAttestation`,
+reusing `signPolicy` — no new crypto dep). `verifyAttestation` is
+pure/offline/total/fail-closed (never throws; tampered signature, wrong
+predicate, or an SBOM/policy/verdict mismatch each reject with a distinct
+reason, never a silent pass). Signing is operator-side, never on the proxy:
+`sentinel attest-keygen --out <prefix>` (Ed25519 keypair — note the
+sibling-command name, not `attest keygen`, a commander-15
+`requiredOption` interaction), `sentinel attest <lockfile> --key --out
+[--sbom]` (audit → SBOM → signed attestation), and `sentinel
+verify-attestation <att> --key [--sbom --policy-hash --require]` (offline
+deploy gate, non-zero exit on rejection). The proxy's only change is
+setting `TreeAuditResult.policyHash` on the `/-/audit-tree` response so an
+attestation can bind to the scoring-time policy hash. Determinism:
+injected `now` + Ed25519 ⇒ byte-identical envelope; scoring is untouched
+(invariant #1, ADR-0032).
 
 We are the Socket/Chainguard wedge: **do not** try to replace npm. Resolve and
 serve real packages transparently; only attach signal.
@@ -233,28 +252,30 @@ Node 24, but Node 22 needs `--experimental-sqlite` if you turn it on.
 
 ```bash
 npm run build            # tsc --build (project references: core → proxy/cli)
-npm test                 # engine + end-to-end proxy: 467 tests on this host (465 pass, 2 skipped on darwin).
+npm test                 # engine + end-to-end proxy: 482 tests on this host (480 pass, 2 skipped on darwin).
                          # Skips are platform-gated enforcement: "non-darwin throws" skips on darwin
                          # (it verifies darwin-only behaviour), and the "no silent skip" CI guard skips
                          # off-CI. The BubblewrapSandbox enforcement suite and the Linux enforce-e2e tests
-                         # skip as describe-level blocks on darwin ("requires Linux") and are not in the 467
+                         # skip as describe-level blocks on darwin ("requires Linux") and are not in the 482
                          # count. Phase 10's violation-enforce e2e and the darwin-gated runtime-violation
                          # effect test (SeatbeltSandbox: "a denied credential read surfaces a confirmed
                          # runtime violation") RUN on darwin via Seatbelt, the same way the rest of the
-                         # Seatbelt effect suite does, and ARE in the 467 count.
+                         # Seatbelt effect suite does, and ARE in the 482 count.
                          # Phase 7's audit-tree, Phase 8/9's signature/provenance, Phase 10's
                          # classifyViolation/deny-set/violations-store, Phase 11's MCP/approval-request,
                          # Phase 12's auth/authz-e2e, Phase 13's typosquat/dependency-confusion,
                          # Phase 14's lockfile/SBOM/integrity-cross-check, Phase 15's
                          # history-db/write-through/endpoints/CLI-stats-history, Phase 16's
                          # release-anomaly/capability-novelty/release-anomaly-e2e, Phase 17's
-                         # action run/report/bin-e2e/action-yml, and Phase 18's remediate/explain-route/
-                         # CLI-explain/PR-comment-hint/MCP-explain tests are hermetic and platform-neutral,
-                         # so the darwin/Linux relationship from Phase 6 (Linux one test higher, one
-                         # fewer skip) should hold, but hasn't been re-verified on Linux CI since
-                         # Phase 7/8/9/10/11/12/13/14/15/16/17/18 landed — confirm on the next Linux CI
-                         # run rather than trusting an extrapolated count here. Each platform's
-                         # enforcement is verified on that platform (macOS dev host / ubuntu-latest CI).
+                         # action run/report/bin-e2e/action-yml, Phase 18's remediate/explain-route/
+                         # CLI-explain/PR-comment-hint/MCP-explain, and Phase 19's attest-core/
+                         # policyHash-plumbing/CLI-attest-keygen-attest-verify-attestation tests are
+                         # hermetic and platform-neutral, so the darwin/Linux relationship from Phase 6
+                         # (Linux one test higher, one fewer skip) should hold, but hasn't been
+                         # re-verified on Linux CI since Phase 7/8/9/10/11/12/13/14/15/16/17/18/19
+                         # landed — confirm on the next Linux CI run rather than trusting an
+                         # extrapolated count here. Each platform's enforcement is verified on that
+                         # platform (macOS dev host / ubuntu-latest CI).
 npm run demo             # offline malware-detection walkthrough
 node packages/proxy/dist/index.js   # run the proxy (see README for env vars)
 ```

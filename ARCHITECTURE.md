@@ -646,6 +646,66 @@ audit output.
   explain` only ever suggest; a human (or an agent through the existing
   request-not-grant path) still decides.
 
+### 3.18 Signed audit attestations (Phase 19, ADR-0032)
+
+Phases 1–18 make the audit trustworthy as it happens; nothing survives a
+`sentinel audit-tree` run as a portable, offline-checkable artifact past that
+process's exit. Phase 19 adds a produce/verify layer over an already-computed
+tree audit, entirely off the scoring path.
+
+- **`buildAuditStatement(tree, {sbomDigest, sbomName, now})`**
+  (`packages/core/src/attest.ts`, pure) projects a `TreeAuditResult` into an
+  in-toto `Statement` v1: `subject` is the hex SHA-256 digest of the tree's
+  CycloneDX SBOM bytes (§3.8/ADR-0027) rather than the tree JSON itself, and
+  `predicate` is a VSA-style summary — `verifier`, `policyHash` (from
+  `TreeAuditResult.policyHash`, now set on the `/-/audit-tree` response),
+  `verdict`, `gated`, `counts`, `packageCount`, `timestamp` (`now` injected,
+  never read from the clock). `predicateType` is the Sentinel-owned
+  `https://sentinel.dev/attestation/audit-summary/v1`.
+- **`signAttestation(statement, privPem, keyid)`** wraps the Statement in a
+  DSSE envelope and Ed25519-signs the PAE (`pae(payloadType, payload)`,
+  signed via `signPolicy` — ADR-0014's raw-bytes signing primitive, no new
+  crypto dependency). `attestationKeyid(pubPem)` derives
+  `SHA256:base64(sha256(SPKI DER))`, matching ADR-0021's keyid convention.
+- **`verifyAttestation(envelope, pubPem, opts?)`** is pure, offline, total,
+  and fail-closed: the whole body runs under one `try/catch` so any
+  malformed input maps to `{valid: false, reason: "malformed"}` rather than
+  throwing; the Ed25519 signature over the recomputed PAE is checked before
+  the payload is parsed at all; a verified-but-wrong envelope is rejected
+  with a typed reason (`wrong-predicate`, `subject-mismatch` against
+  `opts.expectedSbomDigest`, `policy-mismatch` against
+  `opts.expectedPolicyHash`, or `verdict-block`/`verdict-warn` against
+  `opts.requireVerdict`). It makes no network call and reads nothing beyond
+  the envelope and key it's handed.
+- **Signing is operator-side, in the CLI, never on the proxy** — the proxy
+  gains no signing key and no new mutating route; its only change is
+  exposing the scoring-time `policyHash` it already computed
+  (`opts.policyHash ?? policyHashOf(enterprisePolicy)`) on the
+  `/-/audit-tree` response, so an attestation can bind to and later be
+  checked against the policy that produced the verdict. Three CLI commands:
+  `sentinel attest-keygen --out <prefix>` (Ed25519 keypair, private key
+  `0600`); `sentinel attest <lockfile> --key <priv> --out <att> [--sbom
+  <file>]` (audit the tree → write the SBOM → sign a DSSE envelope over its
+  digest); `sentinel verify-attestation <att> --key <pub> [--sbom
+  --policy-hash --require allow|allow-or-warn]` (offline verify, non-zero
+  exit on any rejection — the deploy gate). Note: `attest-keygen` and
+  `attest` are two sibling top-level commands, not `attest keygen` — a
+  commander-15 parent/subcommand `requiredOption` interaction ruled out
+  nesting them.
+- **Determinism (invariant #1 untouched).** `buildAuditStatement` and `pae`
+  are total functions of their inputs with an injected `now`; the same tree
+  result, SBOM digest, and key produce a byte-identical DSSE envelope every
+  time. This phase attests *over* an already-deterministic result — `runAudit`,
+  `score()`, the rule set, and `aggregateTree` are untouched, and
+  `verifyAttestation` consults no clock and makes no network call.
+
+This extends enforcement past install-time and CI-time to **deploy-time**: a
+release pipeline can gate on a signed, portable artifact instead of
+re-running `audit-tree` or trusting an unauthenticated JSON blob handed
+across a pipeline boundary. The custom `predicateType` keeps the envelope
+DSSE/in-toto-compliant but bounds interop with a generic SLSA verifier
+expecting a standard predicate shape — see [ADR-0032](./docs/adr/0032-signed-audit-attestations.md).
+
 ---
 
 ## 4. The audit engine (`@sentinel/core`)
