@@ -25,6 +25,7 @@ const REMEDIATIONS: Record<string, Guide> = {
   "release-anomaly": { summary: "This release differs from the package's own history (maintainer change, dormancy, or a new first-version capability).", action: "Confirm the change is legitimate; if the ownership/behavior change is unexpected, pin to a known-good earlier version (run `sentinel explain` for a suggestion)." },
   "capability-novelty": { summary: "Adds a dangerous capability the prior version did not have.", action: "Review why this version newly needs network/process access; if unexpected, pin to the prior version." },
   "integrity-mismatch": { summary: "The lockfile's pinned hash differs from what the registry serves.", action: "Regenerate the lockfile from a trusted source, or investigate possible tampering/registry compromise." },
+  "known-advisory": { summary: "Listed as known-malicious in a security advisory.", action: "This exact version is publicly documented as malicious — remove it and pin to a version published BEFORE the compromise (or a patched later release); do not waive." },
 };
 
 // NOTE: the project's `Category` union (packages/core/src/types.ts) is

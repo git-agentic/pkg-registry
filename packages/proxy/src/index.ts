@@ -8,8 +8,10 @@ import {
   DEFAULT_POLICY,
   policyHashOf,
   loadTrustMaterial,
+  parseAdvisoriesStrict,
   type EnterprisePolicy,
   type ProvenanceTrustMaterial,
+  type Advisory,
 } from "@sentinel/core";
 import { createServer, type ProxyPolicy } from "./server.js";
 import { AuditStore } from "./store.js";
@@ -83,6 +85,27 @@ export function resolveAuthPublicKey(): string | undefined {
   }
 }
 
+function resolveAdvisories(): Advisory[] | undefined {
+  const path = process.env.SENTINEL_ADVISORIES;
+  if (!path) return undefined;
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch (err) {
+    console.error(`FATAL: cannot read SENTINEL_ADVISORIES: ${(err as Error).message}`);
+    process.exit(1);
+  }
+  let advisories: Advisory[];
+  try {
+    advisories = parseAdvisoriesStrict(raw);
+  } catch (err) {
+    console.error(`FATAL: ${(err as Error).message} (${path})`);
+    process.exit(1);
+  }
+  console.log(`  advisories: ${advisories.length} operator-supplied (+ bundled)`);
+  return advisories;
+}
+
 function resolveTrustMaterial(): ProvenanceTrustMaterial | null | undefined {
   const rootPath = process.env.SENTINEL_TRUSTED_ROOT;
   if (!rootPath) return undefined; // bundled default
@@ -111,8 +134,9 @@ function main(): void {
   const violations = new ViolationStore(process.env.SENTINEL_VIOLATIONS, history);
   const approvalRequests = new ApprovalRequestStore(process.env.SENTINEL_APPROVAL_REQUESTS);
   const authPublicKey = resolveAuthPublicKey();
+  const advisories = resolveAdvisories();
 
-  const app = createServer({ upstream, store, approvals, enterprisePolicy, policyHash, policy, publicDir, privateStore, publishTokens, trustMaterial, violations, approvalRequests, authPublicKey, history });
+  const app = createServer({ upstream, store, approvals, enterprisePolicy, policyHash, policy, publicDir, privateStore, publishTokens, trustMaterial, violations, approvalRequests, authPublicKey, history, advisories });
   app.listen(port, () => {
     console.log(`Sentinel proxy listening on http://localhost:${port}`);
     console.log(`  upstream : ${upstream.name}`);

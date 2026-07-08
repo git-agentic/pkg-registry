@@ -21,6 +21,7 @@ import {
   type NpmSigningKey,
   type ProvenanceTrustMaterial,
   type ReleaseContext,
+  type Advisory,
 } from "@sentinel/core";
 import { AuditStore } from "./store.js";
 import {
@@ -69,6 +70,8 @@ export interface ServerOptions {
   authPublicKey?: string;
   /** Durable observability store (Phase 15). Undefined ⇒ history/metrics disabled. */
   history?: HistoryDb;
+  /** Operator-supplied known-malicious advisories, merged with the bundled corpus (Phase 21). */
+  advisories?: Advisory[];
 }
 
 const TARBALL_RE = /^(.+)\/-\/([^/]+\.tgz)$/;
@@ -109,6 +112,7 @@ export function createServer(opts: ServerOptions) {
   const privateStore = opts.privateStore;
   const publishTokens = opts.publishTokens ?? [];
   const signingKeys = opts.signingKeys ?? NPM_SIGNING_KEYS;
+  const advisories = opts.advisories;
   const authz = makeAuthz(opts.authPublicKey);
   const app = express();
   app.disable("x-powered-by");
@@ -163,7 +167,7 @@ export function createServer(opts: ServerOptions) {
       meta, tarball, baselineTarball,
       signatures: vmeta.signatures, hasProvenance: vmeta.hasProvenance,
       attestations, signingKeys, trustMaterial: opts.trustMaterial,
-      releaseContext,
+      releaseContext, advisories,
     });
     const report = score(audit, enterprisePolicy, policyHash);
     store.put(report);

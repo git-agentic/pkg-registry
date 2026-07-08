@@ -22,6 +22,7 @@
     "typecheck": "tsc --build --noEmit false",
     "test": "node --import tsx --test packages/**/test/*.test.ts",
     "fixtures": "tsx scripts/make-fixtures.ts",
+    "advisories": "tsx scripts/make-advisories.ts",
     "proxy": "tsx packages/proxy/src/index.ts",
     "demo": "npm run fixtures && tsx scripts/demo.ts",
     "cli": "tsx packages/cli/src/index.ts",

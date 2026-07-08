@@ -6,6 +6,8 @@
  * (the tarball's SRI hash) is the natural immutable primary key.
  */
 
+import type { Advisory } from "./advisory-corpus.js";
+
 export type Verdict = "allow" | "warn" | "block";
 
 export type Severity = "info" | "low" | "medium" | "high" | "critical";
@@ -176,6 +178,8 @@ export interface AuditInput {
   mode: "full" | "diff";
   /** Cross-version context for the release-anomaly rule (Phase 16); absent ⇒ inert. */
   releaseContext?: ReleaseContext;
+  /** Operator-supplied known-malicious advisories, merged with the bundled corpus (Phase 21). */
+  advisories?: Advisory[];
 }
 
 /** A pure, deterministic detection rule. */
