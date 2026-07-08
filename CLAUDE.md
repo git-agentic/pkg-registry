@@ -182,6 +182,19 @@ setting `TreeAuditResult.policyHash` on the `/-/audit-tree` response so an
 attestation can bind to the scoring-time policy hash. Determinism:
 injected `now` + Ed25519 ⇒ byte-identical envelope; scoring is untouched
 (invariant #1, ADR-0032).
+Phase 20 adds **policy authoring + impact preview**: a pure `lintPolicy`
+(`packages/core/src/policy-lint.ts`) structurally + semantically inspects
+an `EnterprisePolicy` — errors (inverted thresholds, invalid severities,
+a deny/allow conflict) an operator shouldn't sign vs. warnings
+(non-monotonic weights, an aggressive `hardBlockSeverity`) that are legal
+but suspicious; `HistoryDb.allReports` (bounded, newest-first) feeds a new
+`POST /-/policy/preview` that replays every stored audit under a candidate
+policy through the *same* pure `score()` the live gate calls and reports
+verdict-transition counts plus the worst flipped packages — a dry run that
+never applies, stores, or signs the candidate, requiring history (`501`
+when disabled). `sentinel policy init/validate/preview` round out the
+authoring loop beside the existing `keygen/sign/verify`; `validate` exits
+non-zero only on lint errors, making it a clean CI gate (ADR-0033).
 
 We are the Socket/Chainguard wedge: **do not** try to replace npm. Resolve and
 serve real packages transparently; only attach signal.
@@ -252,15 +265,15 @@ Node 24, but Node 22 needs `--experimental-sqlite` if you turn it on.
 
 ```bash
 npm run build            # tsc --build (project references: core → proxy/cli)
-npm test                 # engine + end-to-end proxy: 482 tests on this host (480 pass, 2 skipped on darwin).
+npm test                 # engine + end-to-end proxy: 503 tests on this host (501 pass, 2 skipped on darwin).
                          # Skips are platform-gated enforcement: "non-darwin throws" skips on darwin
                          # (it verifies darwin-only behaviour), and the "no silent skip" CI guard skips
                          # off-CI. The BubblewrapSandbox enforcement suite and the Linux enforce-e2e tests
-                         # skip as describe-level blocks on darwin ("requires Linux") and are not in the 482
+                         # skip as describe-level blocks on darwin ("requires Linux") and are not in the 503
                          # count. Phase 10's violation-enforce e2e and the darwin-gated runtime-violation
                          # effect test (SeatbeltSandbox: "a denied credential read surfaces a confirmed
                          # runtime violation") RUN on darwin via Seatbelt, the same way the rest of the
-                         # Seatbelt effect suite does, and ARE in the 482 count.
+                         # Seatbelt effect suite does, and ARE in the 503 count.
                          # Phase 7's audit-tree, Phase 8/9's signature/provenance, Phase 10's
                          # classifyViolation/deny-set/violations-store, Phase 11's MCP/approval-request,
                          # Phase 12's auth/authz-e2e, Phase 13's typosquat/dependency-confusion,
@@ -268,11 +281,12 @@ npm test                 # engine + end-to-end proxy: 482 tests on this host (48
                          # history-db/write-through/endpoints/CLI-stats-history, Phase 16's
                          # release-anomaly/capability-novelty/release-anomaly-e2e, Phase 17's
                          # action run/report/bin-e2e/action-yml, Phase 18's remediate/explain-route/
-                         # CLI-explain/PR-comment-hint/MCP-explain, and Phase 19's attest-core/
-                         # policyHash-plumbing/CLI-attest-keygen-attest-verify-attestation tests are
+                         # CLI-explain/PR-comment-hint/MCP-explain, Phase 19's attest-core/
+                         # policyHash-plumbing/CLI-attest-keygen-attest-verify-attestation, and Phase 20's
+                         # policy-lint/allReports/preview-route/policy-init-validate-preview-CLI tests are
                          # hermetic and platform-neutral, so the darwin/Linux relationship from Phase 6
                          # (Linux one test higher, one fewer skip) should hold, but hasn't been
-                         # re-verified on Linux CI since Phase 7/8/9/10/11/12/13/14/15/16/17/18/19
+                         # re-verified on Linux CI since Phase 7/8/9/10/11/12/13/14/15/16/17/18/19/20
                          # landed — confirm on the next Linux CI run rather than trusting an
                          # extrapolated count here. Each platform's enforcement is verified on that
                          # platform (macOS dev host / ubuntu-latest CI).

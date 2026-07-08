@@ -3,6 +3,7 @@ import express, { type Request, type Response } from "express";
 import {
   runAudit,
   score,
+  POLICY_SYNTHESIZED_RULE_IDS,
   policyHashOf,
   integrityOf,
   integrityOfAlgo,
@@ -10,6 +11,8 @@ import {
   treeGateOf,
   NPM_SIGNING_KEYS,
   remediate,
+  parsePolicy,
+  type Audit,
   type AuditReport,
   type EnterprisePolicy,
   type PackageMeta,
@@ -307,6 +310,46 @@ export function createServer(opts: ServerOptions) {
   app.get("/-/violations/timeline", (_req, res) => {
     if (!history) return disabled(res);
     res.json({ timeline: history.violationTimeline() });
+  });
+
+  // Policy authoring impact preview (Phase 20): dry-run a candidate policy over the
+  // stored audit history via score()'s determinism (invariant #1) — never applied,
+  // stored, or signed. Requires a HistoryDb; 501 otherwise (same contract as the rest
+  // of this observability block).
+  app.post("/-/policy/preview", (req, res) => {
+    if (!history) return disabled(res);
+    let candidate: EnterprisePolicy;
+    try {
+      candidate = parsePolicy(Buffer.from(JSON.stringify((req.body as { policy?: unknown }).policy ?? {})));
+    } catch {
+      return res.status(400).json({ error: "invalid candidate policy" });
+    }
+    const transitions = { allowToWarn: 0, allowToBlock: 0, warnToAllow: 0, warnToBlock: 0, blockToAllow: 0, blockToWarn: 0, unchanged: 0 };
+    const changed: { name: string; version: string; from: string; to: string; fromScore: number; toScore: number }[] = [];
+    for (const report of history.allReports()) {
+      let to;
+      try {
+        // score() synthesizes dependency-confusion + provenance-identity findings
+        // (packages/core/src/score.ts) and appends them; the stored report's
+        // findings already contain them from the original scoring, so strip before
+        // the re-score or they double-count (a real weight for dep-confusion).
+        const findings = report.findings.filter((f) => !POLICY_SYNTHESIZED_RULE_IDS.has(f.ruleId));
+        to = score({ ...report, findings } as unknown as Audit, candidate);
+      } catch {
+        continue; // skip an un-scoreable stored report (invariant #6)
+      }
+      const from = report.verdict;
+      if (to.verdict === from) {
+        transitions.unchanged++;
+        continue;
+      }
+      const key = `${from}To${to.verdict[0]!.toUpperCase()}${to.verdict.slice(1)}` as keyof typeof transitions;
+      if (key in transitions) transitions[key]++;
+      changed.push({ name: report.meta.name, version: report.meta.version, from, to: to.verdict, fromScore: report.score, toScore: to.score });
+    }
+    const rank: Record<string, number> = { block: 0, warn: 1, allow: 2 };
+    changed.sort((a, b) => (rank[a.to]! - rank[b.to]!) || (a.toScore - b.toScore));
+    res.json({ enabled: true, total: transitions.unchanged + changed.length, transitions, changed: changed.slice(0, 100) });
   });
 
   // Whole-tree audit: fan out over the integrity-cached auditVersion path and

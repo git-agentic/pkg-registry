@@ -1,7 +1,8 @@
 /** @sentinel/core — deterministic npm package audit engine. */
 
 export * from "./types.js";
-export { score, severityRank } from "./score.js";
+export { score, severityRank, POLICY_SYNTHESIZED_RULE_IDS } from "./score.js";
+export { lintPolicy, type LintFinding } from "./policy-lint.js";
 export {
   DEFAULT_POLICY,
   policyHashOf,

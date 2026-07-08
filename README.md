@@ -102,6 +102,12 @@ sentinel npx     [args…]         npx routed through the proxy
 sentinel violations              list runtime violations recorded by the proxy (quarantined builds)
 sentinel stats                    durable audit/violation metrics (requires SENTINEL_HISTORY_DB on the proxy)
 sentinel history [--verdict --name --limit]   list recorded audits (requires SENTINEL_HISTORY_DB)
+sentinel policy init --out <file>                 scaffold a policy file from the built-in default
+sentinel policy validate <file>                   parse + lint a policy (non-zero exit iff errors)
+sentinel policy preview <file> [-p proxy]         replay audit history under a candidate policy (dry run)
+sentinel policy keygen [--out <prefix>]           generate an Ed25519 keypair for signing policies
+sentinel policy sign <file> --key <privkey>       write a detached signature over a policy file
+sentinel policy verify <file> --pubkey <pubkey>   verify a policy's signature and print its summary
 sentinel token keygen --out <prefix>              generate an Ed25519 keypair for control-plane auth
 sentinel token mint --role --sub --ttl --key       mint a signed role token (prints to stdout)
 sentinel token verify <token> --pubkey             verify a token, print role/sub/exp or the rejection reason
@@ -289,6 +295,46 @@ SENTINEL_HISTORY_DB=./sentinel-history.db node packages/proxy/dist/index.js
 you need `--experimental-sqlite` if you set `SENTINEL_HISTORY_DB`; leaving it
 unset keeps Node 22 fully supported with no flag. See
 [ADR-0028](./docs/adr/0028-durable-history-observability.md).
+
+## Policy authoring + impact preview (Phase 20)
+
+Authoring an `EnterprisePolicy` is hand-edited JSON — Phase 20 adds a lint
+and a dry-run impact preview so an operator can catch a broken value and see
+what a candidate change *does* before signing it:
+
+```bash
+# 1. scaffold a starting point from the built-in default
+sentinel policy init --out policy.json
+
+# 2. edit weights/thresholds/namespaces, then lint it — CI-gate: non-zero exit iff there are errors
+sentinel policy validate policy.json
+
+# 3. see what the candidate would change against real audit history (requires
+#    SENTINEL_HISTORY_DB on the proxy — see "Durable history" above)
+sentinel policy preview policy.json -p http://localhost:4873
+
+# 4. once it looks right, sign it as before
+sentinel policy sign policy.json --key sentinel-policy.key.pem
+```
+
+- `sentinel policy validate <file>` parses and runs `lintPolicy`: **errors**
+  (a policy an operator should not sign — an inverted threshold, an invalid
+  severity, a package in both `allow` and `deny`, …) fail the command;
+  **warnings** (legal but suspicious — non-monotonic weights, an
+  aggressively low `hardBlockSeverity`, …) print but exit `0`, so `validate`
+  is a clean CI gate that doesn't block on advisory noise.
+- `sentinel policy preview <file> [-p proxy]` POSTs the candidate to
+  `POST /-/policy/preview`, which re-scores every audit in `HistoryDb`
+  under the candidate through the same deterministic `score()` the live
+  gate uses, and prints the verdict-transition counts (e.g.
+  "3 allow→block, 1 warn→allow") plus the worst-affected packages. It's a
+  **dry run** — the candidate is never applied to the live proxy, stored, or
+  signed by this command. No `SENTINEL_HISTORY_DB` on the proxy ⇒ prints
+  "history not enabled" instead of an error.
+- Preview is a read: it needs a running proxy but no auth token, same as
+  every other read route.
+
+See [ADR-0033](./docs/adr/0033-policy-authoring-impact-preview.md).
 
 ## Control-plane authentication (Phase 12)
 
@@ -588,6 +634,11 @@ and `sentinel verify-attestation` checks it offline against a pinned key —
 a portable, deploy-time gate that survives past the CI job that produced it.
 Signing is operator-side in the CLI; the proxy only exposes the
 scoring-time policy hash the attestation binds to.
+Phase 20 adds policy authoring + impact preview: a pure `lintPolicy` catches
+broken (errors) and suspicious (warnings) policy values before signing, and
+`sentinel policy preview` replays the proxy's audit history under a
+candidate policy through the same deterministic scorer to show the verdict
+deltas — a dry run, never applied or signed by the preview itself.
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full design and [docs/adr/](./docs/adr/)
 for the decision log.
 

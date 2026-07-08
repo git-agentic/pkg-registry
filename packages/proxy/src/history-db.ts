@@ -152,5 +152,15 @@ export class HistoryDb {
     }));
   }
 
+  /** All stored audit reports, newest-first, bounded. For policy-impact replay (Phase 20). */
+  allReports(limit = 1000): AuditReport[] {
+    const rows = this.db.prepare(`SELECT report_json FROM audit_events ORDER BY audited_at DESC LIMIT ?`).all(limit);
+    const out: AuditReport[] = [];
+    for (const r of rows) {
+      try { out.push(JSON.parse(r.report_json as string) as AuditReport); } catch { /* skip a corrupt row */ }
+    }
+    return out;
+  }
+
   close(): void { this.db.close(); }
 }
