@@ -222,6 +222,34 @@ export function createServer(opts: ServerOptions) {
     res.json({ stats: store.stats(), audits: store.recent(50).map((s) => s.report) });
   });
 
+  // Durable audit history / observability reads (Phase 15). Open — not role-gated
+  // (Phase 12 authz gates only mutating routes). 501 when no HistoryDb is configured,
+  // never a silent empty response.
+  const disabled = (res: import("express").Response) => res.status(501).json({ enabled: false });
+
+  app.get("/-/metrics", (_req, res) => {
+    if (!history) return disabled(res);
+    res.json({ summary: history.summary(), trends: history.trends(), topFlagged: history.topFlagged() });
+  });
+
+  app.get("/-/history", (req, res) => {
+    if (!history) return disabled(res);
+    const q = req.query as { verdict?: string; name?: string; limit?: string; offset?: string };
+    res.json({
+      history: history.history({
+        verdict: q.verdict,
+        name: q.name,
+        limit: q.limit ? Math.min(Number(q.limit) || 50, 500) : 50,
+        offset: q.offset ? Number(q.offset) || 0 : 0,
+      }),
+    });
+  });
+
+  app.get("/-/violations/timeline", (_req, res) => {
+    if (!history) return disabled(res);
+    res.json({ timeline: history.violationTimeline() });
+  });
+
   // Whole-tree audit: fan out over the integrity-cached auditVersion path and
   // roll up a policy-gated aggregate (ADR-0020). Batch endpoint, not the gate path.
   app.post("/-/audit-tree", async (req, res) => {
