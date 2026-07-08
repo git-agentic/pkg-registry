@@ -337,14 +337,18 @@ import { fileURLToPath } from "node:url";
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "fixtures");
 
-// A report with ONE high-severity finding: scores 75 under DEFAULT (high weight 25) → allow (>=80? no).
-// Use meta+findings the scorer will re-weight. We craft findings so a stricter candidate flips the verdict.
+// Seed reports whose stored `verdict` is CONSISTENT with what DEFAULT_POLICY scores, so that an
+// identical candidate replays to "unchanged". A single high finding scores 100−25=75 → "warn" under
+// DEFAULT (weights {high:25}, thresholds {allow:80,warn:50}, hardBlockSeverity "critical"); no findings
+// → 100 → "allow".
 function reportWith(name: string, integrity: string, severity: "high" | "info"): AuditReport {
+  const hasFinding = severity === "high";
   return {
     schema: 3,
     meta: { name, version: "1.0.0", integrity, signature: "unsigned", provenance: "absent", author: null, maintainers: [], license: "MIT", hasInstallScripts: false, unpackedSize: 1, fileCount: 1 },
-    score: 100, verdict: "allow",
-    findings: severity === "high" ? [{ ruleId: "network-egress", category: "network", severity: "high", message: "x", onChangedFile: false, evidence: [], weight: 25, waived: false }] : [],
+    score: hasFinding ? 75 : 100,
+    verdict: hasFinding ? "warn" : "allow",
+    findings: hasFinding ? [{ ruleId: "network-egress", category: "network", severity: "high", message: "x", onChangedFile: false, evidence: [], weight: 25, waived: false }] : [],
     capabilities: [], capabilityDelta: null,
     engine: { version: "0.1.0", rules: [], llm: null, mode: "full" }, llmSummary: null,
     auditedAt: "2026-07-01T00:00:00Z", durationMs: 0, policy: { version: "default", hash: "h" },
@@ -371,14 +375,15 @@ const preview = async (base: string, policy: unknown) =>
 describe("POST /-/policy/preview (e2e)", () => {
   test("a stricter candidate flips the risky audit's verdict; the clean one is unchanged", async () => {
     const { server, base, history } = await boot(true);
-    // Stricter: raise the allow threshold so the high-finding package (score 75) drops below allow.
+    // Stricter: hard-block on `high` (default hard-blocks only on `critical`). The risky package's
+    // one high finding now triggers a hard block → "block"; it was stored as "warn". Clean stays allow.
     const strict: EnterprisePolicy = structuredClone(DEFAULT_POLICY);
-    strict.scoring.thresholds = { allow: 80, warn: 50 }; // 75 < 80 → not allow; 75 >= 50 → warn
+    strict.scoring.hardBlockSeverity = "high";
     const r = await (await preview(base, strict)).json() as { enabled: boolean; total: number; transitions: Record<string, number>; changed: { name: string; from: string; to: string }[] };
     assert.equal(r.enabled, true);
     assert.equal(r.total, 2);
-    assert.ok(r.transitions.allowToWarn >= 1);
-    assert.ok(r.changed.some((c) => c.name === "risky" && c.from === "allow" && c.to === "warn"));
+    assert.ok(r.transitions.warnToBlock >= 1);
+    assert.ok(r.changed.some((c) => c.name === "risky" && c.from === "warn" && c.to === "block"));
     assert.equal(r.changed.some((c) => c.name === "clean"), false); // clean stays allow
     server.close(); history?.close();
   });
@@ -408,7 +413,7 @@ describe("POST /-/policy/preview (e2e)", () => {
 });
 ```
 
-(Note: the DEFAULT_POLICY thresholds are `{ allow: 80, warn: 50 }` per `score.ts`; the "stricter" candidate in test 1 keeps allow at 80 but the *seeded* report re-scores to 75 (100 − high 25) → `warn`. If DEFAULT already scores the high-finding package as `warn`, the seed's stored verdict is `allow` (we set it), so the transition still shows allow→warn on replay. Confirm the seeded verdicts vs the re-scored verdicts produce a real transition; adjust the candidate thresholds if the exact numbers differ.)
+(Note: seeds are policy-consistent — the "risky" report's stored verdict `warn` matches what DEFAULT scores its one high finding (100−25=75 → warn), so the identical-candidate test replays to `unchanged`. Test 1's transition is driven by a genuinely stricter candidate (`hardBlockSeverity: "high"` → the high finding hard-blocks → `block`). Confirm the re-scored verdicts against the actual DEFAULT weights `{high:25}` / thresholds `{allow:80,warn:50}` / hard-block rank; adjust if the engine's exact numbers differ.)
 
 - [ ] **Step 2: Run to verify it fails**
 
