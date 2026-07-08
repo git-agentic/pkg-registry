@@ -18,6 +18,7 @@ import { LocalFixtureUpstream, NpmUpstream, type Upstream } from "./upstream.js"
 import { PrivatePackageStore } from "./private-store.js";
 import { ViolationStore } from "./violations.js";
 import { ApprovalRequestStore } from "./approval-requests.js";
+import { HistoryDb } from "./history-db.js";
 
 export { createServer } from "./server.js";
 export { AuditStore } from "./store.js";
@@ -99,18 +100,19 @@ function main(): void {
   const policy = env("SENTINEL_POLICY", "observe") as ProxyPolicy;
   const upstream = buildUpstream();
   const { policy: enterprisePolicy, hash: policyHash } = resolveEnterprisePolicy();
-  const store = new AuditStore(process.env.SENTINEL_STORE, policyHash);
+  const history = process.env.SENTINEL_HISTORY_DB ? new HistoryDb(process.env.SENTINEL_HISTORY_DB) : undefined;
+  const store = new AuditStore(process.env.SENTINEL_STORE, policyHash, history);
   const approvals = new ApprovalStore(process.env.SENTINEL_APPROVALS);
   const privateStore = new PrivatePackageStore(process.env.SENTINEL_PRIVATE_STORE);
   const publishTokens = (process.env.SENTINEL_PUBLISH_TOKENS ?? "").split(",").map((t) => t.trim()).filter(Boolean);
   // dist/index.js -> ../public ; src is run via tsx with the same relative layout.
   const publicDir = env("SENTINEL_PUBLIC", join(here, "..", "public"));
   const trustMaterial = resolveTrustMaterial();
-  const violations = new ViolationStore(process.env.SENTINEL_VIOLATIONS);
+  const violations = new ViolationStore(process.env.SENTINEL_VIOLATIONS, history);
   const approvalRequests = new ApprovalRequestStore(process.env.SENTINEL_APPROVAL_REQUESTS);
   const authPublicKey = resolveAuthPublicKey();
 
-  const app = createServer({ upstream, store, approvals, enterprisePolicy, policyHash, policy, publicDir, privateStore, publishTokens, trustMaterial, violations, approvalRequests, authPublicKey });
+  const app = createServer({ upstream, store, approvals, enterprisePolicy, policyHash, policy, publicDir, privateStore, publishTokens, trustMaterial, violations, approvalRequests, authPublicKey, history });
   app.listen(port, () => {
     console.log(`Sentinel proxy listening on http://localhost:${port}`);
     console.log(`  upstream : ${upstream.name}`);
@@ -119,6 +121,7 @@ function main(): void {
     console.log(`  auth     : ${authPublicKey ? "enabled (signed role tokens)" : "disabled (open control plane)"}`);
     console.log(`  violations: ${process.env.SENTINEL_VIOLATIONS ? "persisted" : "in-memory"}`);
     console.log(`  approval-requests: ${process.env.SENTINEL_APPROVAL_REQUESTS ? "persisted" : "in-memory"}`);
+    console.log(`  history  : ${history ? `enabled (${process.env.SENTINEL_HISTORY_DB})` : "disabled"}`);
     console.log(`  dashboard: http://localhost:${port}/`);
     const claims = enterprisePolicy.privateNamespaces ?? [];
     console.log(`  private  : ${claims.length ? claims.join(", ") : "none"}  (publish ${publishTokens.length ? "enabled" : "disabled"})`);

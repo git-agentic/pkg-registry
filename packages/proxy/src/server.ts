@@ -31,6 +31,7 @@ import { isClaimed, parsePublishBody, publishTokenValid } from "./private.js";
 import { ViolationStore, type ViolationInput } from "./violations.js";
 import { ApprovalRequestStore } from "./approval-requests.js";
 import { makeAuthz } from "./authz.js";
+import type { HistoryDb } from "./history-db.js";
 
 export type ProxyPolicy = "observe" | "block";
 
@@ -60,6 +61,8 @@ export interface ServerOptions {
   approvalRequests: ApprovalRequestStore;
   /** Operator Ed25519 public key PEM. Undefined ⇒ control-plane auth disabled (open mode). */
   authPublicKey?: string;
+  /** Durable observability store (Phase 15). Undefined ⇒ history/metrics disabled. */
+  history?: HistoryDb;
 }
 
 const TARBALL_RE = /^(.+)\/-\/([^/]+\.tgz)$/;
@@ -80,6 +83,7 @@ async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise
 
 export function createServer(opts: ServerOptions) {
   const { upstream, store, approvals, violations, approvalRequests } = opts;
+  const history = opts.history;
   const enterprisePolicy = opts.enterprisePolicy;
   const policyHash = opts.policyHash ?? policyHashOf(enterprisePolicy);
   const policy: ProxyPolicy = opts.policy ?? "observe";

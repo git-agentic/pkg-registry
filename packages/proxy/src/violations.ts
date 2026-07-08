@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import type { HistoryDb } from "./history-db.js";
 
 export interface ViolationInput {
   name: string;
@@ -21,7 +22,7 @@ export class ViolationStore {
   private byIntegrity = new Map<string, ViolationRecord>();
   private order: string[] = [];
 
-  constructor(private readonly file?: string) {
+  constructor(private readonly file?: string, private readonly history?: HistoryDb) {
     if (file && existsSync(file)) {
       try {
         for (const r of JSON.parse(readFileSync(file, "utf8")) as ViolationRecord[]) this.index(r);
@@ -40,6 +41,11 @@ export class ViolationStore {
     const rec: ViolationRecord = { ...v, quarantined: v.confidence === "confirmed", reportedAt: now };
     this.index(rec);
     this.persist();
+    try {
+      this.history?.recordViolation(rec);
+    } catch {
+      /* best-effort telemetry — never break a violation record (invariant #6) */
+    }
     return rec;
   }
 
