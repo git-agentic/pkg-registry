@@ -195,6 +195,17 @@ never applies, stores, or signs the candidate, requiring history (`501`
 when disabled). `sentinel policy init/validate/preview` round out the
 authoring loop beside the existing `keygen/sign/verify`; `validate` exits
 non-zero only on lint errors, making it a clean CI gate (ADR-0033).
+Phase 21 adds **known-advisory (known-malicious) detection**: a bundled,
+static, offline `advisory-corpus.ts` (`KNOWN_ADVISORIES` — real, verified
+GHSA ids for publicly-documented compromised releases like `event-stream
+3.3.6`) plus a pure `known-advisory` rule (registered — rule count is now
+**8**) that critical-hard-blocks an exact `(name, version)` match against
+the bundled corpus union any operator-supplied advisories. The proxy loads
+an optional `SENTINEL_ADVISORIES` JSON file once at startup (fail-closed,
+FATAL on an unreadable path, like `SENTINEL_AUTH_PUBKEY`) and threads it
+into the public install audit path; unset ⇒ bundled-only, unchanged.
+`scripts/make-advisories.ts` regenerates the corpus from a local OSV/GHSA
+export — never a live fetch on the audit path (invariant #3, ADR-0034).
 
 We are the Socket/Chainguard wedge: **do not** try to replace npm. Resolve and
 serve real packages transparently; only attach signal.
@@ -265,15 +276,15 @@ Node 24, but Node 22 needs `--experimental-sqlite` if you turn it on.
 
 ```bash
 npm run build            # tsc --build (project references: core → proxy/cli)
-npm test                 # engine + end-to-end proxy: 503 tests on this host (501 pass, 2 skipped on darwin).
+npm test                 # engine + end-to-end proxy: 516 tests on this host (514 pass, 2 skipped on darwin).
                          # Skips are platform-gated enforcement: "non-darwin throws" skips on darwin
                          # (it verifies darwin-only behaviour), and the "no silent skip" CI guard skips
                          # off-CI. The BubblewrapSandbox enforcement suite and the Linux enforce-e2e tests
-                         # skip as describe-level blocks on darwin ("requires Linux") and are not in the 503
+                         # skip as describe-level blocks on darwin ("requires Linux") and are not in the 516
                          # count. Phase 10's violation-enforce e2e and the darwin-gated runtime-violation
                          # effect test (SeatbeltSandbox: "a denied credential read surfaces a confirmed
                          # runtime violation") RUN on darwin via Seatbelt, the same way the rest of the
-                         # Seatbelt effect suite does, and ARE in the 503 count.
+                         # Seatbelt effect suite does, and ARE in the 516 count.
                          # Phase 7's audit-tree, Phase 8/9's signature/provenance, Phase 10's
                          # classifyViolation/deny-set/violations-store, Phase 11's MCP/approval-request,
                          # Phase 12's auth/authz-e2e, Phase 13's typosquat/dependency-confusion,
@@ -282,11 +293,12 @@ npm test                 # engine + end-to-end proxy: 503 tests on this host (50
                          # release-anomaly/capability-novelty/release-anomaly-e2e, Phase 17's
                          # action run/report/bin-e2e/action-yml, Phase 18's remediate/explain-route/
                          # CLI-explain/PR-comment-hint/MCP-explain, Phase 19's attest-core/
-                         # policyHash-plumbing/CLI-attest-keygen-attest-verify-attestation, and Phase 20's
-                         # policy-lint/allReports/preview-route/policy-init-validate-preview-CLI tests are
-                         # hermetic and platform-neutral, so the darwin/Linux relationship from Phase 6
-                         # (Linux one test higher, one fewer skip) should hold, but hasn't been
-                         # re-verified on Linux CI since Phase 7/8/9/10/11/12/13/14/15/16/17/18/19/20
+                         # policyHash-plumbing/CLI-attest-keygen-attest-verify-attestation, Phase 20's
+                         # policy-lint/allReports/preview-route/policy-init-validate-preview-CLI, and
+                         # Phase 21's advisory-corpus/known-advisory-rule/SENTINEL_ADVISORIES-load
+                         # tests are hermetic and platform-neutral, so the darwin/Linux relationship from
+                         # Phase 6 (Linux one test higher, one fewer skip) should hold, but hasn't been
+                         # re-verified on Linux CI since Phase 7/8/9/10/11/12/13/14/15/16/17/18/19/20/21
                          # landed — confirm on the next Linux CI run rather than trusting an
                          # extrapolated count here. Each platform's enforcement is verified on that
                          # platform (macOS dev host / ubuntu-latest CI).

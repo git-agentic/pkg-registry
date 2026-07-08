@@ -756,6 +756,39 @@ live scoring path (`runAudit`, the inline gate, `AuditStore`) gains no new
 branch. The preview requires the opt-in `HistoryDb` and is bounded by
 `allReports`'s 1000-row cap — see [ADR-0033](./docs/adr/0033-policy-authoring-impact-preview.md).
 
+### 3.20 Known-advisory detection (Phase 21, ADR-0034)
+
+Every rule through Phase 16 is heuristic or behavioral — none of them
+consult a known-bad list. Phase 21 adds the confirmed-malicious dimension:
+
+- **`packages/core/src/advisory-corpus.ts`** — a bundled, static, offline
+  corpus (`KNOWN_ADVISORIES: readonly Advisory[]`) of real, publicly
+  documented compromised npm releases (`(name, version, id)` plus optional
+  `severity`/`reference`) — metadata only, never fetched at audit time
+  (invariant #3). `buildAdvisoryIndex` builds a `name → Advisory[]` lookup
+  once; `parseAdvisories` is a pure, total parser for an operator-supplied
+  JSON array.
+- **`known-advisory` — a pure rule** (`packages/core/src/rules/
+  known-advisory.ts`, registered in `RULES`; rule count is now **8**).
+  Checks the bundled corpus **union** any operator-supplied
+  `input.advisories` for an exact `(name, version)` match. A hit emits a
+  `metadata` finding at the advisory's own `severity` (default `critical`),
+  which hard-blocks under the default policy's `hardBlockSeverity`.
+- **`SENTINEL_ADVISORIES` (proxy)** — an optional path to a JSON `Advisory[]`
+  file, read **once at process startup** (`resolveAdvisories` in
+  `packages/proxy/src/index.ts`), fail-closed like `SENTINEL_AUTH_PUBKEY`
+  (a FATAL exit on an unreadable path, never a silent skip). The parsed
+  advisories are threaded into the public install audit path
+  (`AuditInput.advisories`) alongside the bundled corpus; unset ⇒
+  bundled-only, unchanged behavior. Never re-read per audit.
+- A `known-advisory` entry in `REMEDIATIONS` (§3.17/ADR-0031) is the one
+  entry that tells the operator not to waive the finding.
+
+Determinism is unchanged: the corpus is a static committed input and the
+rule is a pure function of `(name, version, advisories)`, so it fits the
+existing rule pipeline with no new branch in `score()` — see
+[ADR-0034](./docs/adr/0034-known-advisory-detection.md).
+
 ---
 
 ## 4. The audit engine (`@sentinel/core`)
@@ -806,6 +839,14 @@ Phase 16 adds a seventh rule (§3.15, ADR-0029):
    is emitted from `buildAudit` rather than `RULES` (it needs the
    post-rules `capabilityDelta`) and flags a newly-added dangerous
    capability relative to the previous version (`medium`).
+
+Phase 21 adds an eighth rule (§3.20, ADR-0034):
+
+8. **`known-advisory`** (`metadata` category) — flags an exact
+   `(name, version)` match against a bundled static corpus of
+   publicly-documented known-malicious npm releases, unioned with any
+   operator-supplied `SENTINEL_ADVISORIES`. `critical` by default —
+   hard-blocks under the default policy.
 
 Rules are registered in a list, so adding a rule (typosquat detection, license
 risk, provenance) is additive and never touches scoring or the proxy.

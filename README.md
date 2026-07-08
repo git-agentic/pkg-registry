@@ -86,6 +86,7 @@ node packages/cli/dist/index.js install lodash
 | `SENTINEL_AUTH_PUBKEY` | _(unset ⇒ open)_ | path to an Ed25519 public key PEM; when set, gates control-plane mutations behind signed role tokens (see below) |
 | `SENTINEL_AUTH_TOKEN` | _(unset)_ | signed role token attached as `Authorization: Bearer` by the MCP client and `sentinel-script-shell` on their POST calls |
 | `SENTINEL_HISTORY_DB` | _(unset ⇒ disabled)_ | path to a SQLite file (`node:sqlite`, built-in); enables durable audit/violation history, `/-/metrics`, `/-/history`, `/-/violations/timeline`, `sentinel stats`/`history`, and the dashboard's Observability section. Node 24 runs it unflagged; Node 22 needs `--experimental-sqlite` |
+| `SENTINEL_ADVISORIES` | _(unset ⇒ bundled corpus only)_ | path to a JSON `Advisory[]` file, loaded once at startup (fatal error on an unreadable path); merged with the bundled known-malicious corpus and checked on the public install audit path |
 
 ## CLI
 
@@ -594,6 +595,37 @@ All four are inert without the underlying packument history (e.g. a
 private-store package) and none is a standalone hard block — see
 [ADR-0029](./docs/adr/0029-release-anomaly-signals.md).
 
+## Known-advisory (known-malicious) detection (Phase 21)
+
+Every rule through Phase 16 infers risk from behavior, identity, or release
+history. Phase 21 adds the one signal none of them provide: a check against
+**already-confirmed-malicious** package versions.
+
+- **Bundled corpus** — `packages/core/src/advisory-corpus.ts` ships a
+  static, offline snapshot of real, publicly-documented compromised npm
+  releases (e.g. `event-stream@3.3.6`, `ua-parser-js@0.7.29`) with their
+  GHSA advisory ids. Metadata only, never fetched at audit time.
+- **`known-advisory` rule** — an exact `(name, version)` match against the
+  bundled corpus (or an operator-supplied advisory) emits a `critical`
+  `metadata` finding by default, naming the advisory id — this **hard-blocks**
+  under the default policy.
+- **Bring your own advisory list** — set `SENTINEL_ADVISORIES` to a path to
+  a JSON `Advisory[]` file (`{ name, version, id, severity?, reference? }[]`)
+  on the proxy; it's read once at startup and merged with the bundled
+  corpus, so an unreadable file fails the process closed rather than
+  silently running without your entries.
+- **Refreshing the bundled corpus** — the bundled snapshot goes stale as new
+  malicious releases are discovered. `npm run advisories -- --in
+  <export.json>` (`scripts/make-advisories.ts`) transforms a local
+  OSV/GHSA "malicious-packages" export into a ready-to-paste
+  `KNOWN_ADVISORIES` array; it does not fetch anything itself — see the
+  script's header comment for the expected input shape and source
+  pointers.
+
+Exact-match only (no semver ranges yet); the one finding type Sentinel's own
+remediation guidance tells you not to waive — see
+[ADR-0034](./docs/adr/0034-known-advisory-detection.md).
+
 ## Status
 
 Phases 1–14 are built. Phase 1 is the transparent auditing proxy. Phase 2 adds the
@@ -639,6 +671,10 @@ broken (errors) and suspicious (warnings) policy values before signing, and
 `sentinel policy preview` replays the proxy's audit history under a
 candidate policy through the same deterministic scorer to show the verdict
 deltas — a dry run, never applied or signed by the preview itself.
+Phase 21 adds known-advisory detection: a bundled, static corpus of
+publicly-documented known-malicious npm releases hard-blocks an exact
+version match by default, with an operator-supplied `SENTINEL_ADVISORIES`
+file merged in at proxy startup.
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full design and [docs/adr/](./docs/adr/)
 for the decision log.
 
