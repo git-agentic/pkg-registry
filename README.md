@@ -105,6 +105,9 @@ sentinel history [--verdict --name --limit]   list recorded audits (requires SEN
 sentinel token keygen --out <prefix>              generate an Ed25519 keypair for control-plane auth
 sentinel token mint --role --sub --ttl --key       mint a signed role token (prints to stdout)
 sentinel token verify <token> --pubkey             verify a token, print role/sub/exp or the rejection reason
+sentinel attest-keygen --out <prefix>              generate an Ed25519 keypair for attestation signing
+sentinel attest [lockfile] --key --out [--sbom]    audit the tree, write an SBOM, sign a DSSE attestation over it
+sentinel verify-attestation <att> --key [--sbom --policy-hash --require]   offline-verify an attestation (deploy gate)
   -p, --proxy <url>   proxy base URL (default http://localhost:4873)
   --json              raw JSON report
 ```
@@ -181,6 +184,53 @@ Remediation surfaces in two more places without a separate `explain` call:
 auto-selects a version. `sentinel explain` and the PR-comment hint only ever
 suggest; a human (or an agent through the existing approval-request path)
 still decides. See [ADR-0031](./docs/adr/0031-actionable-remediation.md).
+
+### Signed audit attestations (Phase 19, ADR-0032)
+
+`sentinel audit-tree` gates a CI job; nothing survives past that job as a
+portable artifact a *later*, independent step can check offline. Phase 19
+adds a signed, SLSA-VSA-flavored attestation over an audited tree, for a
+deploy-time gate:
+
+```bash
+# once, offline: generate a signing keypair (keep sentinel-attest.key.pem secret)
+sentinel attest-keygen --out sentinel-attest
+
+# in CI, after the tree passes audit-tree: produce an SBOM + a signed attestation over it
+sentinel attest package-lock.json --key sentinel-attest.key.pem --out audit.att.json --sbom sbom.json
+
+# later, offline, in a deploy pipeline — pin the *public* key, never the private one
+sentinel verify-attestation audit.att.json --key sentinel-attest.pub.pem \
+  --sbom sbom.json --require allow
+# ✓ valid · verdict allow · policy <hash> · 2026-07-08T...
+# (or) ✗ attestation rejected: verdict-block   → exits non-zero
+```
+
+The attestation is a DSSE envelope around an in-toto `Statement` v1: its
+`subject` is the SHA-256 digest of the CycloneDX SBOM written alongside it
+(`--sbom`, ADR-0027), and its predicate
+(`https://sentinel.dev/attestation/audit-summary/v1`) carries the verdict,
+gate decision, per-verdict counts, the scoring-time policy hash, and a
+timestamp — enough to gate a deploy without re-running the audit or
+re-fetching the full per-package report. Signing is Ed25519, done entirely
+in the CLI on whatever machine runs `sentinel attest` (typically CI); the
+proxy holds no signing key and gains no new mutating route — its only
+change is exposing the `policyHash` it already computed on the
+`/-/audit-tree` response, so `--policy-hash` can pin an attestation to the
+policy that produced it. `verify-attestation` is pure, offline, and
+fail-closed: a tampered envelope, a wrong SBOM, a policy-hash mismatch, or a
+verdict below `--require` all reject with a distinct reason and a non-zero
+exit — never a silent pass.
+
+This is a **VSA-style** artifact (a DSSE/in-toto envelope, in the spirit of
+SLSA's Verification Summary Attestation) rather than a spec SLSA VSA: the
+predicate type is Sentinel-owned, so a generic DSSE/in-toto tool can check
+the signature, but a SLSA-aware verifier expecting the standard predicate
+shape won't recognize it without adaptation. Note the command is
+`sentinel attest-keygen`, not `sentinel attest keygen` — they're sibling
+top-level commands (a commander-15 quirk with nested `requiredOption`s made
+a true subcommand impractical). See
+[ADR-0032](./docs/adr/0032-signed-audit-attestations.md).
 
 ### Sandbox (Phase 3, macOS)
 
@@ -532,6 +582,12 @@ Phase 18 adds actionable remediation: `sentinel explain <package> <version>`
 comment) turns a `warn`/`block` verdict into per-finding guidance, a
 suggested last-known-good version, and a ready waiver — advisory only, never
 auto-fixing a lockfile.
+Phase 19 adds signed audit attestations: `sentinel attest` signs a DSSE/
+in-toto envelope (Ed25519, VSA-style) over an audited tree's SBOM digest,
+and `sentinel verify-attestation` checks it offline against a pinned key —
+a portable, deploy-time gate that survives past the CI job that produced it.
+Signing is operator-side in the CLI; the proxy only exposes the
+scoring-time policy hash the attestation binds to.
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full design and [docs/adr/](./docs/adr/)
 for the decision log.
 

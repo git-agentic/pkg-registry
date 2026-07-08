@@ -31,6 +31,8 @@ export interface TreeAggregate {
 export interface TreeAuditResult {
   aggregate: TreeAggregate;
   packages: TreePackageRow[];
+  /** Hash of the policy the tree was scored under (Phase 19 attestation); set by the proxy route. */
+  policyHash?: string;
 }
 
 const VERDICT_RANK: Record<Verdict, number> = { allow: 0, warn: 1, block: 2 };
