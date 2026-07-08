@@ -6,8 +6,8 @@ import type { TreeAuditResult } from "../src/tree.js";
 const tree: TreeAuditResult = {
   aggregate: { verdict: "warn", gated: false, counts: { allow: 1, warn: 1, block: 0, error: 0 }, provenance: { verified: 0, invalid: 0, absent: 2, unknown: 0 }, integrityMismatch: 0 },
   packages: [
-    { name: "lodash", version: "4.17.21", status: "allow", score: 100, topFinding: null, error: null, provenance: "absent", integrityMismatch: false },
-    { name: "@scope/pkg", version: "1.2.3", status: "warn", score: 60, topFinding: "network egress", error: null, provenance: "absent", integrityMismatch: false },
+    { name: "lodash", version: "4.17.21", status: "allow", score: 100, topFinding: null, topFindingRuleId: null, error: null, provenance: "absent", integrityMismatch: false },
+    { name: "@scope/pkg", version: "1.2.3", status: "warn", score: 60, topFinding: "network egress", topFindingRuleId: "network-egress", error: null, provenance: "absent", integrityMismatch: false },
   ],
 };
 

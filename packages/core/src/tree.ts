@@ -10,6 +10,8 @@ export interface TreePackageRow {
   status: TreeStatus;
   score: number | null;
   topFinding: string | null;
+  /** ruleId of the top finding, for remediation lookup (Phase 18); null on error/no-finding rows. */
+  topFindingRuleId: string | null;
   error: string | null;
   /** Verified provenance-attestation status; null on error rows (no report was produced). */
   provenance: ProvenanceStatus | null;

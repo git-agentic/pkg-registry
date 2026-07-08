@@ -342,12 +342,13 @@ export function createServer(opts: ServerOptions) {
             topFinding: mismatch
               ? `lockfile-integrity-mismatch: lockfile pins ${co.integrity!.slice(0, 20)}… but the registry serves a different hash`
               : (report.findings[0]?.message ?? null),
+            topFindingRuleId: report.findings[0]?.ruleId ?? null,
             error: null, provenance: report.meta.provenance, integrityMismatch: mismatch,
           };
         } catch (err) {
           return {
             name: co.name, version: co.version, status: "error" as const,
-            score: null, topFinding: null, error: (err as Error)?.message ?? "audit failed",
+            score: null, topFinding: null, topFindingRuleId: null, error: (err as Error)?.message ?? "audit failed",
             provenance: null, integrityMismatch: false,
           };
         }

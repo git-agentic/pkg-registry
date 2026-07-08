@@ -9,8 +9,8 @@ const gated: TreeAuditResult = {
     provenance: { verified: 0, invalid: 1, absent: 1, unknown: 0 },
   },
   packages: [
-    { name: "leftpad-lite", version: "1.0.0", status: "allow", score: 100, topFinding: null, error: null, provenance: "absent" },
-    { name: "color-stream", version: "1.4.1", status: "block", score: 10, topFinding: "exfiltrates env to network", error: null, provenance: "invalid" },
+    { name: "leftpad-lite", version: "1.0.0", status: "allow", score: 100, topFinding: null, topFindingRuleId: null, error: null, provenance: "absent" },
+    { name: "color-stream", version: "1.4.1", status: "block", score: 10, topFinding: "exfiltrates env to network", topFindingRuleId: "network-egress", error: null, provenance: "invalid" },
   ],
 };
 const clean: TreeAuditResult = {
@@ -18,7 +18,7 @@ const clean: TreeAuditResult = {
     verdict: "allow", gated: false, counts: { allow: 1, warn: 0, block: 0, error: 0 },
     provenance: { verified: 1, invalid: 0, absent: 0, unknown: 0 },
   },
-  packages: [{ name: "leftpad-lite", version: "1.0.0", status: "allow", score: 100, topFinding: null, error: null, provenance: "verified" }],
+  packages: [{ name: "leftpad-lite", version: "1.0.0", status: "allow", score: 100, topFinding: null, topFindingRuleId: null, error: null, provenance: "verified" }],
 };
 
 describe("formatTree / treeExitCode", () => {
