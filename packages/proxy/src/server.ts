@@ -236,12 +236,17 @@ export function createServer(opts: ServerOptions) {
     }
   });
 
-  /** Newest prior version (semver, strictly older, most-recent 10) that audits `allow`. */
+  /** Newest prior version (semver, strictly older, most-recent 10) that audits `allow`.
+   *  Claimed names are authoritative private — mirrors auditVersion/the packument route:
+   *  NEVER consult public upstream for a claimed name (invariant #7 — enumerating a
+   *  claimed name against public npm is dependency-confusion reconnaissance). */
   async function findLastKnownGood(pkg: string, version: string): Promise<{ version: string; score: number } | null> {
     let priors: string[];
     try {
-      const pm = await upstream.getPackument(pkg);
-      priors = Object.keys(pm.versions).filter((v) => cmpSemver(v, version) < 0).sort(cmpSemver).reverse().slice(0, 10);
+      const allVersions = isClaimed(pkg, enterprisePolicy)
+        ? privateStore.versions(pkg)
+        : Object.keys((await upstream.getPackument(pkg)).versions);
+      priors = allVersions.filter((v) => cmpSemver(v, version) < 0).sort(cmpSemver).reverse().slice(0, 10);
     } catch {
       return null;
     }

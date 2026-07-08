@@ -4,7 +4,7 @@ import { remediate, remediationHint } from "../src/remediation.js";
 import type { AuditReport, Finding } from "../src/types.js";
 
 function finding(over: Partial<Finding> = {}): Finding {
-  return { ruleId: "install-scripts", category: "capability", severity: "high", message: "runs a postinstall", onChangedFile: false, evidence: [], ...over } as Finding;
+  return { ruleId: "install-scripts", category: "install-script", severity: "high", message: "runs a postinstall", onChangedFile: false, evidence: [], ...over } as Finding;
 }
 function report(over: Partial<AuditReport> = {}): AuditReport {
   return {

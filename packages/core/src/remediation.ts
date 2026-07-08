@@ -67,8 +67,8 @@ export function remediate(report: AuditReport): Remediation {
       ? null
       : {
           name: m.name, version: m.version, integrity: m.integrity,
-          approveCommand: `sentinel approve ${m.name} ${m.version} --reason "reviewed and accepted"`,
-          requestPayload: { name: m.name, version: m.version, integrity: m.integrity, reason: "reviewed and accepted" },
+          approveCommand: `sentinel approve ${m.name} ${m.version} --reason "<state your review rationale>"`,
+          requestPayload: { name: m.name, version: m.version, integrity: m.integrity, reason: "<state your review rationale>" },
         };
 
   const guidance =

@@ -38,10 +38,14 @@ guidance, not new detection — no rule, weight, or verdict logic changes.
 - **`GET /-/explain/:pkg/:version`** (`packages/proxy/src/server.ts`) audits
   the target version, runs `remediate` over the resulting report, and walks
   back a **bounded window** of the package's prior versions (newest of ≤10,
-  via the packument's version list and `cmpSemver`) looking for the first one
-  whose own audit verdict is `allow`, reusing the same cached, integrity-keyed
-  `auditVersion` path every other route uses — no separate audit logic. The
-  walk short-circuits on the first `allow` and treats any packument fetch
+  sorted with `cmpSemver`) looking for the first one whose own audit verdict
+  is `allow`, reusing the same cached, integrity-keyed `auditVersion` path
+  every other route uses — no separate audit logic. The version list itself
+  comes from the same `isClaimed` branch every other route already uses
+  (invariant #7): `privateStore.versions()` for a name matching the policy's
+  `privateNamespaces`, the public packument's version list otherwise — a
+  claimed name's prior versions are never enumerated against public npm. The
+  walk short-circuits on the first `allow` and treats any version-list fetch
   failure or per-version audit failure as "no last-known-good found" rather
   than surfacing an error, since this is advisory best-effort, not a gate.
   The route is deliberately off the inline tarball-request gate (invariant
@@ -99,6 +103,19 @@ determinism violation of the per-version score itself).
   more than 10 versions back returns no suggestion rather than an expensive
   unbounded walk; the CLI/MCP output simply omits the "pin to" line in that
   case.
+- `findLastKnownGood` mirrors `auditVersion`'s and the packument route's
+  `isClaimed` branch (invariant #7): for a name matching the policy's
+  `privateNamespaces` it enumerates prior versions via
+  `privateStore.versions()`, never via `upstream.getPackument()` — a claimed
+  name never reaches public npm, even for the enumeration-only walk-back.
+  Everything else still resolves via the public packument, unchanged.
+- `/-/explain` fans out to up to 11 audits per call (the target version plus
+  ≤10 priors for the last-known-good walk), each integrity-cache-keyed so a
+  repeat lookup is cheap — but a first-touch on a package with a long,
+  never-audited history is roughly an 11x amplifier over a single `/-/audit`
+  call. If the proxy is reachable beyond a trusted network, rate-limit or
+  authenticate `/-/explain` the same way any other non-cached fan-out route
+  would be protected.
 
 ## Deferred
 

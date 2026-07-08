@@ -155,15 +155,19 @@ $ sentinel explain color-stream 1.0.0
   ✓ suggested: pin to color-stream@0.9.0 — the most recent clean release (96/100).
 
   To waive after review:
-      sentinel approve color-stream 1.0.0 --reason "reviewed and accepted"
+      sentinel approve color-stream 1.0.0 --reason "<state your review rationale>"
 ```
 
 It calls the proxy's `GET /-/explain/:pkg/:version`, which audits the
 version, runs the pure `remediate()` guidance mapping over the report, and
 walks back a bounded window (newest of ≤10 prior versions) for the last one
-that itself audits `allow` — the "suggested safe version" line. The route is
-off the inline install-gate path, since it's expected to be slower than a
-plain audit.
+that itself audits `allow` — the "suggested safe version" line. Prior
+versions come from the private store for a claimed namespace and from public
+npm otherwise (same `isClaimed` split as every other route — a claimed name
+never round-trips to public npm). The route is off the inline install-gate
+path, since it's expected to be slower than a plain audit — up to ~11 audits
+per call (integrity-cached, so repeats are cheap), so rate-limit or
+authenticate it if the proxy is reachable beyond a trusted network.
 
 Remediation surfaces in two more places without a separate `explain` call:
 
