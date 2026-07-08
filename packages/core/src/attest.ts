@@ -47,6 +47,9 @@ export function attestationKeyid(publicKeyPem: string): string {
 /** Build the in-toto audit-summary Statement over a tree audit. Pure; `now` injected. */
 export function buildAuditStatement(tree: TreeAuditResult, opts: { sbomDigest: string; sbomName: string; now: string }): InTotoStatementV1 {
   const a = tree.aggregate;
+  // The fixed key insertion order below is load-bearing: signAttestation serializes this via
+  // JSON.stringify, so the envelope is byte-identical only while the order is stable. Do NOT
+  // rebuild via spread/dynamic keys — that would silently break determinism (and the round-trip).
   return {
     _type: STATEMENT_TYPE,
     subject: [{ name: opts.sbomName, digest: { sha256: opts.sbomDigest } }],

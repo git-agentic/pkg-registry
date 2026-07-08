@@ -398,7 +398,15 @@ program
   .option("--policy-hash <hash>", "require this policy hash")
   .option("--require <level>", "require verdict: allow | allow-or-warn")
   .action((attFile: string, opts: { key: string; sbom?: string; policyHash?: string; require?: string }) => {
-    const env: unknown = JSON.parse(readFileSync(attFile, "utf8"));
+    let env: unknown;
+    try {
+      env = JSON.parse(readFileSync(attFile, "utf8"));
+    } catch {
+      // A malformed attestation FILE fails the gate cleanly, not with a stack trace.
+      console.error("✗ attestation rejected: malformed");
+      process.exitCode = 2;
+      return;
+    }
     const expectedSbomDigest = opts.sbom ? createHash("sha256").update(readFileSync(opts.sbom)).digest("hex") : undefined;
     const requireVerdict = opts.require === "allow" || opts.require === "allow-or-warn" ? opts.require : undefined;
     const r = verifyAttestation(env, readFileSync(opts.key, "utf8"), { expectedSbomDigest, expectedPolicyHash: opts.policyHash, requireVerdict });
