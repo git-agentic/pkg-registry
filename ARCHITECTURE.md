@@ -449,6 +449,58 @@ findings the package trips, and an operator escalates to a hard block via
 `deny`/`hardBlockSeverity` or waives a known false positive via
 `policy.allow`/`policy.rules.disabled`, exactly as with any other finding.
 
+### 3.14 Durable history + observability (Phase 15, ADR-0028)
+
+Every audit and violation Phases 1–10 produce lives only in the in-memory
+hot cache (plus an O(n)-rewrite JSON file for `AuditStore` restart
+survival) — nothing durable or queryable. Phase 15 adds an **opt-in**
+second write destination, `HistoryDb` (`packages/proxy/src/history-db.ts`),
+over the **built-in `node:sqlite`** — zero new dependency. It is
+constructed only when `SENTINEL_HISTORY_DB=<path>` is set (`index.ts`'s
+`main()`); `node:sqlite` itself is loaded via `createRequire` **inside the
+constructor**, so importing the module for its types never fires the
+experimental warning — only `new HistoryDb(...)` does. Unset (the
+default), nothing changes: no `HistoryDb`, no `node:sqlite` import, the
+same in-memory + JSON-file behavior as every prior phase.
+
+- **Two tables.** `audit_events` is keyed on `integrity` with `INSERT ...
+  ON CONFLICT DO NOTHING` — one row per immutable tarball (ADR-0004),
+  first-seen `audited_at`, full `report_json` plus denormalized
+  verdict/score/signature/provenance columns for aggregate queries.
+  `violation_events` is `AUTOINCREMENT`-keyed and strictly append-only —
+  every reported violation (ADR-0023) is its own row.
+- **Write-through, additive.** `AuditStore.put` and `ViolationStore.record`
+  each take an optional trailing `history?: HistoryDb` param; when present,
+  the same in-memory write also calls `history.recordAudit(report, now)` /
+  `history.recordViolation(rec)`. The write is best-effort (invariant #6,
+  try/catch swallowed) — a `HistoryDb` failure never breaks a record or the
+  gate. `now` is caller-supplied (`new Date().toISOString()`), not read
+  from the clock inside `HistoryDb` — the same injected-clock discipline
+  as ADR-0022/ADR-0027. The in-memory hot cache the request path reads
+  from is untouched.
+- **Query surface:** `summary()`, `history({verdict, name, limit, offset})`,
+  `trends({limit})` (chronological daily allow/warn/block buckets),
+  `topFlagged({limit})`, `violationTimeline({limit})`.
+- **Three open, un-role-gated read routes** (`server.ts`): `GET
+  /-/metrics` (`{summary, trends, topFlagged}`), `GET /-/history`
+  (`?verdict=&name=&limit=&offset=`), `GET /-/violations/timeline`. They
+  join the rest of the open read surface (Phase 12's `makeAuthz` gates
+  only the six mutating routes). No `HistoryDb` configured ⇒ `501
+  { enabled: false }` on all three, not a silent empty body.
+- **CLI:** `sentinel stats` (summary + trend + top-flagged) and `sentinel
+  history [--verdict --name --limit]`; both print "history not enabled —
+  set SENTINEL_HISTORY_DB on the proxy" on a `501`.
+- **Dashboard:** an "Observability" section on `packages/proxy/public/
+  index.html` — inline-SVG verdict trend, top-flagged list, violation
+  timeline — polled alongside the rest of the dashboard, all fetched
+  fields passed through the existing `esc()` helper, degrading to a note
+  when disabled.
+
+`HistoryDb` only stores and reads back events the deterministic scoring
+path already produced; it never influences a verdict (invariant #1
+untouched). SQLite is single-node — no multi-proxy sharing — and both
+tables grow unbounded with no retention/pruning yet (ADR-0028).
+
 ---
 
 ## 4. The audit engine (`@sentinel/core`)

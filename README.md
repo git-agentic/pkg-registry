@@ -85,6 +85,7 @@ node packages/cli/dist/index.js install lodash
 | `SENTINEL_NPM_ATTESTATION_KEYS` | _(bundled keys)_ | path to an npm publish-attestation keys JSON, used alongside `SENTINEL_TRUSTED_ROOT` |
 | `SENTINEL_AUTH_PUBKEY` | _(unset ⇒ open)_ | path to an Ed25519 public key PEM; when set, gates control-plane mutations behind signed role tokens (see below) |
 | `SENTINEL_AUTH_TOKEN` | _(unset)_ | signed role token attached as `Authorization: Bearer` by the MCP client and `sentinel-script-shell` on their POST calls |
+| `SENTINEL_HISTORY_DB` | _(unset ⇒ disabled)_ | path to a SQLite file (`node:sqlite`, built-in); enables durable audit/violation history, `/-/metrics`, `/-/history`, `/-/violations/timeline`, `sentinel stats`/`history`, and the dashboard's Observability section. Node 24 runs it unflagged; Node 22 needs `--experimental-sqlite` |
 
 ## CLI
 
@@ -98,6 +99,8 @@ sentinel audit-tree [lockfile]   audit an entire resolved tree (npm/yarn/pnpm); 
 sentinel install [args…]         npm install routed through the proxy
 sentinel npx     [args…]         npx routed through the proxy
 sentinel violations              list runtime violations recorded by the proxy (quarantined builds)
+sentinel stats                    durable audit/violation metrics (requires SENTINEL_HISTORY_DB on the proxy)
+sentinel history [--verdict --name --limit]   list recorded audits (requires SENTINEL_HISTORY_DB)
 sentinel token keygen --out <prefix>              generate an Ed25519 keypair for control-plane auth
 sentinel token mint --role --sub --ttl --key       mint a signed role token (prints to stdout)
 sentinel token verify <token> --pubkey             verify a token, print role/sub/exp or the rejection reason
@@ -152,6 +155,40 @@ denied at the kernel level exactly as before — containment is unaffected eithe
 - `GET /-/violations` — the 50 most recent violation records.
 - `DELETE /-/violations/:integrity` — clear a quarantine.
 - `x-sentinel-violations` response header on every served tarball (`1`/`0`).
+
+## Durable history + observability (Phase 15)
+
+Set `SENTINEL_HISTORY_DB=<path>` on the proxy to turn on a durable, queryable
+store of every audit and violation, over the built-in `node:sqlite` — no new
+dependency. It's **opt-in**: leave the var unset and nothing changes (no
+`node:sqlite` import, same in-memory-only behavior as before). The store
+write-throughs beside the existing in-memory cache; it's best-effort, so a
+history-store failure never breaks a record or the audit gate.
+
+```bash
+SENTINEL_HISTORY_DB=./sentinel-history.db node packages/proxy/dist/index.js
+```
+
+- `GET /-/metrics` — `{ summary, trends, topFlagged }` (verdict/signature/
+  provenance/violation/quarantine counts, a daily allow/warn/block trend,
+  and the most-flagged package names).
+- `GET /-/history?verdict=&name=&limit=&offset=` — paginated, filterable
+  audit rows.
+- `GET /-/violations/timeline` — the recorded violation stream, most recent
+  first, with quarantine status.
+- All three return `501 { enabled: false }` when `SENTINEL_HISTORY_DB` is
+  unset, never a silent empty response.
+- `sentinel stats` and `sentinel history [--verdict --name --limit]` render
+  the same data on the CLI; both print "history not enabled — set
+  SENTINEL_HISTORY_DB on the proxy" if the endpoint 501s.
+- The dashboard's **Observability** section renders a verdict-trend chart,
+  a top-flagged list, and a violation timeline, and degrades to a note when
+  history isn't enabled.
+
+**Node version note:** `node:sqlite` runs unflagged on Node 24. On Node 22
+you need `--experimental-sqlite` if you set `SENTINEL_HISTORY_DB`; leaving it
+unset keeps Node 22 fully supported with no flag. See
+[ADR-0028](./docs/adr/0028-durable-history-observability.md).
 
 ## Control-plane authentication (Phase 12)
 

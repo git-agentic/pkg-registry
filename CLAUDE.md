@@ -105,6 +105,20 @@ tree into gating on unresolvable-package rows (`aggregateTree`'s
 `failOnError`, default off — ADR-0020's fail-open stance unchanged). Parsing
 and SBOM export are pure; the per-package score path is untouched
 (ADR-0027).
+Phase 15 adds **durable audit history + observability**: `HistoryDb`
+(`packages/proxy/src/history-db.ts`) is an opt-in (`SENTINEL_HISTORY_DB=<path>`)
+wrapper over the built-in `node:sqlite`, loaded lazily via `createRequire`
+inside the constructor so a plain import never fires the experimental
+warning. It write-throughs (best-effort, invariant #6) beside the existing
+in-memory hot cache — `AuditStore.put`/`ViolationStore.record` gained an
+optional trailing `history?` param — into an integrity-keyed upsert-ignore
+`audit_events` table and an append-only `violation_events` table. Three
+open, un-role-gated reads (`GET /-/metrics`, `GET /-/history`,
+`GET /-/violations/timeline`, `501 { enabled: false }` when disabled),
+`sentinel stats`/`sentinel history` in the CLI, and a dashboard
+"Observability" section (verdict trend, top-flagged, violation timeline)
+sit on top. Unset env var ⇒ zero behavior change and `node:sqlite` is
+never imported (ADR-0028).
 
 We are the Socket/Chainguard wedge: **do not** try to replace npm. Resolve and
 serve real packages transparently; only attach signal.
@@ -165,28 +179,32 @@ Node + TypeScript, npm workspaces, Express 5, `tar` 7, `commander` 15, `yaml` 2
 (`@sentinel/core` only — pnpm/yarn-berry lockfile parsing), tests on
 `node:test` + `tsx`. Developed against **Node 24 (Active LTS)**; Node 22
 (Maintenance LTS) also supported — `engines.node` is `>=22`. Pin to current latest;
-don't downgrade majors without a reason.
+don't downgrade majors without a reason. `node:sqlite` (Phase 15's `HistoryDb`)
+is a Node built-in, not a dependency; it's opt-in via `SENTINEL_HISTORY_DB` and
+runs unflagged on Node 24, but Node 22 needs `--experimental-sqlite` if you turn
+it on.
 
 ## Build / test / run
 
 ```bash
 npm run build            # tsc --build (project references: core → proxy/cli)
-npm test                 # engine + end-to-end proxy: 398 tests on this host (396 pass, 2 skipped on darwin).
+npm test                 # engine + end-to-end proxy: 420 tests on this host (418 pass, 2 skipped on darwin).
                          # Skips are platform-gated enforcement: "non-darwin throws" skips on darwin
                          # (it verifies darwin-only behaviour), and the "no silent skip" CI guard skips
                          # off-CI. The BubblewrapSandbox enforcement suite and the Linux enforce-e2e tests
-                         # skip as describe-level blocks on darwin ("requires Linux") and are not in the 398
+                         # skip as describe-level blocks on darwin ("requires Linux") and are not in the 420
                          # count. Phase 10's violation-enforce e2e and the darwin-gated runtime-violation
                          # effect test (SeatbeltSandbox: "a denied credential read surfaces a confirmed
                          # runtime violation") RUN on darwin via Seatbelt, the same way the rest of the
-                         # Seatbelt effect suite does, and ARE in the 398 count.
+                         # Seatbelt effect suite does, and ARE in the 420 count.
                          # Phase 7's audit-tree, Phase 8/9's signature/provenance, Phase 10's
                          # classifyViolation/deny-set/violations-store, Phase 11's MCP/approval-request,
-                         # Phase 12's auth/authz-e2e, Phase 13's typosquat/dependency-confusion, and
-                         # Phase 14's lockfile/SBOM/integrity-cross-check tests are hermetic and
+                         # Phase 12's auth/authz-e2e, Phase 13's typosquat/dependency-confusion,
+                         # Phase 14's lockfile/SBOM/integrity-cross-check, and Phase 15's
+                         # history-db/write-through/endpoints/CLI-stats-history tests are hermetic and
                          # platform-neutral, so the darwin/Linux relationship from Phase 6 (Linux one
                          # test higher, one fewer skip) should hold, but hasn't been re-verified on
-                         # Linux CI since Phase 7/8/9/10/11/12/13/14 landed — confirm on the next Linux
+                         # Linux CI since Phase 7/8/9/10/11/12/13/14/15 landed — confirm on the next Linux
                          # CI run rather than trusting an extrapolated count here. Each platform's
                          # enforcement is verified on that platform (macOS dev host / ubuntu-latest CI).
 npm run demo             # offline malware-detection walkthrough
