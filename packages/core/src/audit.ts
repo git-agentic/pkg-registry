@@ -17,6 +17,7 @@ import type {
   PackageMeta,
   ReleaseContext,
 } from "./types.js";
+import type { Advisory } from "./advisory-corpus.js";
 
 export const ENGINE_VERSION = "0.1.0";
 
@@ -41,9 +42,10 @@ export function buildAudit(
     durationMs: number;
     baselineCapabilities?: Capability[];
     releaseContext?: ReleaseContext;
+    advisories?: Advisory[];
   } = { mode: "full", durationMs: 0 },
 ): Audit {
-  const input: AuditInput = { meta, files, mode: opts.mode, releaseContext: opts.releaseContext };
+  const input: AuditInput = { meta, files, mode: opts.mode, releaseContext: opts.releaseContext, advisories: opts.advisories };
   const ruleFindings = runRules(input);
   const capabilities = extractCapabilities(input);
   const capabilityDelta = opts.baselineCapabilities
@@ -83,6 +85,8 @@ export interface AuditTarballInput {
   /** Injectable clock (ISO) for trust-root staleness; defaults to now. */
   verifyAt?: string;
   releaseContext?: ReleaseContext;
+  /** Operator-supplied known-malicious advisories, merged with the bundled corpus (Phase 21). */
+  advisories?: Advisory[];
 }
 
 /** Extract + diff + run rules + capabilities → policy-independent {@link Audit}. */
@@ -131,7 +135,7 @@ export async function runAudit(input: AuditTarballInput): Promise<Audit> {
     provenanceIdentity: prov.identity,
   };
 
-  const audit = buildAudit(meta, extracted.files, { mode, durationMs: Date.now() - started, baselineCapabilities, releaseContext: input.releaseContext });
+  const audit = buildAudit(meta, extracted.files, { mode, durationMs: Date.now() - started, baselineCapabilities, releaseContext: input.releaseContext, advisories: input.advisories });
   if (integrityMismatch) {
     audit.findings.push({
       ruleId: "integrity-mismatch", category: "provenance", severity: "critical",

@@ -1,5 +1,6 @@
 import type { Rule } from "../types.js";
 import { installScriptsRule } from "./install-scripts.js";
+import { knownAdvisoryRule } from "./known-advisory.js";
 import { networkEgressRule } from "./network-egress.js";
 import { obfuscationRule } from "./obfuscation.js";
 import { provenanceRule } from "./provenance.js";
@@ -16,6 +17,7 @@ export const RULES: Rule[] = [
   provenanceRule,
   typosquatRule,
   releaseAnomalyRule,
+  knownAdvisoryRule,
 ];
 
 export {
@@ -26,4 +28,5 @@ export {
   provenanceRule,
   typosquatRule,
   releaseAnomalyRule,
+  knownAdvisoryRule,
 };
