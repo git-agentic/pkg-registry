@@ -68,5 +68,8 @@ describe("sentinel explain CLI (e2e)", () => {
     assert.match(stdout, /BLOCK|WARN/);
     assert.match(stdout, /pin to|known-good|1\.0\.0/);
     assert.match(stdout, /sentinel approve hijacked-lib 2\.0\.0/);
+    // Lock in that the per-finding ACTION line renders (the command's headline feature) —
+    // a distinctive action fragment not present in the last-known-good line above.
+    assert.match(stdout, /Confirm the egress is expected|approve the capability manifest|pin to the prior version/);
   });
 });
