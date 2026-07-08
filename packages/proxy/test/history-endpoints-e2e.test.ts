@@ -50,6 +50,22 @@ describe("observability endpoints (e2e)", () => {
     server.close(); history?.close();
   });
 
+  test("GET /-/history?limit=-1 is clamped (a negative limit must not become an unbounded SQLite LIMIT -1)", async () => {
+    const { server, base, history } = await boot(true); // seeds exactly 2 audits
+    const h = await (await fetch(`${base}/-/history?limit=-1`)).json() as { history: unknown[] };
+    assert.equal(h.history.length, 1); // clamped to 1; the bug would have dumped all 2 (unbounded)
+    server.close(); history?.close();
+  });
+
+  test("GET /-/history with a repeated (array) query param returns 200, not a 500", async () => {
+    const { server, base, history } = await boot(true);
+    const res = await fetch(`${base}/-/history?verdict=block&verdict=allow`); // Express parses to an array
+    assert.equal(res.status, 200); // array param coerced to undefined, not bound into node:sqlite
+    const h = await res.json() as { history: unknown[] };
+    assert.equal(h.history.length, 2); // verdict filter dropped → all rows
+    server.close(); history?.close();
+  });
+
   test("GET /-/violations/timeline returns timeline when enabled, and /-/violations still works", async () => {
     const { server, base, history } = await boot(true);
     const t = await (await fetch(`${base}/-/violations/timeline`)).json() as { timeline: unknown[] };

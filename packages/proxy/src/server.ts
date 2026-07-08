@@ -234,14 +234,17 @@ export function createServer(opts: ServerOptions) {
 
   app.get("/-/history", (req, res) => {
     if (!history) return disabled(res);
-    const q = req.query as { verdict?: string; name?: string; limit?: string; offset?: string };
+    const q = req.query;
+    // Coerce only string query params; an array/object param (?verdict=a&verdict=b,
+    // ?name[$ne]=) becomes undefined rather than reaching node:sqlite and 500ing.
+    const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
+    const numStr = str(q.limit);
+    // Clamp into [1, 500]: Math.max floors a negative/zero, since SQLite LIMIT -1 = unbounded.
+    const limit = numStr ? Math.max(1, Math.min(Number(numStr) || 50, 500)) : 50;
+    const offStr = str(q.offset);
+    const offset = offStr ? Math.max(0, Number(offStr) || 0) : 0;
     res.json({
-      history: history.history({
-        verdict: q.verdict,
-        name: q.name,
-        limit: q.limit ? Math.min(Number(q.limit) || 50, 500) : 50,
-        offset: q.offset ? Number(q.offset) || 0 : 0,
-      }),
+      history: history.history({ verdict: str(q.verdict), name: str(q.name), limit, offset }),
     });
   });
 
