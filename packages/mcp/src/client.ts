@@ -1,4 +1,4 @@
-import type { AuditReport } from "@sentinel/core";
+import type { AuditReport, Remediation } from "@sentinel/core";
 
 export class ProxyError extends Error {
   constructor(message: string, readonly status?: number) {
@@ -18,6 +18,13 @@ export interface ManifestResponse {
   approvalRequired: AuditReport["capabilities"];
   approvalState: string;
   inheritedFrom: string | null;
+}
+
+/** Shape of the /-/explain/:pkg/:version response (Phase 18 Task 2). */
+export interface ExplainResult {
+  report: AuditReport;
+  remediation: Remediation;
+  lastKnownGood: { version: string; score: number } | null;
 }
 
 export interface ViolationRecordDTO {
@@ -81,6 +88,10 @@ export class ProxyClient {
 
   async auditTree(packages: { name: string; version: string }[]): Promise<{ aggregate: { verdict: string; gated: boolean; counts: Record<string, number> }; packages: unknown[] }> {
     return this.postJson(`/-/audit-tree`, { packages });
+  }
+
+  async explain(pkg: string, version: string): Promise<ExplainResult> {
+    return this.getJson<ExplainResult>(`/-/explain/${encodeURIComponent(pkg)}/${encodeURIComponent(version)}`);
   }
 
   async violations(): Promise<ViolationRecordDTO[]> {

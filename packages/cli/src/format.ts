@@ -1,4 +1,4 @@
-import type { AuditReport, Capability, CapabilityKind, Severity, Verdict, TreeAuditResult } from "@sentinel/core";
+import type { AuditReport, Capability, CapabilityKind, Remediation, Severity, Verdict, TreeAuditResult } from "@sentinel/core";
 
 const C = {
   reset: "\x1b[0m", bold: "\x1b[1m", dim: "\x1b[2m",
@@ -217,5 +217,33 @@ export function formatHistory(rows: HistoryRow[]): string {
     if (r.topFinding) L.push(c(C.gray, `         ${r.topFinding}`));
   }
   L.push("");
+  return L.join("\n");
+}
+
+export interface ExplainResult {
+  report: AuditReport;
+  remediation: Remediation;
+  lastKnownGood: { version: string; score: number } | null;
+}
+
+/** Verdict explanation + per-finding remediation, suggested known-good version, and waiver command. */
+export function formatExplain(r: ExplainResult): string {
+  const L: string[] = ["", `  ${r.report.meta.name}@${r.report.meta.version}  —  ${c(verdictColor[r.report.verdict] ?? C.gray, r.report.verdict.toUpperCase())}  ${r.report.score}/100`, ""];
+  L.push(c(C.bold, "  " + r.remediation.guidance));
+  L.push("");
+  for (const it of r.remediation.items) {
+    L.push(`  • ${c(C.bold, it.ruleId)} (${it.severity}) — ${it.summary}`);
+    L.push(`      ${c(C.gray, it.action)}`);
+  }
+  if (r.remediation.items.length) L.push("");
+  if (r.lastKnownGood) {
+    L.push(c(C.green, `  ✓ suggested: pin to ${r.report.meta.name}@${r.lastKnownGood.version} — the most recent clean release (${r.lastKnownGood.score}/100).`));
+    L.push("");
+  }
+  if (r.remediation.waiver) {
+    L.push("  To waive after review:");
+    L.push(`      ${r.remediation.waiver.approveCommand}`);
+    L.push("");
+  }
   return L.join("\n");
 }

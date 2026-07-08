@@ -1,4 +1,5 @@
 import type { TreeAuditResult, TreePackageRow } from "@sentinel/core";
+import { remediationHint } from "@sentinel/core";
 
 export const REPORT_MARKER = "<!-- sentinel-report -->";
 
@@ -23,12 +24,17 @@ export function renderPrComment(result: TreeAuditResult, opts: { now: string }):
   L.push(`_provenance: ${pv.verified} verified · ${pv.invalid} invalid · ${pv.absent} absent · ${pv.unknown} unknown_`);
   L.push("");
   if (offenders.length) {
-    L.push("| package | verdict | score | finding |");
-    L.push("| --- | --- | --- | --- |");
+    L.push("| package | verdict | score | finding | how to fix |");
+    L.push("| --- | --- | --- | --- | --- |");
     for (const p of offenders) {
       const finding = p.error ?? p.topFinding ?? "";
-      L.push(`| ${escapePipe(`${p.name}@${p.version}`)} | ${p.status} | ${scoreCell(p)} | ${escapePipe(finding)} |`);
+      const hint = p.topFindingRuleId ? remediationHint(p.topFindingRuleId) : "";
+      L.push(
+        `| ${escapePipe(`${p.name}@${p.version}`)} | ${p.status} | ${scoreCell(p)} | ${escapePipe(finding)} | ${escapePipe(hint)} |`,
+      );
     }
+    L.push("");
+    L.push("▶ Run `sentinel explain <package> <version>` for a suggested safe version and a ready waiver.");
     L.push("");
   } else {
     L.push("_No flagged packages._");

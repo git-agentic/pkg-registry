@@ -11,9 +11,9 @@ const result: TreeAuditResult = {
     integrityMismatch: 0,
   },
   packages: [
-    { name: "evil-pkg", version: "2.0.0", status: "block", score: 10, topFinding: "changed hands: possible takeover", error: null, provenance: "absent", integrityMismatch: false },
-    { name: "warny", version: "1.2.0", status: "warn", score: 60, topFinding: "network egress", error: null, provenance: "absent", integrityMismatch: false },
-    { name: "fine", version: "1.0.0", status: "allow", score: 100, topFinding: null, error: null, provenance: "verified", integrityMismatch: false },
+    { name: "evil-pkg", version: "2.0.0", status: "block", score: 10, topFinding: "changed hands: possible takeover", topFindingRuleId: "release-anomaly", error: null, provenance: "absent", integrityMismatch: false },
+    { name: "warny", version: "1.2.0", status: "warn", score: 60, topFinding: "network egress", topFindingRuleId: "network-egress", error: null, provenance: "absent", integrityMismatch: false },
+    { name: "fine", version: "1.0.0", status: "allow", score: 100, topFinding: null, topFindingRuleId: null, error: null, provenance: "verified", integrityMismatch: false },
   ],
 };
 
@@ -46,11 +46,20 @@ describe("renderPrComment", () => {
         integrityMismatch: 0,
       },
       packages: [
-        { name: "evil|name", version: "1.0.0", status: "block", score: 5, topFinding: "malicious", error: null, provenance: "absent", integrityMismatch: false },
+        { name: "evil|name", version: "1.0.0", status: "block", score: 5, topFinding: "malicious", topFindingRuleId: null, error: null, provenance: "absent", integrityMismatch: false },
       ],
     };
     const evilMd = renderPrComment(evilResult, { now: "2026-07-08T00:00:00Z" });
     assert.match(evilMd, /evil\\\|name@1\.0\.0/);
     assert.equal(evilMd.includes("| evil|name@"), false);
+  });
+  test("shows a remediation hint per offender and an explain pointer", () => {
+    const withRule: TreeAuditResult = {
+      aggregate: { verdict: "block", gated: true, counts: { allow: 0, warn: 0, block: 1, error: 0 }, provenance: { verified: 0, invalid: 0, absent: 1, unknown: 0 }, integrityMismatch: 0 },
+      packages: [{ name: "evil", version: "2.0.0", status: "block", score: 10, topFinding: "changed hands", topFindingRuleId: "release-anomaly", error: null, provenance: "absent", integrityMismatch: false }],
+    };
+    const md = renderPrComment(withRule, { now: "2026-07-08T00:00:00Z" });
+    assert.match(md, /pin to|known-good|earlier version/i); // release-anomaly hint text
+    assert.match(md, /sentinel explain/);
   });
 });

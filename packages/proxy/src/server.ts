@@ -9,6 +9,7 @@ import {
   aggregateTree,
   treeGateOf,
   NPM_SIGNING_KEYS,
+  remediate,
   type AuditReport,
   type EnterprisePolicy,
   type PackageMeta,
@@ -235,6 +236,44 @@ export function createServer(opts: ServerOptions) {
     }
   });
 
+  /** Newest prior version (semver, strictly older, most-recent 10) that audits `allow`.
+   *  Claimed names are authoritative private — mirrors auditVersion/the packument route:
+   *  NEVER consult public upstream for a claimed name (invariant #7 — enumerating a
+   *  claimed name against public npm is dependency-confusion reconnaissance). */
+  async function findLastKnownGood(pkg: string, version: string): Promise<{ version: string; score: number } | null> {
+    let priors: string[];
+    try {
+      const allVersions = isClaimed(pkg, enterprisePolicy)
+        ? privateStore.versions(pkg)
+        : Object.keys((await upstream.getPackument(pkg)).versions);
+      priors = allVersions.filter((v) => cmpSemver(v, version) < 0).sort(cmpSemver).reverse().slice(0, 10);
+    } catch {
+      return null;
+    }
+    for (const v of priors) {
+      try {
+        const { report } = await auditVersion(pkg, v);
+        if (report.verdict === "allow") return { version: v, score: report.score };
+      } catch { /* skip an unauditeable prior version */ }
+    }
+    return null;
+  }
+
+  // Explain a verdict + suggest remediation + walk back to the last known-good release.
+  // Off the inline gate (invariant #3) — this route is expected to be slower.
+  app.get(/^\/-\/explain\/(.+)\/([^/]+)$/, async (req, res) => {
+    const pkg = decodeURIComponent(req.params[0] ?? "");
+    const version = req.params[1] ?? "";
+    try {
+      const { report } = await auditVersion(pkg, version);
+      const remediation = remediate(report);
+      const lastKnownGood = await findLastKnownGood(pkg, version);
+      res.json({ report, remediation, lastKnownGood });
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+
   app.get("/-/audits", (_req, res) => {
     res.json({ stats: store.stats(), audits: store.recent(50).map((s) => s.report) });
   });
@@ -308,12 +347,13 @@ export function createServer(opts: ServerOptions) {
             topFinding: mismatch
               ? `lockfile-integrity-mismatch: lockfile pins ${co.integrity!.slice(0, 20)}… but the registry serves a different hash`
               : (report.findings[0]?.message ?? null),
+            topFindingRuleId: report.findings[0]?.ruleId ?? null,
             error: null, provenance: report.meta.provenance, integrityMismatch: mismatch,
           };
         } catch (err) {
           return {
             name: co.name, version: co.version, status: "error" as const,
-            score: null, topFinding: null, error: (err as Error)?.message ?? "audit failed",
+            score: null, topFinding: null, topFindingRuleId: null, error: (err as Error)?.message ?? "audit failed",
             provenance: null, integrityMismatch: false,
           };
         }

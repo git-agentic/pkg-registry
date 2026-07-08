@@ -67,3 +67,4 @@ export {
 export { parseLockfile, parseYarnLock, parsePnpmLock, parseAnyLockfile, type Coordinate } from "./lockfile.js";
 export { signToken, verifyToken, type Role, type TokenPayload } from "./auth.js";
 export { toCycloneDX, type CycloneDXBom, type CycloneDXComponent } from "./sbom.js";
+export { remediate, remediationHint, type Remediation, type RemediationItem, type WaiverTemplate } from "./remediation.js";

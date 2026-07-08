@@ -94,6 +94,16 @@ describe("MCP tools", () => {
     assert.ok(Array.isArray((r.structured as { violations: unknown[] }).violations));
   });
 
+  test("sentinel_explain returns the structured {report, remediation, lastKnownGood} shape", async () => {
+    const r = await byName("sentinel_explain").handler({ package: "hijacked-lib", version: "2.0.0" }, client);
+    const s = r.structured as { report: { verdict: string }; remediation: { items: unknown[]; guidance: string }; lastKnownGood: { version: string } | null };
+    assert.ok(s.report);
+    assert.ok(s.remediation);
+    assert.ok(s.remediation.items.length > 0);
+    assert.ok(s.lastKnownGood && typeof s.lastKnownGood.version === "string");
+    assert.match(r.text, /Suggested safe version/);
+  });
+
   test("sentinel_request_approval records a pending request (does NOT approve)", async () => {
     const r = await byName("sentinel_request_approval").handler({ package: "net-fetch-lite", version: "1.0.0", reason: "need fetch" }, client);
     assert.match(r.text, /request/i);
