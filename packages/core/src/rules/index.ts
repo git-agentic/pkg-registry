@@ -3,6 +3,7 @@ import { installScriptsRule } from "./install-scripts.js";
 import { networkEgressRule } from "./network-egress.js";
 import { obfuscationRule } from "./obfuscation.js";
 import { provenanceRule } from "./provenance.js";
+import { releaseAnomalyRule } from "./release-anomaly.js";
 import { secretExfilRule } from "./secret-exfil.js";
 import { typosquatRule } from "./typosquat.js";
 
@@ -14,6 +15,7 @@ export const RULES: Rule[] = [
   obfuscationRule,
   provenanceRule,
   typosquatRule,
+  releaseAnomalyRule,
 ];
 
 export {
@@ -23,4 +25,5 @@ export {
   obfuscationRule,
   provenanceRule,
   typosquatRule,
+  releaseAnomalyRule,
 };
