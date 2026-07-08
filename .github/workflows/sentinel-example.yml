@@ -1,0 +1,14 @@
+name: Sentinel
+on: { pull_request: {} }
+permissions: { contents: read, pull-requests: write }
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Sentinel audit (enforce)
+        uses: ./
+        with:
+          fail-on: block
+      # Observe-only onboarding variant:
+      # with: { fail-on: none }
