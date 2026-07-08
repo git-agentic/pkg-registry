@@ -11,7 +11,9 @@ function env(name: string, fallback = ""): string {
 function resolvePolicy(): EnterprisePolicy {
   const file = env("INPUT_POLICY");
   if (!file) return DEFAULT_POLICY;
-  const sig = env("INPUT_POLICY_SIG", `${file}.sig`);
+  // Falsy fallback (not `??`): action.yml always injects INPUT_POLICY_SIG, as "" when the
+  // `policy-sig` input is defaulted — so an empty string must fall through to `<policy>.sig`.
+  const sig = env("INPUT_POLICY_SIG") || `${file}.sig`;
   const pub = env("INPUT_POLICY_PUBKEY");
   if (!pub) throw new Error("INPUT_POLICY requires INPUT_POLICY_PUBKEY (path to the signer's public key PEM)");
   return loadPolicy({ file, sig, publicKeyPem: readFileSync(pub, "utf8") }).policy;
