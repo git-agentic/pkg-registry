@@ -2,6 +2,7 @@
 
 export * from "./types.js";
 export { score, severityRank } from "./score.js";
+export { lintPolicy, type LintFinding } from "./policy-lint.js";
 export {
   DEFAULT_POLICY,
   policyHashOf,
