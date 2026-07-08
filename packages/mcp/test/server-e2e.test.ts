@@ -53,7 +53,7 @@ test("tools are registered and round-trip over the transport", async () => {
   const names = tools.tools.map((t) => t.name).sort();
   assert.deepEqual(names, [
     "sentinel_audit", "sentinel_audit_tree", "sentinel_capabilities",
-    "sentinel_check_provenance", "sentinel_list_violations", "sentinel_request_approval",
+    "sentinel_check_provenance", "sentinel_explain", "sentinel_list_violations", "sentinel_request_approval",
   ].sort());
 
   const res = await mcp.callTool({ name: "sentinel_audit", arguments: { package: "color-stream", version: "1.4.1" } });

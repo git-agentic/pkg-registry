@@ -94,6 +94,17 @@ export const TOOLS: ToolDef[] = [
     },
   },
   {
+    name: "sentinel_explain",
+    description: "Explain a package version's verdict and how to remediate it: per-finding actions, a suggested known-good earlier version, and a ready approval-request payload.",
+    inputSchema: { package: z.string(), version: z.string() },
+    async handler(args, client) {
+      const result = await client.explain(args.package as string, args.version as string);
+      const lines = [result.remediation.guidance, ...result.remediation.items.map((i) => `- ${i.ruleId}: ${i.action}`)];
+      if (result.lastKnownGood) lines.push(`Suggested safe version: ${result.lastKnownGood.version}`);
+      return { text: lines.join("\n"), structured: result };
+    },
+  },
+  {
     name: "sentinel_request_approval",
     description: "Request that a human approve installing a package whose capabilities need approval. Records a pending request; it does NOT grant approval.",
     inputSchema: { package: z.string(), version: z.string().optional(), reason: z.string() },
