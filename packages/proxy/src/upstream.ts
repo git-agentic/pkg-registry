@@ -20,6 +20,8 @@ export interface UpstreamPackument {
   doc: PackumentDoc;
   /** Normalised per-version metadata used by the audit engine. */
   versions: Record<string, UpstreamVersion>;
+  /** Per-version publish timestamps from the packument `time` object (Phase 16). */
+  time?: Record<string, string>;
 }
 
 export interface PackumentDoc {
@@ -86,7 +88,10 @@ export class NpmUpstream implements Upstream {
     for (const [v, m] of Object.entries(doc.versions ?? {})) {
       versions[v] = normalizeVersion(m);
     }
-    return { doc, versions };
+    const time = (doc.time && typeof doc.time === "object")
+      ? Object.fromEntries(Object.entries(doc.time as Record<string, unknown>).filter(([, v]) => typeof v === "string") as [string, string][])
+      : undefined;
+    return { doc, versions, time };
   }
 
   async getTarball(pkg: string, version: string): Promise<Buffer> {
@@ -118,6 +123,8 @@ interface RegistryDoc {
     {
       name: string;
       author: string | null;
+      /** Per-version publish timestamps (Phase 16); absent on older fixture registries. */
+      time?: Record<string, string>;
       versions: Record<
         string,
         {
@@ -183,7 +190,7 @@ export class LocalFixtureUpstream implements Upstream {
       if (cmpSemver(v, latest) > 0) latest = v;
     }
     distTags.latest = latest;
-    return { doc: { name: pkg, "dist-tags": distTags, versions: docVersions }, versions };
+    return { doc: { name: pkg, "dist-tags": distTags, versions: docVersions }, versions, time: p.time };
   }
 
   async getTarball(pkg: string, version: string): Promise<Buffer> {

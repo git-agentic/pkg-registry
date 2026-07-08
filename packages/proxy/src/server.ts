@@ -16,6 +16,7 @@ import {
   type TreeAuditResult,
   type NpmSigningKey,
   type ProvenanceTrustMaterial,
+  type ReleaseContext,
 } from "@sentinel/core";
 import { AuditStore } from "./store.js";
 import {
@@ -23,6 +24,7 @@ import {
   HttpError,
   previousVersion,
   type Upstream,
+  type UpstreamPackument,
 } from "./upstream.js";
 import { ApprovalStore, type Approval } from "./approvals.js";
 import { reconcileApproval, type ApprovalState } from "./reconcile.js";
@@ -66,6 +68,19 @@ export interface ServerOptions {
 }
 
 const TARBALL_RE = /^(.+)\/-\/([^/]+\.tgz)$/;
+
+/** Derive the release-vs-history context for a version from its packument (Phase 16). Pure. */
+export function buildReleaseContext(pm: UpstreamPackument, version: string): ReleaseContext {
+  const prev = previousVersion(Object.keys(pm.versions), version);
+  const rc: ReleaseContext = { versionCount: Object.keys(pm.versions).length };
+  if (pm.time?.[version]) rc.currentPublishedAt = pm.time[version];
+  if (prev) {
+    rc.previousVersion = prev;
+    rc.previousMaintainers = pm.versions[prev]?.maintainers;
+    if (pm.time?.[prev]) rc.previousPublishedAt = pm.time[prev];
+  }
+  return rc;
+}
 
 /** Run `fn` over `items` with at most `limit` in flight; preserves input order. */
 async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
@@ -139,10 +154,12 @@ export function createServer(opts: ServerOptions) {
       integrity: vmeta.integrity ?? actualIntegrity,
     };
 
+    const releaseContext = buildReleaseContext(pm, version);
     const audit = await runAudit({
       meta, tarball, baselineTarball,
       signatures: vmeta.signatures, hasProvenance: vmeta.hasProvenance,
       attestations, signingKeys, trustMaterial: opts.trustMaterial,
+      releaseContext,
     });
     const report = score(audit, enterprisePolicy, policyHash);
     store.put(report);
