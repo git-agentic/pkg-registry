@@ -295,6 +295,53 @@ There is no auto-approve or clear-quarantine tool, and none is planned — see
 - A `POST /-/approvals` decision for an integrity auto-clears its pending
   request.
 
+## GitHub Action (Phase 17)
+
+`@sentinel/action` (bin `sentinel-ci`) is a self-contained on-ramp into pull
+requests — it needs no separately-running proxy. `runCi` self-boots the
+proxy in-process against real npm, audits your lockfile through the same
+`/-/audit-tree` route the CLI uses, writes a CycloneDX SBOM, and posts the
+verdict to the PR.
+
+```yaml
+# .github/workflows/sentinel.yml
+name: Sentinel
+on: { pull_request: {} }
+permissions: { contents: read, pull-requests: write }
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./   # this action is not yet published to the Marketplace
+        with:
+          fail-on: block
+```
+
+**Inputs:**
+
+| Input | Default | Description |
+|---|---|---|
+| `lockfile` | auto-detect | Path to `package-lock.json` / `yarn.lock` / `pnpm-lock.yaml` |
+| `policy` | built-in `DEFAULT_POLICY` | Path to a signed enterprise policy file |
+| `sbom-path` | `sentinel-sbom.json` | Where to write the CycloneDX SBOM |
+| `fail-on` | `block` | `block` \| `warn` \| `none` — the verdict level that fails the check |
+| `comment` | `true` | Post/update a PR comment with the verdict |
+| `working-directory` | `.` | Directory to audit |
+
+**Outputs:** `verdict`, `gated`, `blocked`, `warned`, `errored`, `sbom-path`.
+
+Every run uploads the SBOM as a build artifact (`if: always()`, so it's
+attached even on a blocked run) and, on a `pull_request` event, posts or
+updates a single PR comment — found by a hidden `<!-- sentinel-report -->`
+marker so re-runs edit the same comment instead of piling up new ones — with
+the verdict, per-package findings table, and provenance summary.
+
+**Onboarding path:** start with `fail-on: none` — the audit runs, the SBOM
+uploads, and the PR comment appears, but nothing blocks a merge — then move
+to `fail-on: warn` and finally the `fail-on: block` default once the team is
+ready to enforce. See [ADR-0030](./docs/adr/0030-ci-native-github-action.md).
+
 ---
 
 ## How the malware demo works (and why it's synthetic)
@@ -334,6 +381,7 @@ packages/
   proxy/   @sentinel/proxy  Express registry proxy, pluggable upstream, audit store, dashboard
   cli/     @sentinel/cli    pre-install verdicts + registry-redirected npm/npx
   mcp/     @sentinel/mcp    sentinel-mcp: stdio MCP server, thin client to the proxy (Phase 11)
+  action/  @sentinel/action sentinel-ci: self-boots the proxy for GitHub Actions (Phase 17)
 fixtures/  benign + synthetic-malicious packages; make-fixtures.ts packs real .tgz tarballs
 scripts/   make-fixtures.ts, demo.ts
 ARCHITECTURE.md   full design   ·   CLAUDE.md   working agreement for this repo
