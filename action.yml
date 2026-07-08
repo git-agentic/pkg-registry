@@ -1,0 +1,67 @@
+name: "Sentinel dependency audit"
+description: "Audit the dependency tree, upload a CycloneDX SBOM, comment the verdict, and gate the PR."
+author: "Sentinel"
+branding: { icon: "shield", color: "purple" }
+inputs:
+  lockfile: { description: "Path to the lockfile (default: auto-detect)", required: false, default: "" }
+  policy: { description: "Path to a signed enterprise policy file (default: built-in)", required: false, default: "" }
+  policy-pubkey: { description: "Path to the policy signer's public key PEM (required with `policy`)", required: false, default: "" }
+  policy-sig: { description: "Path to the policy signature file (default: <policy>.sig)", required: false, default: "" }
+  omit-dev: { description: "Omit dev dependencies from the audit", required: false, default: "false" }
+  sbom-path: { description: "Where to write the CycloneDX SBOM", required: false, default: "sentinel-sbom.json" }
+  fail-on: { description: "block | warn | none — the verdict level that fails the check", required: false, default: "block" }
+  comment: { description: "Post a PR comment with the verdict", required: false, default: "true" }
+  working-directory: { description: "Directory to audit", required: false, default: "." }
+outputs:
+  verdict: { description: "Aggregate verdict (allow|warn|block)", value: "${{ steps.sentinel.outputs.verdict }}" }
+  gated: { description: "Whether the tree was gated", value: "${{ steps.sentinel.outputs.gated }}" }
+  blocked: { description: "Count of blocked packages", value: "${{ steps.sentinel.outputs.blocked }}" }
+  warned: { description: "Count of warned packages", value: "${{ steps.sentinel.outputs.warned }}" }
+  errored: { description: "Count of errored packages", value: "${{ steps.sentinel.outputs.errored }}" }
+  sbom-path: { description: "Path to the written SBOM", value: "${{ steps.sentinel.outputs.sbom-path }}" }
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with: { node-version: "24" }
+    - name: Install & build Sentinel
+      shell: bash
+      run: |
+        npm ci --prefix "${{ github.action_path }}"
+        npm run build --prefix "${{ github.action_path }}"
+    - name: Run Sentinel audit
+      id: sentinel
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        INPUT_LOCKFILE: ${{ inputs.lockfile }}
+        INPUT_POLICY: ${{ inputs.policy }}
+        INPUT_POLICY_PUBKEY: ${{ inputs.policy-pubkey }}
+        INPUT_POLICY_SIG: ${{ inputs.policy-sig }}
+        INPUT_OMIT_DEV: ${{ inputs.omit-dev }}
+        INPUT_SBOM_PATH: ${{ inputs.sbom-path }}
+        INPUT_FAIL_ON: ${{ inputs.fail-on }}
+        INPUT_WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        SENTINEL_COMMENT_BODY: ${{ runner.temp }}/sentinel-comment.md
+      run: node "${{ github.action_path }}/packages/action/dist/index.js"
+    - name: Upload SBOM
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: sentinel-sbom
+        path: ${{ inputs.working-directory }}/${{ inputs.sbom-path }}
+        if-no-files-found: ignore
+    - name: Comment verdict on PR
+      if: always() && inputs.comment == 'true' && github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const path = `${process.env.RUNNER_TEMP}/sentinel-comment.md`;
+          if (!fs.existsSync(path)) return;
+          const body = fs.readFileSync(path, 'utf8');
+          const marker = '<!-- sentinel-report -->';
+          const { data: comments } = await github.rest.issues.listComments({ owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number });
+          const existing = comments.find((c) => c.body && c.body.includes(marker));
+          if (existing) await github.rest.issues.updateComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: existing.id, body });
+          else await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number, body });

@@ -14,7 +14,8 @@
     "packages/proxy",
     "packages/sandbox",
     "packages/cli",
-    "packages/mcp"
+    "packages/mcp",
+    "packages/action"
   ],
   "scripts": {
     "build": "tsc --build",

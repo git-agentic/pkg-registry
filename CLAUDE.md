@@ -137,6 +137,21 @@ per-version `maintainers`) — no new network call. All four findings are
 only immutable packument data (no `Date.now()`/wall-clock — invariant #1
 untouched) and are inert without a `releaseContext` (ADR-0029).
 
+Phase 17 adds a **CI-native GitHub Action**: a new `@sentinel/action`
+workspace (bin `sentinel-ci`) whose `runCi` self-boots the proxy in-process
+with an injected upstream (`NpmUpstream` in production, `LocalFixtureUpstream`
+in tests — never a network call in the test suite), runs the existing
+`/-/audit-tree` flow against the caller's lockfile, writes a CycloneDX SBOM
+and GitHub-native outputs/step-summary/annotations, and exits per `fail-on`
+(`block` default, `warn`, or `none` for an observe-only onboarding path). A
+thin composite `action.yml` uploads the SBOM as a build artifact and posts an
+idempotent PR comment found by a `<!-- sentinel-report -->` marker. A
+root-cause fix — entrypoint-guarding `packages/proxy/src/index.ts`'s `main()`
+the same way `@sentinel/mcp`'s bin already is — made the self-boot
+import-safe: importing `@sentinel/proxy` for its exports no longer boots a
+second server as a side effect. The Action only runs the audit; scoring is
+untouched (ADR-0030).
+
 We are the Socket/Chainguard wedge: **do not** try to replace npm. Resolve and
 serve real packages transparently; only attach signal.
 
@@ -192,39 +207,41 @@ serve real packages transparently; only attach signal.
 
 ## Stack & versions (June 2026)
 
-Node + TypeScript, npm workspaces, Express 5, `tar` 7, `commander` 15, `yaml` 2
-(`@sentinel/core` only — pnpm/yarn-berry lockfile parsing), tests on
-`node:test` + `tsx`. Developed against **Node 24 (Active LTS)**; Node 22
-(Maintenance LTS) also supported — `engines.node` is `>=22`. Pin to current latest;
-don't downgrade majors without a reason. `node:sqlite` (Phase 15's `HistoryDb`)
-is a Node built-in, not a dependency; it's opt-in via `SENTINEL_HISTORY_DB` and
-runs unflagged on Node 24, but Node 22 needs `--experimental-sqlite` if you turn
-it on.
+Node + TypeScript, npm workspaces (`core`, `proxy`, `sandbox`, `cli`, `mcp`,
+`action` — the last being Phase 17's `@sentinel/action`, bin `sentinel-ci`),
+Express 5, `tar` 7, `commander` 15, `yaml` 2 (`@sentinel/core` only —
+pnpm/yarn-berry lockfile parsing), tests on `node:test` + `tsx`. Developed
+against **Node 24 (Active LTS)**; Node 22 (Maintenance LTS) also supported —
+`engines.node` is `>=22`. Pin to current latest; don't downgrade majors
+without a reason. `node:sqlite` (Phase 15's `HistoryDb`) is a Node built-in,
+not a dependency; it's opt-in via `SENTINEL_HISTORY_DB` and runs unflagged on
+Node 24, but Node 22 needs `--experimental-sqlite` if you turn it on.
 
 ## Build / test / run
 
 ```bash
 npm run build            # tsc --build (project references: core → proxy/cli)
-npm test                 # engine + end-to-end proxy: 442 tests on this host (440 pass, 2 skipped on darwin).
+npm test                 # engine + end-to-end proxy: 454 tests on this host (452 pass, 2 skipped on darwin).
                          # Skips are platform-gated enforcement: "non-darwin throws" skips on darwin
                          # (it verifies darwin-only behaviour), and the "no silent skip" CI guard skips
                          # off-CI. The BubblewrapSandbox enforcement suite and the Linux enforce-e2e tests
-                         # skip as describe-level blocks on darwin ("requires Linux") and are not in the 442
+                         # skip as describe-level blocks on darwin ("requires Linux") and are not in the 454
                          # count. Phase 10's violation-enforce e2e and the darwin-gated runtime-violation
                          # effect test (SeatbeltSandbox: "a denied credential read surfaces a confirmed
                          # runtime violation") RUN on darwin via Seatbelt, the same way the rest of the
-                         # Seatbelt effect suite does, and ARE in the 442 count.
+                         # Seatbelt effect suite does, and ARE in the 454 count.
                          # Phase 7's audit-tree, Phase 8/9's signature/provenance, Phase 10's
                          # classifyViolation/deny-set/violations-store, Phase 11's MCP/approval-request,
                          # Phase 12's auth/authz-e2e, Phase 13's typosquat/dependency-confusion,
                          # Phase 14's lockfile/SBOM/integrity-cross-check, Phase 15's
-                         # history-db/write-through/endpoints/CLI-stats-history, and Phase 16's
-                         # release-anomaly/capability-novelty/release-anomaly-e2e tests are hermetic and
-                         # platform-neutral, so the darwin/Linux relationship from Phase 6 (Linux one
-                         # test higher, one fewer skip) should hold, but hasn't been re-verified on
-                         # Linux CI since Phase 7/8/9/10/11/12/13/14/15/16 landed — confirm on the next
-                         # Linux CI run rather than trusting an extrapolated count here. Each platform's
-                         # enforcement is verified on that platform (macOS dev host / ubuntu-latest CI).
+                         # history-db/write-through/endpoints/CLI-stats-history, Phase 16's
+                         # release-anomaly/capability-novelty/release-anomaly-e2e, and Phase 17's
+                         # action run/report/bin-e2e/action-yml tests are hermetic and platform-neutral,
+                         # so the darwin/Linux relationship from Phase 6 (Linux one test higher, one
+                         # fewer skip) should hold, but hasn't been re-verified on Linux CI since
+                         # Phase 7/8/9/10/11/12/13/14/15/16/17 landed — confirm on the next Linux CI run
+                         # rather than trusting an extrapolated count here. Each platform's enforcement
+                         # is verified on that platform (macOS dev host / ubuntu-latest CI).
 npm run demo             # offline malware-detection walkthrough
 node packages/proxy/dist/index.js   # run the proxy (see README for env vars)
 ```

@@ -550,6 +550,56 @@ deferred.
   private-store package, or an upstream without `time`) ⇒ both the rule and
   the helper return `[]`.
 
+### 3.16 CI-native GitHub Action (Phase 17, ADR-0030)
+
+Phases 1–16 gate installs and lockfiles, but only when a human or CI job
+already knows to run `sentinel audit-tree` against a proxy someone started.
+Phase 17 adds a self-contained on-ramp into GitHub PRs: a new
+**`@sentinel/action`** workspace (`packages/action`, bin `sentinel-ci`) that
+needs nothing already running.
+
+- **`runCi(opts)`** (`packages/action/src/run.ts`) self-boots
+  `createServer` in-process on port `0` with an **injected `Upstream`**
+  (`NpmUpstream` in production, `LocalFixtureUpstream` in tests — the same
+  seam every other package's tests already use) rather than depending on a
+  separately-started proxy. It parses the lockfile with §3.8's
+  `parseAnyLockfile`, `POST`s the coordinates to the same `/-/audit-tree`
+  route the CLI uses, writes a CycloneDX SBOM via §3.8's `toCycloneDX`
+  (injected `now`), and renders a Markdown PR report
+  (`renderPrComment`, `packages/action/src/report.ts`, starting with a
+  `<!-- sentinel-report -->` marker for idempotent updates). It always
+  closes the self-booted server in a `finally` block.
+- **GitHub-native surfacing**, all defensive (absent env ⇒ falls back to
+  stdout): `$GITHUB_OUTPUT` (`verdict`/`gated`/`blocked`/`warned`/
+  `errored`/`sbom-path`), `$GITHUB_STEP_SUMMARY`, a comment body written to
+  `SENTINEL_COMMENT_BODY`, and `::error::`/`::warning::` annotations per
+  offending package.
+- **`fail-on` (`block` default, `warn`, `none`) drives the exit code**, not
+  the raw verdict alone — `exitFor` also honors the server-side `gated`
+  flag (the `treeGate`/`--fail-on-error` rollup), so `none` gives an
+  observe-only onboarding path that never fails the check.
+- **`sentinel-ci`** (`packages/action/src/index.ts`) is a thin,
+  env-driven bin (`INPUT_LOCKFILE`/`INPUT_POLICY`/`INPUT_SBOM_PATH`/
+  `INPUT_FAIL_ON`/`INPUT_OMIT_DEV`/`INPUT_WORKING_DIRECTORY`), loading a
+  signed policy through core's existing `loadPolicy` (falling back to
+  `DEFAULT_POLICY`).
+- **A thin composite `action.yml`** (repo root) does only the
+  GitHub-specific work: `setup-node` → install/build → run the bin →
+  `upload-artifact` for the SBOM (`if: always()`) → `github-script` to
+  post or update a PR comment found by the `<!-- sentinel-report -->`
+  marker instead of always appending a new one.
+  `.github/workflows/sentinel-example.yml` shows minimal usage.
+- **The proxy entrypoint-guard root fix.** `packages/proxy/src/index.ts`'s
+  `main()` is now guarded the same way `@sentinel/mcp`'s bin already is
+  (`isEntrypoint()` comparing `import.meta.url` to the resolved
+  `process.argv[1]`) — importing `@sentinel/proxy` for its exports no
+  longer boots a listening server as a side effect. This is what makes
+  `runCi`'s self-boot import-safe.
+
+The Action only *runs* the existing `/-/audit-tree` scoring path; it adds
+no rule, weight, or verdict logic, and no package code executes anywhere in
+this flow (invariant #1 untouched; ADR-0030).
+
 ---
 
 ## 4. The audit engine (`@sentinel/core`)
