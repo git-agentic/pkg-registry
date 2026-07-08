@@ -88,7 +88,7 @@ export class HistoryDb {
   }
 
   summary(): HistorySummary {
-    const n = (col: string, val: string, table = "audit_events") =>
+    const n = (col: "verdict" | "signature" | "provenance", val: string, table = "audit_events") =>
       Number((this.db.prepare(`SELECT COUNT(*) c FROM ${table} WHERE ${col}=?`).all(val)[0] as { c: number }).c);
     const total = Number((this.db.prepare("SELECT COUNT(*) c FROM audit_events").all()[0] as { c: number }).c);
     const violations = Number((this.db.prepare("SELECT COUNT(*) c FROM violation_events").all()[0] as { c: number }).c);
@@ -100,6 +100,56 @@ export class HistoryDb {
       provenance: { verified: n("provenance", "verified"), invalid: n("provenance", "invalid"), absent: n("provenance", "absent"), unknown: n("provenance", "unknown") },
       violations, quarantined,
     };
+  }
+
+  history(opts: { verdict?: string; name?: string; limit?: number; offset?: number }): HistoryRow[] {
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (opts.verdict) { where.push("verdict=?"); params.push(opts.verdict); }
+    if (opts.name) { where.push("name=?"); params.push(opts.name); }
+    const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
+    const rows = this.db
+      .prepare(`SELECT name,version,verdict,score,top_finding,audited_at FROM audit_events ${clause} ORDER BY audited_at DESC LIMIT ? OFFSET ?`)
+      .all(...params, opts.limit ?? 50, opts.offset ?? 0);
+    return rows.map((r) => ({
+      name: r.name as string, version: r.version as string, verdict: r.verdict as string,
+      score: r.score as number, topFinding: (r.top_finding as string | null) ?? null, auditedAt: r.audited_at as string,
+    }));
+  }
+
+  trends(opts: { limit?: number } = {}): TrendBucket[] {
+    const rows = this.db
+      .prepare(
+        `SELECT date(audited_at) d,
+                SUM(verdict='allow') a, SUM(verdict='warn') w, SUM(verdict='block') b
+         FROM audit_events GROUP BY date(audited_at) ORDER BY d DESC LIMIT ?`,
+      )
+      .all(opts.limit ?? 30);
+    return rows
+      .map((r) => ({ date: r.d as string, allow: Number(r.a), warn: Number(r.w), block: Number(r.b) }))
+      .reverse(); // chronological
+  }
+
+  topFlagged(opts: { limit?: number } = {}): TopFlagged[] {
+    const rows = this.db
+      .prepare(
+        `SELECT name, SUM(verdict='warn') w, SUM(verdict='block') b
+         FROM audit_events WHERE verdict IN ('warn','block')
+         GROUP BY name ORDER BY (w+b) DESC, name ASC LIMIT ?`,
+      )
+      .all(opts.limit ?? 10);
+    return rows.map((r) => ({ name: r.name as string, warn: Number(r.w), block: Number(r.b) }));
+  }
+
+  violationTimeline(opts: { limit?: number } = {}): ViolationTimelineRow[] {
+    const rows = this.db
+      .prepare(`SELECT name,version,status,quarantined,detail,recorded_at FROM violation_events ORDER BY recorded_at DESC, id DESC LIMIT ?`)
+      .all(opts.limit ?? 50);
+    return rows.map((r) => ({
+      name: (r.name as string | null) ?? null, version: (r.version as string | null) ?? null,
+      status: r.status as string, quarantined: Number(r.quarantined) === 1,
+      detail: (r.detail as string | null) ?? null, recordedAt: r.recorded_at as string,
+    }));
   }
 
   close(): void { this.db.close(); }
