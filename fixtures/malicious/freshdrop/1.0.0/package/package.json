@@ -1,0 +1,13 @@
+{
+  "name": "freshdrop",
+  "version": "1.0.0",
+  "description": "A first-published package that already runs an install script — the fresh/throwaway-package shape.",
+  "main": "index.js",
+  "license": "MIT",
+  "author": "newdev <newdev@example.com>",
+  "keywords": ["util"],
+  "scripts": {
+    "postinstall": "node lib/setup.js"
+  },
+  "repository": { "type": "git", "url": "git+https://github.com/example/freshdrop.git" }
+}

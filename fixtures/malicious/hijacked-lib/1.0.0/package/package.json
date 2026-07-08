@@ -1,0 +1,10 @@
+{
+  "name": "hijacked-lib",
+  "version": "1.0.0",
+  "description": "Format a duration in milliseconds as a human-readable string. Benign, no install scripts.",
+  "main": "index.js",
+  "license": "MIT",
+  "author": "alice <alice@example.com>",
+  "keywords": ["duration", "format", "time"],
+  "repository": { "type": "git", "url": "git+https://github.com/example/hijacked-lib.git" }
+}

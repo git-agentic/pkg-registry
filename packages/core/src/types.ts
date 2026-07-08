@@ -154,11 +154,28 @@ export interface PackageFile {
   changed: boolean;
 }
 
+/** Immutable cross-version context for release-anomaly scoring (Phase 16). All optional;
+ *  absent ⇒ the release-anomaly rule is inert. Derived from the packument, never the clock. */
+export interface ReleaseContext {
+  /** The immediately-previous published version, if any. */
+  previousVersion?: string;
+  /** Maintainer names on the previous version. */
+  previousMaintainers?: string[];
+  /** ISO publish timestamp of the previous version. */
+  previousPublishedAt?: string;
+  /** ISO publish timestamp of this version. */
+  currentPublishedAt?: string;
+  /** Total number of published versions of this package. */
+  versionCount?: number;
+}
+
 /** Input to the rule pipeline. */
 export interface AuditInput {
   meta: PackageMeta;
   files: PackageFile[];
   mode: "full" | "diff";
+  /** Cross-version context for the release-anomaly rule (Phase 16); absent ⇒ inert. */
+  releaseContext?: ReleaseContext;
 }
 
 /** A pure, deterministic detection rule. */

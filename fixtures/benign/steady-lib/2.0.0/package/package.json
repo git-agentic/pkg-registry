@@ -1,0 +1,10 @@
+{
+  "name": "steady-lib",
+  "version": "2.0.0",
+  "description": "Sum and average an array of numbers. Benign, no install scripts, same maintainer as 1.0.0.",
+  "main": "index.js",
+  "license": "MIT",
+  "author": "alice <alice@example.com>",
+  "keywords": ["math", "sum", "average"],
+  "repository": { "type": "git", "url": "git+https://github.com/example/steady-lib.git" }
+}

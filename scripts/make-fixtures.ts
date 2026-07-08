@@ -24,6 +24,13 @@ interface IndexFile {
         {
           signature: "valid" | "tampered" | "unknown-key" | "none";
           provenance: false | "claimed" | { attestationsFile: string };
+          /** Publish timestamp (ISO 8601), Phase 16 release-anomaly signals. Optional — omitted
+           *  versions simply have no `time` entry in the registry (buildReleaseContext treats
+           *  missing timestamps as unknown, never wall-clock). */
+          time?: string;
+          /** Maintainer names as of this version, Phase 16 release-anomaly signals. Optional —
+           *  defaults to `[]` (no maintainer-change signal without declared maintainers). */
+          maintainers?: string[];
         }
       >;
     }
@@ -33,6 +40,7 @@ interface IndexFile {
 interface RegistryVersion {
   version: string;
   author: string | null;
+  maintainers: string[];
   license: string | null;
   hasInstallScripts: boolean;
   dist: { tarballFile: string; integrity: string; unpackedSize: number; fileCount: number };
@@ -44,7 +52,13 @@ interface RegistryVersion {
 interface RegistryDoc {
   packages: Record<
     string,
-    { name: string; author: string | null; versions: Record<string, RegistryVersion> }
+    {
+      name: string;
+      author: string | null;
+      /** Per-version publish timestamps (Phase 16 release-anomaly signals). */
+      time?: Record<string, string>;
+      versions: Record<string, RegistryVersion>;
+    }
   >;
 }
 
@@ -79,9 +93,18 @@ function main(): void {
   writeFileSync(join(FIX, "signing-keys.json"), JSON.stringify([{ keyid: keyMeta.keyid, spkiPem: keyMeta.spkiPem, expires: null }], null, 2) + "\n");
 
   for (const [name, pkg] of Object.entries(index.packages)) {
-    const entry = { name, author: null as string | null, versions: {} as Record<string, RegistryVersion> };
+    const entry = {
+      name,
+      author: null as string | null,
+      time: undefined as Record<string, string> | undefined,
+      versions: {} as Record<string, RegistryVersion>,
+    };
 
     for (const [version, vmeta] of Object.entries(pkg.versions)) {
+      if (vmeta.time) {
+        entry.time ??= {};
+        entry.time[version] = vmeta.time;
+      }
       const versionDir = join(FIX, pkg.class, name, version);
       const pkgJson = JSON.parse(readFileSync(join(versionDir, "package", "package.json"), "utf8"));
       const author = authorString(pkgJson.author);
@@ -126,6 +149,7 @@ function main(): void {
       entry.versions[version] = {
         version,
         author,
+        maintainers: vmeta.maintainers ?? [],
         license: pkgJson.license ?? null,
         hasInstallScripts,
         dist: { tarballFile: tarballName, integrity, unpackedSize, fileCount },
@@ -156,7 +180,7 @@ function main(): void {
         name: v.name, author: null,
         versions: {
           [v.version]: {
-            version: v.version, author: null, license: v.license ?? null, hasInstallScripts: false,
+            version: v.version, author: null, maintainers: [], license: v.license ?? null, hasInstallScripts: false,
             dist: { tarballFile: v.tarballFile, integrity, unpackedSize: 0, fileCount: 0 },
             signatures: null, attestations: true, attestationsFile: v.attestationsFile,
           },

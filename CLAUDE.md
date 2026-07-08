@@ -119,6 +119,23 @@ open, un-role-gated reads (`GET /-/metrics`, `GET /-/history`,
 "Observability" section (verdict trend, top-flagged, violation timeline)
 sit on top. Unset env var ⇒ zero behavior change and `node:sqlite` is
 never imported (ADR-0028).
+Phase 16 adds **maintainer & release-anomaly signals**, completing the
+maintainer-anomaly gap ADR-0026 deferred: a pure `release-anomaly` rule
+(`packages/core/src/rules/release-anomaly.ts`, registered — rule count now
+7) reads a new optional `AuditInput.releaseContext` and flags a
+maintainer-set change vs. the previous version (`high` on full turnover,
+`low` on addition), a ≥365-day dormancy resurrection (`low`), and a
+first-ever version that already runs install scripts (`medium`); a sibling
+pure helper, `capabilityNoveltyFindings` (`rules/capability-novelty.ts`),
+is emitted from `buildAudit` — not the rule pipeline, since it needs the
+post-rules `capabilityDelta` — and flags a newly dangerous
+network/process capability vs. the previous version (`medium`). The server
+derives `releaseContext` for free from the packument it already fetched
+(`buildReleaseContext` in `server.ts`, from the packument's `time` +
+per-version `maintainers`) — no new network call. All four findings are
+`metadata`-category **weighted**, never a standalone hard block; all read
+only immutable packument data (no `Date.now()`/wall-clock — invariant #1
+untouched) and are inert without a `releaseContext` (ADR-0029).
 
 We are the Socket/Chainguard wedge: **do not** try to replace npm. Resolve and
 serve real packages transparently; only attach signal.
@@ -188,24 +205,25 @@ it on.
 
 ```bash
 npm run build            # tsc --build (project references: core → proxy/cli)
-npm test                 # engine + end-to-end proxy: 422 tests on this host (420 pass, 2 skipped on darwin).
+npm test                 # engine + end-to-end proxy: 442 tests on this host (440 pass, 2 skipped on darwin).
                          # Skips are platform-gated enforcement: "non-darwin throws" skips on darwin
                          # (it verifies darwin-only behaviour), and the "no silent skip" CI guard skips
                          # off-CI. The BubblewrapSandbox enforcement suite and the Linux enforce-e2e tests
-                         # skip as describe-level blocks on darwin ("requires Linux") and are not in the 422
+                         # skip as describe-level blocks on darwin ("requires Linux") and are not in the 442
                          # count. Phase 10's violation-enforce e2e and the darwin-gated runtime-violation
                          # effect test (SeatbeltSandbox: "a denied credential read surfaces a confirmed
                          # runtime violation") RUN on darwin via Seatbelt, the same way the rest of the
-                         # Seatbelt effect suite does, and ARE in the 422 count.
+                         # Seatbelt effect suite does, and ARE in the 442 count.
                          # Phase 7's audit-tree, Phase 8/9's signature/provenance, Phase 10's
                          # classifyViolation/deny-set/violations-store, Phase 11's MCP/approval-request,
                          # Phase 12's auth/authz-e2e, Phase 13's typosquat/dependency-confusion,
-                         # Phase 14's lockfile/SBOM/integrity-cross-check, and Phase 15's
-                         # history-db/write-through/endpoints/CLI-stats-history tests are hermetic and
+                         # Phase 14's lockfile/SBOM/integrity-cross-check, Phase 15's
+                         # history-db/write-through/endpoints/CLI-stats-history, and Phase 16's
+                         # release-anomaly/capability-novelty/release-anomaly-e2e tests are hermetic and
                          # platform-neutral, so the darwin/Linux relationship from Phase 6 (Linux one
                          # test higher, one fewer skip) should hold, but hasn't been re-verified on
-                         # Linux CI since Phase 7/8/9/10/11/12/13/14/15 landed — confirm on the next Linux
-                         # CI run rather than trusting an extrapolated count here. Each platform's
+                         # Linux CI since Phase 7/8/9/10/11/12/13/14/15/16 landed — confirm on the next
+                         # Linux CI run rather than trusting an extrapolated count here. Each platform's
                          # enforcement is verified on that platform (macOS dev host / ubuntu-latest CI).
 npm run demo             # offline malware-detection walkthrough
 node packages/proxy/dist/index.js   # run the proxy (see README for env vars)
