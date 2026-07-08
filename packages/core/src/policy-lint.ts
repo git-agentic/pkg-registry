@@ -71,6 +71,7 @@ export function lintPolicy(policy: EnterprisePolicy): { errors: LintFinding[]; w
     errors.push({ code: "malformed-list-entry", message: `${field} has a non-string or empty entry.` });
   badEntry(policy.privateNamespaces ?? [], "privateNamespaces");
   badEntry(policy.requireSignature ?? [], "requireSignature");
+  badEntry(policy.requireProvenance ?? [], "requireProvenance");
   if ((policy.allow ?? []).some((a) => typeof a.package !== "string" || a.package.trim() === "")) {
     errors.push({ code: "malformed-list-entry", message: "allow has an entry with a non-string or empty package." });
   }

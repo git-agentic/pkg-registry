@@ -3,6 +3,7 @@ import express, { type Request, type Response } from "express";
 import {
   runAudit,
   score,
+  POLICY_SYNTHESIZED_RULE_IDS,
   policyHashOf,
   integrityOf,
   integrityOfAlgo,
@@ -328,7 +329,12 @@ export function createServer(opts: ServerOptions) {
     for (const report of history.allReports()) {
       let to;
       try {
-        to = score(report as unknown as Audit, candidate);
+        // score() synthesizes dependency-confusion + provenance-identity findings
+        // (packages/core/src/score.ts) and appends them; the stored report's
+        // findings already contain them from the original scoring, so strip before
+        // the re-score or they double-count (a real weight for dep-confusion).
+        const findings = report.findings.filter((f) => !POLICY_SYNTHESIZED_RULE_IDS.has(f.ruleId));
+        to = score({ ...report, findings } as unknown as Audit, candidate);
       } catch {
         continue; // skip an un-scoreable stored report (invariant #6)
       }

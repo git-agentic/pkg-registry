@@ -63,4 +63,9 @@ describe("lintPolicy", () => {
     const r = lintPolicy(pol((p) => { p.scoring.thresholds = { allow: 10, warn: 5 }; }));
     assert.ok(codes(r.warnings).includes("threshold-too-low"));
   });
+
+  test("requireProvenance with an empty-string entry → malformed-list-entry error", () => {
+    const r = lintPolicy(pol((p) => { p.requireProvenance = [""]; }));
+    assert.ok(codes(r.errors).includes("malformed-list-entry"));
+  });
 });

@@ -5,6 +5,18 @@ import type { Finding } from "./types.js";
 
 const SEVERITY_ORDER: Severity[] = ["info", "low", "medium", "high", "critical"];
 
+/** Findings that score() SYNTHESIZES from the policy (not from runRules): the
+ *  `dependency-confusion` finding built in dependencyConfusion() below and the
+ *  `provenance-identity` finding pushed onto `scored` in score(). A re-score of a
+ *  stored AuditReport (e.g. the policy-preview route) must strip these from
+ *  `report.findings` first, or they double-count — re-synthesized AND re-appended
+ *  on top of the copy already baked into the stored report. Keep in sync with the
+ *  synthesis sites below. */
+export const POLICY_SYNTHESIZED_RULE_IDS: ReadonlySet<string> = new Set([
+  "dependency-confusion",
+  "provenance-identity",
+]);
+
 export function severityRank(s: Severity): number {
   return SEVERITY_ORDER.indexOf(s);
 }
