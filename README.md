@@ -91,6 +91,7 @@ node packages/cli/dist/index.js install lodash
 
 ```
 sentinel audit <pkg> [version]   pre-install verdict panel (exit 0 allow / 1 warn / 2 block)
+sentinel explain <pkg> <version> per-finding remediation, a suggested last-known-good version, and a ready waiver
 sentinel scan  <file.tgz>        audit a local tarball offline (no proxy)
 sentinel audit-tree [lockfile]   audit an entire resolved tree (npm/yarn/pnpm); exit non-zero if gated
   --sbom <file>                    write a CycloneDX 1.6 SBOM of the audited tree
@@ -131,6 +132,51 @@ pass and exits non-zero if the aggregate verdict trips the policy's `treeGate`
   (default: `error` rows are surfaced but never gate, per ADR-0020's fail-open
   stance).
 - `--omit dev` skips dev dependencies where the lockfile format records them.
+
+### Explain & remediation (Phase 18, ADR-0031)
+
+`sentinel explain <package> <version>` answers "how do I get green?" for a
+`warn`/`block` verdict:
+
+```
+$ sentinel explain color-stream 1.0.0
+
+  color-stream@1.0.0  —  BLOCK  0/100
+
+  block — 2 finding(s); see the actions below or waive with the recorded rationale.
+
+  • secret-exfil (critical) — Reads credentials/tokens and may exfiltrate them.
+      Do not install until reviewed. If this is a false positive, waive with a
+      recorded rationale; otherwise remove the dependency.
+  • network-egress (high) — Makes network connections.
+      Confirm the egress is expected for this package's purpose; if not,
+      remove it or pin to a version without it.
+
+  ✓ suggested: pin to color-stream@0.9.0 — the most recent clean release (96/100).
+
+  To waive after review:
+      sentinel approve color-stream 1.0.0 --reason "reviewed and accepted"
+```
+
+It calls the proxy's `GET /-/explain/:pkg/:version`, which audits the
+version, runs the pure `remediate()` guidance mapping over the report, and
+walks back a bounded window (newest of ≤10 prior versions) for the last one
+that itself audits `allow` — the "suggested safe version" line. The route is
+off the inline install-gate path, since it's expected to be slower than a
+plain audit.
+
+Remediation surfaces in two more places without a separate `explain` call:
+
+- The `audit-tree` PR comment gets a **how to fix** column next to each
+  flagged package (`remediationHint(ruleId)`), plus a footer pointing at
+  `sentinel explain` for the full detail.
+- The MCP server's `sentinel_explain` tool (see below) returns the same
+  `{ report, remediation, lastKnownGood }` shape for an agent host.
+
+**Advisory only** — nothing here rewrites a lockfile, `package.json`, or
+auto-selects a version. `sentinel explain` and the PR-comment hint only ever
+suggest; a human (or an agent through the existing approval-request path)
+still decides. See [ADR-0031](./docs/adr/0031-actionable-remediation.md).
 
 ### Sandbox (Phase 3, macOS)
 
@@ -280,6 +326,10 @@ Tools:
   attested build identity (repo/workflow/builder/commit).
 - `sentinel_list_violations` — recorded runtime violations and which builds
   are quarantined.
+- `sentinel_explain` (Phase 18) — per-finding remediation actions, a
+  suggested last-known-good version, and a ready approval-request payload
+  for a package version. Same `{ report, remediation, lastKnownGood }` shape
+  as `sentinel explain`/`GET /-/explain`; advisory only.
 - `sentinel_request_approval` — records a **pending** approval request; it
   never grants approval. Only a human can approve, via the dashboard's
   "Pending approval requests" panel or `POST /-/approvals`.
@@ -473,6 +523,11 @@ Phase 14 broadens `audit-tree` beyond npm: `parseAnyLockfile` also reads `yarn.l
 audited tree, a lockfile-vs-served integrity cross-check force-blocks a coordinate
 whose pinned integrity disagrees with what's actually served, and `--fail-on-error`
 opts the tree into gating on unresolvable packages.
+Phase 18 adds actionable remediation: `sentinel explain <package> <version>`
+(and the MCP `sentinel_explain` tool, and a "how to fix" column on the PR
+comment) turns a `warn`/`block` verdict into per-finding guidance, a
+suggested last-known-good version, and a ready waiver — advisory only, never
+auto-fixing a lockfile.
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full design and [docs/adr/](./docs/adr/)
 for the decision log.
 

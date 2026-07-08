@@ -600,6 +600,52 @@ The Action only *runs* the existing `/-/audit-tree` scoring path; it adds
 no rule, weight, or verdict logic, and no package code executes anywhere in
 this flow (invariant #1 untouched; ADR-0030).
 
+### 3.17 Actionable remediation (Phase 18, ADR-0031)
+
+Phases 1–17 detect, contain, record, and gate — but stop at the verdict. A
+`block` says *that* a package is dangerous; nothing said what to do about it.
+Phase 18 adds an advisory guidance layer on top of the existing, unchanged
+audit output.
+
+- **`remediate(report): Remediation`** (`packages/core/src/remediation.ts`)
+  is a pure, total function of an already-computed `AuditReport`. It maps
+  each finding to `{ ruleId, severity, summary, action }` via a `REMEDIATIONS`
+  map keyed by `ruleId`, falling back to a per-`Category` guide and then a
+  generic guide (an unrecognized `ruleId` never throws), sorted
+  worst-severity-first. When the verdict isn't `allow`, it also returns a
+  `WaiverTemplate` — the package's `name`/`version`/`integrity`, a ready
+  `sentinel approve <name> <version> --reason "..."` command, and the same
+  `{ name, version, integrity, reason }` payload shape Phase 11's
+  request-not-grant approval-request path (`POST /-/approval-requests`,
+  ADR-0024) already accepts. `remediationHint(ruleId)` is the short
+  one-line projection used by surfaces that don't want a full result.
+  `remediate` is called nowhere on the scoring path — it consumes a verdict,
+  it never produces or influences one (invariant #1 untouched).
+- **`GET /-/explain/:pkg/:version`** (`packages/proxy/src/server.ts`) audits
+  the target version, runs `remediate`, and walks back a **bounded window**
+  (newest ≤10 prior versions, via the packument and `cmpSemver`) for the
+  first version whose own audit is `allow` — short-circuiting on the first
+  hit and reusing the same cached, integrity-keyed `auditVersion` path every
+  other route uses. A packument fetch failure or a per-version audit failure
+  is treated as "no last-known-good found," not an error — this is
+  best-effort advisory output, not a gate. The route is deliberately off the
+  inline tarball-request gate (invariant #3); it's expected to be slower.
+- **Three surfaces share one `{ report, remediation, lastKnownGood }`
+  shape**: `sentinel explain <package> <version>` (CLI, `formatExplain` in
+  `packages/cli/src/format.ts`) prints the verdict, each finding's action, a
+  "pin to" suggestion when a last-known-good exists, and the ready
+  approve/waiver command; the `audit-tree` PR comment gains a "how to fix"
+  column via a new `TreePackageRow.topFindingRuleId` (set by the audit-tree
+  route from the worst finding) rendered through `remediationHint` — a cheap
+  projection needing no extra per-package audit — plus a footer pointing at
+  `sentinel explain`; and `sentinel_explain` (MCP, `packages/mcp/src/tools.ts`)
+  is a sixth **read** tool whose `ProxyClient.explain` throws on a non-OK
+  response rather than fabricating a result, matching ADR-0024's contract.
+- **Advisory-only.** Nothing in this phase writes to a lockfile, mutates a
+  dependency tree, or auto-selects a version — `remediate` and `sentinel
+  explain` only ever suggest; a human (or an agent through the existing
+  request-not-grant path) still decides.
+
 ---
 
 ## 4. The audit engine (`@sentinel/core`)
@@ -772,7 +818,7 @@ caching.
 
 ## 6. CLI ↔ npm integration
 
-Four integration modes, all non-invasive:
+Five integration modes, all non-invasive:
 
 1. **`sentinel audit <pkg>[@version]`** — calls the proxy's `/-/audit` API and
    prints the pre-install panel: unpacked size, author, signature status, score,
@@ -788,16 +834,25 @@ Four integration modes, all non-invasive:
    `sentinel-script-shell` wrapper so every lifecycle script in the tree runs under
    `createSandbox()` (§3.7). Scripts with unapproved or undeclared capabilities are
    denied at the kernel level even when the static audit passed.
-4. **`sentinel-mcp` (Phase 11, ADR-0024)** — a stdio MCP server
+4. **`sentinel explain <package> <version>` (Phase 18, ADR-0031)** — calls
+   the proxy's `GET /-/explain/:pkg/:version`, which audits the version,
+   runs the pure `remediate()` guidance mapping over the resulting report,
+   and walks back a bounded (≤10) window of prior versions for the newest
+   one that audits `allow`. `formatExplain` (`packages/cli/src/format.ts`)
+   prints per-finding actions, a "pin to" suggestion when a last-known-good
+   version is found, and a ready `sentinel approve … --reason "..."` waiver
+   command. Advisory only — see §3.17.
+5. **`sentinel-mcp` (Phase 11, ADR-0024)** — a stdio MCP server
    (`packages/mcp`, `@modelcontextprotocol/sdk`) for agent hosts that speak
    MCP instead of shelling out to the CLI. `createMcpServer(client)` registers
-   six tools against a `ProxyClient` — a thin fetch wrapper over the proxy's
-   `/-/audit`, `/-/manifest`, `/-/audit-tree`, `/-/violations`, and
+   seven tools against a `ProxyClient` — a thin fetch wrapper over the proxy's
+   `/-/audit`, `/-/manifest`, `/-/audit-tree`, `/-/violations`, `/-/explain`, and
    `/-/approval-requests` endpoints, resolving `latest` from the packument's
-   `dist-tags` when a version is omitted. Five tools are read-only
+   `dist-tags` when a version is omitted. Six tools are read-only
    (`sentinel_audit`, `sentinel_audit_tree`, `sentinel_capabilities`,
-   `sentinel_check_provenance`, `sentinel_list_violations`); the sixth,
-   `sentinel_request_approval`, is the only write path and records a
+   `sentinel_check_provenance`, `sentinel_list_violations`, `sentinel_explain`
+   — Phase 18); the seventh, `sentinel_request_approval`, is the only write
+   path and records a
    **pending** entry in the new `ApprovalRequestStore` via `POST
    /-/approval-requests` — it can never grant approval itself. This is a
    deliberate privilege boundary: the agent requests, only a human grants
