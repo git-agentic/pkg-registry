@@ -9,6 +9,7 @@ import {
   aggregateTree,
   treeGateOf,
   NPM_SIGNING_KEYS,
+  remediate,
   type AuditReport,
   type EnterprisePolicy,
   type PackageMeta,
@@ -230,6 +231,39 @@ export function createServer(opts: ServerOptions) {
     try {
       const { report } = await auditVersion(pkg, version);
       res.json(report);
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+
+  /** Newest prior version (semver, strictly older, most-recent 10) that audits `allow`. */
+  async function findLastKnownGood(pkg: string, version: string): Promise<{ version: string; score: number } | null> {
+    let priors: string[];
+    try {
+      const pm = await upstream.getPackument(pkg);
+      priors = Object.keys(pm.versions).filter((v) => cmpSemver(v, version) < 0).sort(cmpSemver).reverse().slice(0, 10);
+    } catch {
+      return null;
+    }
+    for (const v of priors) {
+      try {
+        const { report } = await auditVersion(pkg, v);
+        if (report.verdict === "allow") return { version: v, score: report.score };
+      } catch { /* skip an unauditeable prior version */ }
+    }
+    return null;
+  }
+
+  // Explain a verdict + suggest remediation + walk back to the last known-good release.
+  // Off the inline gate (invariant #3) — this route is expected to be slower.
+  app.get(/^\/-\/explain\/(.+)\/([^/]+)$/, async (req, res) => {
+    const pkg = decodeURIComponent(req.params[0] ?? "");
+    const version = req.params[1] ?? "";
+    try {
+      const { report } = await auditVersion(pkg, version);
+      const remediation = remediate(report);
+      const lastKnownGood = await findLastKnownGood(pkg, version);
+      res.json({ report, remediation, lastKnownGood });
     } catch (err) {
       sendError(res, err);
     }
