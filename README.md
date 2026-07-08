@@ -324,6 +324,9 @@ jobs:
 |---|---|---|
 | `lockfile` | auto-detect | Path to `package-lock.json` / `yarn.lock` / `pnpm-lock.yaml` |
 | `policy` | built-in `DEFAULT_POLICY` | Path to a signed enterprise policy file |
+| `policy-pubkey` | — | Path to the policy signer's public key PEM (required with `policy`) |
+| `policy-sig` | `<policy>.sig` | Path to the policy signature file |
+| `omit-dev` | `false` | Omit dev dependencies from the audit |
 | `sbom-path` | `sentinel-sbom.json` | Where to write the CycloneDX SBOM |
 | `fail-on` | `block` | `block` \| `warn` \| `none` — the verdict level that fails the check |
 | `comment` | `true` | Post/update a PR comment with the verdict |
@@ -341,6 +344,11 @@ the verdict, per-package findings table, and provenance summary.
 uploads, and the PR comment appears, but nothing blocks a merge — then move
 to `fail-on: warn` and finally the `fail-on: block` default once the team is
 ready to enforce. See [ADR-0030](./docs/adr/0030-ci-native-github-action.md).
+
+Under `fail-on: block`/`warn`, a package that fails to resolve/audit (e.g. a
+transient npm outage) becomes an error row that gates the tree (fail-closed)
+— so a transient registry outage can fail the check; use `fail-on: none`
+(observe) to avoid this during onboarding.
 
 ---
 

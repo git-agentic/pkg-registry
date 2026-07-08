@@ -27,7 +27,7 @@ export function renderPrComment(result: TreeAuditResult, opts: { now: string }):
     L.push("| --- | --- | --- | --- |");
     for (const p of offenders) {
       const finding = p.error ?? p.topFinding ?? "";
-      L.push(`| ${p.name}@${p.version} | ${p.status} | ${scoreCell(p)} | ${escapePipe(finding)} |`);
+      L.push(`| ${escapePipe(`${p.name}@${p.version}`)} | ${p.status} | ${scoreCell(p)} | ${escapePipe(finding)} |`);
     }
     L.push("");
   } else {

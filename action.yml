@@ -5,6 +5,9 @@ branding: { icon: "shield", color: "purple" }
 inputs:
   lockfile: { description: "Path to the lockfile (default: auto-detect)", required: false, default: "" }
   policy: { description: "Path to a signed enterprise policy file (default: built-in)", required: false, default: "" }
+  policy-pubkey: { description: "Path to the policy signer's public key PEM (required with `policy`)", required: false, default: "" }
+  policy-sig: { description: "Path to the policy signature file (default: <policy>.sig)", required: false, default: "" }
+  omit-dev: { description: "Omit dev dependencies from the audit", required: false, default: "false" }
   sbom-path: { description: "Where to write the CycloneDX SBOM", required: false, default: "sentinel-sbom.json" }
   fail-on: { description: "block | warn | none — the verdict level that fails the check", required: false, default: "block" }
   comment: { description: "Post a PR comment with the verdict", required: false, default: "true" }
@@ -33,6 +36,9 @@ runs:
       env:
         INPUT_LOCKFILE: ${{ inputs.lockfile }}
         INPUT_POLICY: ${{ inputs.policy }}
+        INPUT_POLICY_PUBKEY: ${{ inputs.policy-pubkey }}
+        INPUT_POLICY_SIG: ${{ inputs.policy-sig }}
+        INPUT_OMIT_DEV: ${{ inputs.omit-dev }}
         INPUT_SBOM_PATH: ${{ inputs.sbom-path }}
         INPUT_FAIL_ON: ${{ inputs.fail-on }}
         INPUT_WORKING_DIRECTORY: ${{ inputs.working-directory }}

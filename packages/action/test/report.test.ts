@@ -37,4 +37,20 @@ describe("renderPrComment", () => {
     // 'fine' (allow) should not appear as an offender row
     assert.equal(md.includes("| fine@1.0.0"), false);
   });
+  test("escapes a pipe in the package coordinate so it can't break the table", () => {
+    const evilResult: TreeAuditResult = {
+      aggregate: {
+        verdict: "block", gated: true,
+        counts: { allow: 0, warn: 0, block: 1, error: 0 },
+        provenance: { verified: 0, invalid: 0, absent: 1, unknown: 0 },
+        integrityMismatch: 0,
+      },
+      packages: [
+        { name: "evil|name", version: "1.0.0", status: "block", score: 5, topFinding: "malicious", error: null, provenance: "absent", integrityMismatch: false },
+      ],
+    };
+    const evilMd = renderPrComment(evilResult, { now: "2026-07-08T00:00:00Z" });
+    assert.match(evilMd, /evil\\\|name@1\.0\.0/);
+    assert.equal(evilMd.includes("| evil|name@"), false);
+  });
 });

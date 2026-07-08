@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, isAbsolute } from "node:path";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 import {
@@ -31,7 +31,7 @@ const LOCKFILES = ["package-lock.json", "yarn.lock", "pnpm-lock.yaml"];
 
 function detectLockfile(cwd: string, explicit?: string): string {
   if (explicit) {
-    const p = explicit.startsWith("/") ? explicit : join(cwd, explicit);
+    const p = isAbsolute(explicit) ? explicit : join(cwd, explicit);
     if (!existsSync(p)) throw new Error(`lockfile not found: ${p}`);
     return p;
   }

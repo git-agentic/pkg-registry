@@ -17,7 +17,7 @@ describe("action.yml", () => {
     assert.ok(Array.isArray(doc.runs?.steps) && doc.runs!.steps!.length > 0);
   });
   test("declares the documented inputs", () => {
-    for (const k of ["lockfile", "policy", "sbom-path", "fail-on", "comment", "working-directory"]) {
+    for (const k of ["lockfile", "policy", "policy-pubkey", "policy-sig", "omit-dev", "sbom-path", "fail-on", "comment", "working-directory"]) {
       assert.ok(doc.inputs && k in doc.inputs, `missing input ${k}`);
     }
   });
