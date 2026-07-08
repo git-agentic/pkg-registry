@@ -38,6 +38,18 @@ export function buildAdvisoryIndex(advisories: readonly Advisory[]): Map<string,
   return m;
 }
 
+/** Coerce a single parsed-JSON array entry into an Advisory, or undefined if malformed. Shared by both parsers below. */
+function coerceAdvisoryEntry(e: unknown): Advisory | undefined {
+  if (e && typeof e === "object" && typeof (e as Advisory).name === "string" && typeof (e as Advisory).version === "string" && typeof (e as Advisory).id === "string") {
+    const a = e as Advisory;
+    const adv: Advisory = { name: a.name, version: a.version, id: a.id };
+    if (a.severity === "critical" || a.severity === "high") adv.severity = a.severity;
+    if (typeof a.reference === "string") adv.reference = a.reference;
+    return adv;
+  }
+  return undefined;
+}
+
 /** Parse an operator-supplied advisory JSON array. Pure, total: drops malformed entries; [] on garbage. */
 export function parseAdvisories(raw: string): Advisory[] {
   let doc: unknown;
@@ -45,13 +57,33 @@ export function parseAdvisories(raw: string): Advisory[] {
   if (!Array.isArray(doc)) return [];
   const out: Advisory[] = [];
   for (const e of doc) {
-    if (e && typeof e === "object" && typeof (e as Advisory).name === "string" && typeof (e as Advisory).version === "string" && typeof (e as Advisory).id === "string") {
-      const a = e as Advisory;
-      const adv: Advisory = { name: a.name, version: a.version, id: a.id };
-      if (a.severity === "critical" || a.severity === "high") adv.severity = a.severity;
-      if (typeof a.reference === "string") adv.reference = a.reference;
-      out.push(adv);
-    }
+    const adv = coerceAdvisoryEntry(e);
+    if (adv) out.push(adv);
+  }
+  return out;
+}
+
+/**
+ * Strict variant for the startup fail-closed path: a known-advisory deny-list is a
+ * security control, so a CORRUPT (not just unreadable) SENTINEL_ADVISORIES file must
+ * halt boot, not silently degrade to bundled-only. Throws on non-JSON or non-array
+ * content; a legitimately empty array `[]` is valid and returns `[]`. Per-entry
+ * malformed rows are still dropped (non-fatal), matching parseAdvisories.
+ */
+export function parseAdvisoriesStrict(raw: string): Advisory[] {
+  let doc: unknown;
+  try {
+    doc = JSON.parse(raw);
+  } catch {
+    throw new Error("SENTINEL_ADVISORIES is not valid JSON");
+  }
+  if (!Array.isArray(doc)) {
+    throw new Error("SENTINEL_ADVISORIES must be a JSON array");
+  }
+  const out: Advisory[] = [];
+  for (const e of doc) {
+    const adv = coerceAdvisoryEntry(e);
+    if (adv) out.push(adv);
   }
   return out;
 }

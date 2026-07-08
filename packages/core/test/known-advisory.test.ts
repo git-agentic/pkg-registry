@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { knownAdvisoryRule } from "../src/rules/known-advisory.js";
-import { KNOWN_ADVISORIES, parseAdvisories, type Advisory } from "../src/advisory-corpus.js";
+import { KNOWN_ADVISORIES, parseAdvisories, parseAdvisoriesStrict, type Advisory } from "../src/advisory-corpus.js";
 import type { AuditInput, PackageMeta } from "../src/types.js";
 import { buildAudit } from "../src/audit.js";
 import { score } from "../src/score.js";
@@ -71,5 +71,36 @@ describe("parseAdvisories", () => {
     assert.deepEqual(parseAdvisories(raw), [{ name: "a", version: "1", id: "X" }]);
     assert.deepEqual(parseAdvisories("not json"), []);
     assert.deepEqual(parseAdvisories(JSON.stringify({ not: "an array" })), []);
+  });
+});
+
+describe("parseAdvisoriesStrict", () => {
+  test("well-formed array → parsed", () => {
+    const raw = JSON.stringify([{ name: "a", version: "1", id: "X" }]);
+    assert.deepEqual(parseAdvisoriesStrict(raw), [{ name: "a", version: "1", id: "X" }]);
+  });
+
+  test("a malformed entry is dropped; well-formed siblings are kept", () => {
+    const raw = JSON.stringify([{ name: "a", version: "1", id: "X" }, { name: "b" }, { version: "2", id: "Y" }]);
+    assert.deepEqual(parseAdvisoriesStrict(raw), [{ name: "a", version: "1", id: "X" }]);
+  });
+
+  test("a legitimately empty array → [] (no throw)", () => {
+    assert.deepEqual(parseAdvisoriesStrict("[]"), []);
+  });
+
+  test("non-JSON content throws", () => {
+    assert.throws(() => parseAdvisoriesStrict("not json"), /not valid JSON/);
+  });
+
+  test("valid JSON that is not an array throws", () => {
+    assert.throws(() => parseAdvisoriesStrict(JSON.stringify({ not: "an array" })), /must be a JSON array/);
+    assert.throws(() => parseAdvisoriesStrict(JSON.stringify("[not array]")), /must be a JSON array/);
+  });
+
+  test("parseAdvisories (total) is unchanged: same garbage inputs still return []", () => {
+    assert.deepEqual(parseAdvisories("not json"), []);
+    assert.deepEqual(parseAdvisories(JSON.stringify({ not: "an array" })), []);
+    assert.deepEqual(parseAdvisories("[]"), []);
   });
 });

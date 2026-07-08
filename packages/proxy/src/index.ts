@@ -8,7 +8,7 @@ import {
   DEFAULT_POLICY,
   policyHashOf,
   loadTrustMaterial,
-  parseAdvisories,
+  parseAdvisoriesStrict,
   type EnterprisePolicy,
   type ProvenanceTrustMaterial,
   type Advisory,
@@ -95,7 +95,13 @@ function resolveAdvisories(): Advisory[] | undefined {
     console.error(`FATAL: cannot read SENTINEL_ADVISORIES: ${(err as Error).message}`);
     process.exit(1);
   }
-  const advisories = parseAdvisories(raw);
+  let advisories: Advisory[];
+  try {
+    advisories = parseAdvisoriesStrict(raw);
+  } catch (err) {
+    console.error(`FATAL: ${(err as Error).message} (${path})`);
+    process.exit(1);
+  }
   console.log(`  advisories: ${advisories.length} operator-supplied (+ bundled)`);
   return advisories;
 }

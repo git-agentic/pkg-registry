@@ -69,7 +69,7 @@ export { parseLockfile, parseYarnLock, parsePnpmLock, parseAnyLockfile, type Coo
 export { signToken, verifyToken, type Role, type TokenPayload } from "./auth.js";
 export { toCycloneDX, type CycloneDXBom, type CycloneDXComponent } from "./sbom.js";
 export { remediate, remediationHint, type Remediation, type RemediationItem, type WaiverTemplate } from "./remediation.js";
-export { KNOWN_ADVISORIES, parseAdvisories, buildAdvisoryIndex, type Advisory } from "./advisory-corpus.js";
+export { KNOWN_ADVISORIES, parseAdvisories, parseAdvisoriesStrict, buildAdvisoryIndex, type Advisory } from "./advisory-corpus.js";
 export { knownAdvisoryRule } from "./rules/known-advisory.js";
 export {
   buildAuditStatement, signAttestation, verifyAttestation, attestationKeyid, pae, SENTINEL_PREDICATE_TYPE,
