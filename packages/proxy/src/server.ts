@@ -364,7 +364,7 @@ export function createServer(opts: ServerOptions) {
       return ka < kb ? -1 : ka > kb ? 1 : 0;
     });
     const aggregate = aggregateTree(rows, treeGateOf(enterprisePolicy), { failOnError });
-    const result: TreeAuditResult = { aggregate, packages: rows };
+    const result: TreeAuditResult = { aggregate, packages: rows, policyHash };
     res.json(result);
   });
 

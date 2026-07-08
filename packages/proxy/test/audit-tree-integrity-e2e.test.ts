@@ -85,6 +85,12 @@ describe("audit-tree integrity cross-check + failOnError (e2e)", () => {
     assert.equal(r.packages.find((p) => p.name === "leftpad-lite")!.integrityMismatch, false);
   });
 
+  test("audit-tree response carries the policyHash for attestation binding", async () => {
+    const r = await tree(base, [{ name: "leftpad-lite", version: "1.0.0" }]);
+    assert.equal(typeof r.policyHash, "string");
+    assert.ok(r.policyHash!.length > 0);
+  });
+
   test("failOnError gates a tree containing an unresolvable package", async () => {
     const open = await tree(base, [{ name: "does-not-exist", version: "9.9.9" }]);
     assert.equal(open.aggregate.gated, false); // default fail-open
