@@ -367,6 +367,27 @@ automated install:
 Both are weighted findings that raise the score, not automatic blocks — see
 [ADR-0026](./docs/adr/0026-supply-chain-identity-heuristics.md).
 
+## Maintainer & release-anomaly signals (Phase 16)
+
+Every rule through Phase 13 scores a release in isolation. Phase 16 adds
+cross-version context (a `ReleaseContext` derived from the packument's own
+`time`/`maintainers` history — no new network call) and four weighted
+`metadata` signals that compound with everything else:
+
+- **Maintainer change** — none of the previous version's maintainers
+  remain ⇒ `high` (possible account/ownership takeover); the set changed
+  but at least one previous maintainer remains ⇒ `low`.
+- **Dormancy resurrection** — the package was silent ≥365 days before this
+  release ⇒ `low`.
+- **New-package risk** — a first-ever published version that already runs
+  install scripts ⇒ `medium`.
+- **Capability novelty** — this release adds a `network`/`process`
+  capability the immediately-previous version didn't have ⇒ `medium`.
+
+All four are inert without the underlying packument history (e.g. a
+private-store package) and none is a standalone hard block — see
+[ADR-0029](./docs/adr/0029-release-anomaly-signals.md).
+
 ## Status
 
 Phases 1–14 are built. Phase 1 is the transparent auditing proxy. Phase 2 adds the

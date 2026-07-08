@@ -501,6 +501,55 @@ path already produced; it never influences a verdict (invariant #1
 untouched). SQLite is single-node — no multi-proxy sharing — and both
 tables grow unbounded with no retention/pruning yet (ADR-0028).
 
+### 3.15 Maintainer & release-anomaly signals (Phase 16, ADR-0029)
+
+Every rule through Phase 13 scores a release in isolation — `AuditInput`
+carries only the audited version's own files and metadata, never anything
+about the versions that came before it. Phase 16 adds cross-version
+context, closing the "maintainer-change anomalies" gap ADR-0026 explicitly
+deferred.
+
+- **`ReleaseContext`** (`packages/core/src/types.ts`) is a new, all-optional
+  type — `previousVersion`, `previousMaintainers`, `previousPublishedAt`,
+  `currentPublishedAt`, `versionCount` — carried on the new
+  `AuditInput.releaseContext?`. Absent ⇒ every Phase 16 signal is inert.
+- **Plumbing.** `UpstreamPackument.time?: Record<string, string>` is now
+  mapped from the packument's `time` field in both `NpmUpstream` and
+  `LocalFixtureUpstream`. The exported, pure `buildReleaseContext(pm,
+  version)` in `packages/proxy/src/server.ts` derives a `ReleaseContext`
+  from the packument `auditVersion` has already fetched — no new upstream
+  call — and passes it into `runAudit`.
+- **`release-anomaly` — a pure rule** (`packages/core/src/rules/
+  release-anomaly.ts`, registered in `RULES`; rule count is now 7). Three
+  signals, all `metadata` category:
+  1. **Maintainer change** — none of `previousMaintainers` remain in the
+     current set ⇒ `high` ("possible account/ownership takeover"); the set
+     changed but at least one previous maintainer remains ⇒ `low`.
+  2. **Dormancy resurrection** — the gap between `previousPublishedAt` and
+     `currentPublishedAt` is ≥365 days ⇒ `low`.
+  3. **New-package risk** — `versionCount === 1` and
+     `meta.hasInstallScripts` ⇒ `medium`.
+- **`capabilityNoveltyFindings` — a pure helper, not a rule**
+  (`packages/core/src/rules/capability-novelty.ts`), called from
+  `buildAudit` (`packages/core/src/audit.ts`) rather than added to `RULES`,
+  because it needs `capabilityDelta`, which `buildAudit` computes *after*
+  `runRules` returns. Signal 4: `capabilityDelta.added` contains a
+  `network`/`process` capability *and* a `previousVersion` exists ⇒ `medium`
+  `metadata` finding, ruleId `capability-novelty` — a dangerous capability
+  the immediately-previous version didn't have.
+- **Determinism.** Both the rule and the helper are pure functions of their
+  inputs — no I/O, no policy, no wall-clock. `daysBetween` parses two
+  *given* ISO timestamps (`Date.parse`); neither file calls `Date.now()` or
+  `new Date()` with no argument, so "dormant"/"fresh" is intrinsic to the
+  release pair being compared, never relative to when the audit runs
+  (invariant #1 untouched). A test-suite grep guard enforces the no-clock
+  constraint.
+- **Weighted, inert by default.** All four signals are `metadata`
+  findings, never added to the hard-block condition — power comes from
+  compounding, not any single signal. No `releaseContext` (e.g. a
+  private-store package, or an upstream without `time`) ⇒ both the rule and
+  the helper return `[]`.
+
 ---
 
 ## 4. The audit engine (`@sentinel/core`)
@@ -540,6 +589,17 @@ Phase 13 adds a sixth, name-only rule (§3.13, ADR-0026):
    likely typosquat (edit-distance/homoglyph match) of a name in a bundled
    static popular-package corpus. `medium` severity; never flags a name
    already in the corpus.
+
+Phase 16 adds a seventh rule (§3.15, ADR-0029):
+
+7. **`release-anomaly`** (`metadata` category) — inert without a
+   `releaseContext`; flags a maintainer-set change relative to the previous
+   version (`high` for a full turnover, `low` for an addition), a ≥365-day
+   dormancy resurrection (`low`), or a first-ever version that already runs
+   install scripts (`medium`). A sibling helper, `capabilityNoveltyFindings`,
+   is emitted from `buildAudit` rather than `RULES` (it needs the
+   post-rules `capabilityDelta`) and flags a newly-added dangerous
+   capability relative to the previous version (`medium`).
 
 Rules are registered in a list, so adding a rule (typosquat detection, license
 risk, provenance) is additive and never touches scoring or the proxy.
@@ -618,6 +678,15 @@ interface PackageMeta {
 type CapabilityKind = 'network' | 'filesystem' | 'process' | 'native' | 'env';
 interface Capability { kind: CapabilityKind; target: string; evidence: Evidence[]; }
 interface CapabilityDelta { added: Capability[]; removed: Capability[]; }
+
+// Cross-version context for the release-anomaly rule + capability-novelty helper
+// (Phase 16, ADR-0029). All optional; absent ⇒ both are inert. Derived from the
+// packument in buildReleaseContext(pm, version) — never the clock.
+interface ReleaseContext {
+  previousVersion?: string; previousMaintainers?: string[];
+  previousPublishedAt?: string; currentPublishedAt?: string;
+  versionCount?: number;
+}
 
 interface AuditReport {
   schema: 3;
