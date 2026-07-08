@@ -17,7 +17,7 @@ import {
   signToken, verifyToken, type Role,
 } from "@sentinel/core";
 import { createSandbox, runLifecycleScripts } from "@sentinel/sandbox";
-import { formatReport, formatManifest, verdictExitCode, formatTree, treeExitCode, formatViolations, formatStats, formatHistory, type Manifest, type ViolationRow } from "./format.js";
+import { formatReport, formatManifest, verdictExitCode, formatTree, treeExitCode, formatViolations, formatStats, formatHistory, formatExplain, type Manifest, type ViolationRow, type ExplainResult } from "./format.js";
 
 const DEFAULT_PROXY = process.env.SENTINEL_PROXY ?? "http://localhost:4873";
 
@@ -148,6 +148,22 @@ program
       const m = await fetchManifest(opts.proxy, pkg, version);
       await postApproval(opts.proxy, [{ name: m.meta.name, version: m.meta.version, integrity: m.meta.integrity }], !opts.deny, opts.reason);
       console.log(`${opts.deny ? "denied" : "approved"} ${pkg}@${version}`);
+    } catch (err) {
+      fail(err, opts.proxy);
+    }
+  });
+
+program
+  .command("explain")
+  .description("Explain a package's verdict and how to remediate it: per-finding actions, a suggested known-good version, and a ready waiver.")
+  .argument("<package>")
+  .argument("<version>")
+  .option("-p, --proxy <url>", "Sentinel proxy base URL", DEFAULT_PROXY)
+  .action(async (pkg: string, version: string, opts: { proxy: string }) => {
+    try {
+      const res = await fetch(`${opts.proxy}/-/explain/${encodeURIComponent(pkg)}/${encodeURIComponent(version)}`);
+      if (!res.ok) return fail(new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? `explain failed: ${res.status}`), opts.proxy);
+      console.log(formatExplain(await res.json() as ExplainResult));
     } catch (err) {
       fail(err, opts.proxy);
     }
