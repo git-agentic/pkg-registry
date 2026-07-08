@@ -139,4 +139,16 @@ describe("sentinel attest keygen / attest / verify-attestation CLI", () => {
     ]);
     assert.notEqual(code, 0);
   });
+
+  test("verify-attestation --sbom mismatch exits non-zero (subject binding — the deploy gate)", async () => {
+    // A different SBOM than the one attested → its sha256 won't match the attestation subject.
+    const otherSbom = join(dir, "other-sbom.json");
+    writeFileSync(otherSbom, JSON.stringify({ bomFormat: "CycloneDX", specVersion: "1.6", components: [] }));
+    const { code, stdout } = await runCli([
+      "verify-attestation", join(dir, "att.json"),
+      "--key", join(dir, "k.pub.pem"),
+      "--sbom", otherSbom,
+    ]);
+    assert.notEqual(code, 0, stdout); // valid signature, but the subject digest doesn't bind this SBOM
+  });
 });
