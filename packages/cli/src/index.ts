@@ -17,7 +17,7 @@ import {
   signToken, verifyToken, type Role,
 } from "@sentinel/core";
 import { createSandbox, runLifecycleScripts } from "@sentinel/sandbox";
-import { formatReport, formatManifest, verdictExitCode, formatTree, treeExitCode, formatViolations, type Manifest, type ViolationRow } from "./format.js";
+import { formatReport, formatManifest, verdictExitCode, formatTree, treeExitCode, formatViolations, formatStats, formatHistory, type Manifest, type ViolationRow } from "./format.js";
 
 const DEFAULT_PROXY = process.env.SENTINEL_PROXY ?? "http://localhost:4873";
 
@@ -164,6 +164,37 @@ program
     const { violations } = (await res.json()) as { violations: ViolationRow[] };
     if (opts.json) console.log(JSON.stringify(violations, null, 2));
     else console.log(formatViolations(violations));
+  });
+
+program
+  .command("stats")
+  .description("Show durable audit/violation metrics (requires the proxy's SENTINEL_HISTORY_DB).")
+  .option("-p, --proxy <url>", "Sentinel proxy base URL", DEFAULT_PROXY)
+  .action(async (opts: { proxy: string }) => {
+    const res = await fetch(`${opts.proxy}/-/metrics`);
+    if (res.status === 501) { console.log("history not enabled — set SENTINEL_HISTORY_DB on the proxy"); return; }
+    if (!res.ok) return fail(new Error(`metrics failed: ${res.status}`), opts.proxy);
+    const m = (await res.json()) as { summary: { total: number; verdict: { allow: number; warn: number; block: number }; violations: number; quarantined: number }; trends: { date: string; allow: number; warn: number; block: number }[]; topFlagged: { name: string; warn: number; block: number }[] };
+    console.log(formatStats(m));
+  });
+
+program
+  .command("history")
+  .description("List recorded audits (requires the proxy's SENTINEL_HISTORY_DB).")
+  .option("-p, --proxy <url>", "Sentinel proxy base URL", DEFAULT_PROXY)
+  .option("--verdict <v>", "filter by verdict (allow|warn|block)")
+  .option("--name <name>", "filter by package name")
+  .option("--limit <n>", "max rows", "50")
+  .action(async (opts: { proxy: string; verdict?: string; name?: string; limit: string }) => {
+    const qs = new URLSearchParams();
+    if (opts.verdict) qs.set("verdict", opts.verdict);
+    if (opts.name) qs.set("name", opts.name);
+    qs.set("limit", opts.limit);
+    const res = await fetch(`${opts.proxy}/-/history?${qs}`);
+    if (res.status === 501) { console.log("history not enabled — set SENTINEL_HISTORY_DB on the proxy"); return; }
+    if (!res.ok) return fail(new Error(`history failed: ${res.status}`), opts.proxy);
+    const { history } = (await res.json()) as { history: { name: string; version: string; verdict: string; score: number; topFinding: string | null; auditedAt: string }[] };
+    console.log(formatHistory(history));
   });
 
 program

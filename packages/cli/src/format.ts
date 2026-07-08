@@ -173,3 +173,49 @@ export function formatViolations(rows: ViolationRow[]): string {
   L.push("");
   return L.join("\n");
 }
+
+export interface StatsSummary {
+  summary: { total: number; verdict: { allow: number; warn: number; block: number }; violations: number; quarantined: number };
+  trends: { date: string; allow: number; warn: number; block: number }[];
+  topFlagged: { name: string; warn: number; block: number }[];
+}
+
+/** Durable observability rollup surfaced from the proxy's `/-/metrics` feed. */
+export function formatStats(m: StatsSummary): string {
+  const L: string[] = [
+    "",
+    c(C.bold, `  audits: ${m.summary.total}`) +
+      `  ·  ${c(verdictColor.allow, `${m.summary.verdict.allow} allow`)} · ${c(verdictColor.warn, `${m.summary.verdict.warn} warn`)} · ${c(verdictColor.block, `${m.summary.verdict.block} block`)}`,
+    `  violations: ${m.summary.violations}  ·  quarantined: ${m.summary.quarantined}`,
+    "",
+  ];
+  if (m.trends.length) {
+    L.push(c(C.bold, "  trend (allow/warn/block per day):"));
+    for (const t of m.trends) L.push(`    ${t.date}  ${t.allow}/${t.warn}/${t.block}`);
+    L.push("");
+  }
+  if (m.topFlagged.length) {
+    L.push(c(C.bold, "  most-flagged:"));
+    for (const f of m.topFlagged) L.push(`    ${f.name}  (${f.warn} warn, ${f.block} block)`);
+    L.push("");
+  }
+  return L.join("\n");
+}
+
+export interface HistoryRow {
+  name: string; version: string; verdict: string; score: number; topFinding: string | null; auditedAt: string;
+}
+
+/** Recorded-audit list surfaced from the proxy's `/-/history` feed. */
+export function formatHistory(rows: HistoryRow[]): string {
+  if (!rows.length) return c(C.gray, "\n  (no audits recorded)\n");
+  const L: string[] = ["", c(C.bold, `  ${rows.length} audit(s):`)];
+  for (const r of rows) {
+    const verdict = r.verdict as Verdict;
+    const tag = c(verdictColor[verdict] ?? C.white, r.verdict.toUpperCase().padEnd(6));
+    L.push(`  ${tag} ${r.name}@${r.version}  ${r.score}/100  ${c(C.gray, r.auditedAt)}`);
+    if (r.topFinding) L.push(c(C.gray, `         ${r.topFinding}`));
+  }
+  L.push("");
+  return L.join("\n");
+}

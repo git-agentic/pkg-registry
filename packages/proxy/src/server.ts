@@ -31,6 +31,7 @@ import { isClaimed, parsePublishBody, publishTokenValid } from "./private.js";
 import { ViolationStore, type ViolationInput } from "./violations.js";
 import { ApprovalRequestStore } from "./approval-requests.js";
 import { makeAuthz } from "./authz.js";
+import type { HistoryDb } from "./history-db.js";
 
 export type ProxyPolicy = "observe" | "block";
 
@@ -60,6 +61,8 @@ export interface ServerOptions {
   approvalRequests: ApprovalRequestStore;
   /** Operator Ed25519 public key PEM. Undefined ⇒ control-plane auth disabled (open mode). */
   authPublicKey?: string;
+  /** Durable observability store (Phase 15). Undefined ⇒ history/metrics disabled. */
+  history?: HistoryDb;
 }
 
 const TARBALL_RE = /^(.+)\/-\/([^/]+\.tgz)$/;
@@ -80,6 +83,7 @@ async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise
 
 export function createServer(opts: ServerOptions) {
   const { upstream, store, approvals, violations, approvalRequests } = opts;
+  const history = opts.history;
   const enterprisePolicy = opts.enterprisePolicy;
   const policyHash = opts.policyHash ?? policyHashOf(enterprisePolicy);
   const policy: ProxyPolicy = opts.policy ?? "observe";
@@ -216,6 +220,37 @@ export function createServer(opts: ServerOptions) {
 
   app.get("/-/audits", (_req, res) => {
     res.json({ stats: store.stats(), audits: store.recent(50).map((s) => s.report) });
+  });
+
+  // Durable audit history / observability reads (Phase 15). Open — not role-gated
+  // (Phase 12 authz gates only mutating routes). 501 when no HistoryDb is configured,
+  // never a silent empty response.
+  const disabled = (res: import("express").Response) => res.status(501).json({ enabled: false });
+
+  app.get("/-/metrics", (_req, res) => {
+    if (!history) return disabled(res);
+    res.json({ summary: history.summary(), trends: history.trends(), topFlagged: history.topFlagged() });
+  });
+
+  app.get("/-/history", (req, res) => {
+    if (!history) return disabled(res);
+    const q = req.query;
+    // Coerce only string query params; an array/object param (?verdict=a&verdict=b,
+    // ?name[$ne]=) becomes undefined rather than reaching node:sqlite and 500ing.
+    const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
+    const numStr = str(q.limit);
+    // Clamp into [1, 500]: Math.max floors a negative/zero, since SQLite LIMIT -1 = unbounded.
+    const limit = numStr ? Math.max(1, Math.min(Number(numStr) || 50, 500)) : 50;
+    const offStr = str(q.offset);
+    const offset = offStr ? Math.max(0, Number(offStr) || 0) : 0;
+    res.json({
+      history: history.history({ verdict: str(q.verdict), name: str(q.name), limit, offset }),
+    });
+  });
+
+  app.get("/-/violations/timeline", (_req, res) => {
+    if (!history) return disabled(res);
+    res.json({ timeline: history.violationTimeline() });
   });
 
   // Whole-tree audit: fan out over the integrity-cached auditVersion path and

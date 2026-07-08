@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import type { AuditReport } from "@sentinel/core";
+import type { HistoryDb } from "./history-db.js";
 
 export interface StoredAudit {
   key: string; // `${name}@${version}`
@@ -18,7 +19,11 @@ export class AuditStore {
   private byIntegrity = new Map<string, StoredAudit>();
   private order: string[] = []; // integrity keys, most-recent last
 
-  constructor(private readonly file?: string, private readonly activePolicyHash?: string) {
+  constructor(
+    private readonly file?: string,
+    private readonly activePolicyHash?: string,
+    private readonly history?: HistoryDb,
+  ) {
     if (file && existsSync(file)) {
       try {
         const rows = JSON.parse(readFileSync(file, "utf8")) as StoredAudit[];
@@ -47,6 +52,11 @@ export class AuditStore {
     };
     this.index(report.meta.integrity ?? stored.key, stored);
     this.persist();
+    try {
+      this.history?.recordAudit(report, new Date().toISOString());
+    } catch {
+      /* observability is best-effort — never break an audit (invariant #6) */
+    }
     return stored;
   }
 
