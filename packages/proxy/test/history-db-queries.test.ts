@@ -68,4 +68,18 @@ describe("HistoryDb queries", () => {
     assert.equal(tl[0]!.detail, "network:203.0.113.9");
     db.close();
   });
+
+  test("allReports returns the stored AuditReports, newest-first, bounded by limit", () => {
+    const db = new HistoryDb(":memory:");
+    const rep = (integrity: string, name: string, verdict: "allow" | "block"): AuditReport =>
+      ({ schema: 3, meta: { name, version: "1.0.0", integrity, signature: "unsigned", provenance: "absent" }, score: verdict === "block" ? 10 : 100, verdict, findings: [] } as unknown as AuditReport);
+    db.recordAudit(rep("sha512-1", "a", "allow"), "2026-07-01T00:00:00Z");
+    db.recordAudit(rep("sha512-2", "b", "block"), "2026-07-02T00:00:00Z");
+    const all = db.allReports();
+    assert.equal(all.length, 2);
+    assert.equal(all.every((r) => r.schema === 3), true);
+    assert.equal(all[0]!.meta.name, "b"); // newest-first
+    assert.equal(db.allReports(1).length, 1); // limit caps
+    db.close();
+  });
 });
