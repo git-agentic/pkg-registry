@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { join, relative } from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { createHash, createPublicKey } from "node:crypto";
 import { Command } from "commander";
 import {
   auditTarball, type AuditReport,
@@ -15,6 +16,7 @@ import {
   parseAnyLockfile, type Coordinate,
   toCycloneDX,
   signToken, verifyToken, type Role,
+  buildAuditStatement, signAttestation, verifyAttestation, attestationKeyid,
 } from "@sentinel/core";
 import { createSandbox, runLifecycleScripts } from "@sentinel/sandbox";
 import { formatReport, formatManifest, verdictExitCode, formatTree, treeExitCode, formatViolations, formatStats, formatHistory, formatExplain, type Manifest, type ViolationRow, type ExplainResult } from "./format.js";
@@ -341,6 +343,70 @@ tokenCmd
     } else {
       console.error(`invalid: ${r.reason}`);
       process.exit(2);
+    }
+  });
+
+// NOTE: commander 15 does not support a parent command that has BOTH subcommands
+// AND its own default .argument/.action with requiredOptions — the parent's
+// requiredOptions get enforced even when routing to a subcommand (verified via a
+// minimal repro), so `attest keygen` + `attest <lockfile>` as parent+subcommand
+// silently fails ("required option ... not specified" even when it *was* passed).
+// Falling back to two sibling top-level commands: `attest-keygen` and `attest`.
+program
+  .command("attest-keygen")
+  .description("Generate an Ed25519 attestation signing keypair.")
+  .requiredOption("--out <prefix>", "output path prefix (writes <prefix>.pub.pem and <prefix>.key.pem)")
+  .action((opts: { out: string }) => {
+    const { publicKey, privateKey } = generateKeypair();
+    writeFileSync(`${opts.out}.pub.pem`, publicKey);
+    writeFileSync(`${opts.out}.key.pem`, privateKey, { mode: 0o600 });
+    console.log(`wrote ${opts.out}.pub.pem / ${opts.out}.key.pem\nkeyid: ${attestationKeyid(publicKey)}`);
+  });
+
+program
+  .command("attest")
+  .description("Produce a signed Sentinel audit attestation (VSA) for a dependency tree.")
+  .argument("[lockfile]", "path to the lockfile", "package-lock.json")
+  .requiredOption("--key <file>", "Ed25519 private key PEM to sign with")
+  .requiredOption("--out <file>", "where to write the DSSE attestation JSON")
+  .option("--sbom <file>", "where to write the CycloneDX SBOM", "sentinel-sbom.json")
+  .option("-p, --proxy <url>", "Sentinel proxy base URL", DEFAULT_PROXY)
+  .action(async (lockfile: string, opts: { key: string; out: string; sbom: string; proxy: string }) => {
+    try {
+      const coords = parseAnyLockfile(readFileSync(lockfile, "utf8"), { filename: lockfile });
+      const result = await fetchTree(opts.proxy, coords);
+      const sbom = JSON.stringify(toCycloneDX(result, { now: new Date().toISOString() }), null, 2);
+      writeFileSync(opts.sbom, sbom);
+      const sbomDigest = createHash("sha256").update(Buffer.from(sbom)).digest("hex");
+      const stmt = buildAuditStatement(result, { sbomDigest, sbomName: opts.sbom, now: new Date().toISOString() });
+      const keyPem = readFileSync(opts.key, "utf8");
+      const pubPem = createPublicKey(keyPem).export({ type: "spki", format: "pem" }).toString();
+      const env = signAttestation(stmt, keyPem, attestationKeyid(pubPem));
+      writeFileSync(opts.out, JSON.stringify(env, null, 2));
+      console.log(`attested ${result.aggregate.verdict} · subject sha256:${sbomDigest.slice(0, 16)}… → ${opts.out}`);
+    } catch (err) {
+      fail(err, opts.proxy);
+    }
+  });
+
+program
+  .command("verify-attestation")
+  .description("Verify a Sentinel audit attestation offline against a pinned public key (a deploy gate).")
+  .argument("<attestation>", "path to the DSSE attestation JSON")
+  .requiredOption("--key <file>", "pinned Ed25519 public key PEM")
+  .option("--sbom <file>", "the SBOM the attestation must bind to (checks subject digest)")
+  .option("--policy-hash <hash>", "require this policy hash")
+  .option("--require <level>", "require verdict: allow | allow-or-warn")
+  .action((attFile: string, opts: { key: string; sbom?: string; policyHash?: string; require?: string }) => {
+    const env: unknown = JSON.parse(readFileSync(attFile, "utf8"));
+    const expectedSbomDigest = opts.sbom ? createHash("sha256").update(readFileSync(opts.sbom)).digest("hex") : undefined;
+    const requireVerdict = opts.require === "allow" || opts.require === "allow-or-warn" ? opts.require : undefined;
+    const r = verifyAttestation(env, readFileSync(opts.key, "utf8"), { expectedSbomDigest, expectedPolicyHash: opts.policyHash, requireVerdict });
+    if (r.valid) {
+      console.log(`✓ valid · verdict ${r.predicate.verdict} · policy ${r.predicate.policyHash ?? "?"} · ${r.predicate.timestamp}`);
+    } else {
+      console.error(`✗ attestation rejected: ${r.reason}`);
+      process.exitCode = 2;
     }
   });
 
