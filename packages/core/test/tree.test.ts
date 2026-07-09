@@ -67,4 +67,13 @@ describe("aggregateTree", () => {
     ];
     assert.equal(aggregateTree(rows, "block").integrityMismatch, 1);
   });
+
+  test("aggregate sums vulnerabilities; an omitted field counts as 0", () => {
+    const rows: TreePackageRow[] = [
+      { name: "a", version: "1", status: "block", score: 0, topFinding: null, topFindingRuleId: null, error: null, provenance: "absent", integrityMismatch: false, vulnerabilities: 2 },
+      { name: "b", version: "1", status: "allow", score: 100, topFinding: null, topFindingRuleId: null, error: null, provenance: "absent", integrityMismatch: false, vulnerabilities: 1 },
+      { name: "c", version: "1", status: "allow", score: 100, topFinding: null, topFindingRuleId: null, error: null, provenance: "absent", integrityMismatch: false },
+    ];
+    assert.equal(aggregateTree(rows, "block").vulnerabilities, 3);
+  });
 });
