@@ -144,6 +144,11 @@ export function createServer(opts: ServerOptions) {
   app.use((req, res, next) => (req.method === "PUT" ? next() : jsonSmall(req, res, next)));
   const jsonPublish = express.json({ limit: "64mb" });
 
+  // Transient concurrency dedupe: concurrent uncached public audits for the same
+  // name@version share one pipeline. The integrity-keyed `store` stays the durable
+  // cache (invariant #4); this map lives only within the overlapping-request window.
+  const inFlight = new Map<string, Promise<{ report: AuditReport; tarball: Buffer }>>();
+
   /** Audit a specific version, using the verdict cache (integrity-keyed). */
   async function auditVersion(
     pkg: string,
@@ -159,7 +164,23 @@ export function createServer(opts: ServerOptions) {
       store.put(report); // populate verdict store so /-/approvals can find the integrity
       return { report, tarball };
     }
+    // A caller that already holds the bytes skips the fetch entirely — no coalescing needed.
+    if (providedTarball) return auditPublicUncached(pkg, version, providedTarball);
 
+    // Coalesce concurrent uncached fetches for the same coordinate.
+    const key = `${pkg}@${version}`;
+    const existing = inFlight.get(key);
+    if (existing) return existing;
+    const p = auditPublicUncached(pkg, version, undefined).finally(() => inFlight.delete(key));
+    inFlight.set(key, p);
+    return p;
+  }
+
+  async function auditPublicUncached(
+    pkg: string,
+    version: string,
+    providedTarball: Buffer | undefined,
+  ): Promise<{ report: AuditReport; tarball: Buffer }> {
     const pm = await upstream.getPackument(pkg);
     const vmeta = pm.versions[version];
     if (!vmeta) throw new HttpError(404, `unknown version ${pkg}@${version}`);
