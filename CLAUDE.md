@@ -391,15 +391,15 @@ the audit-tree package cap, and the opt-in token-bucket rate limiter.
 
 ```bash
 npm run build            # tsc --build (project references: core → proxy/cli)
-npm test                 # engine + end-to-end proxy: 656 tests on this host (654 pass, 2 skipped on darwin).
+npm test                 # engine + end-to-end proxy: 659 tests on this host (657 pass, 2 skipped on darwin).
                          # Skips are platform-gated enforcement: "non-darwin throws" skips on darwin
                          # (it verifies darwin-only behaviour), and the "no silent skip" CI guard skips
                          # off-CI. The BubblewrapSandbox enforcement suite and the Linux enforce-e2e tests
-                         # skip as describe-level blocks on darwin ("requires Linux") and are not in the 656
+                         # skip as describe-level blocks on darwin ("requires Linux") and are not in the 659
                          # count. Phase 10's violation-enforce e2e and the darwin-gated runtime-violation
                          # effect test (SeatbeltSandbox: "a denied credential read surfaces a confirmed
                          # runtime violation") RUN on darwin via Seatbelt, the same way the rest of the
-                         # Seatbelt effect suite does, and ARE in the 656 count. Phase 25 Slice 1's
+                         # Seatbelt effect suite does, and ARE in the 659 count. Phase 25 Slice 1's
                          # write-floor SeatbeltSandbox enforcement effect tests (positive control on
                          # the floor, persistence carve-out under a fake $HOME inside the floor's
                          # temp dir, a real /dev/null redirect) are likewise darwin-gated and RUN on
