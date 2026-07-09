@@ -67,7 +67,7 @@ not yet built · `Superseded` / `Deprecated` — replaced; see the linked succes
 
 | ADR | Title | Decision in one line |
 |-----|-------|----------------------|
-| [0038](./0038-sandbox-default-deny.md) | Sandbox default-deny (write slice) | Writes deny-by-default with a fixed floor + Grant re-allow; reads unchanged pending Slice 2 |
+| [0038](./0038-sandbox-default-deny.md) | Sandbox default-deny (writes + reads) | Writes deny-by-default with a fixed floor + Grant re-allow (Slice 1); `$HOME` reads deny-by-default with a read-allow list for the node prefix/project root/caches (Slice 2) — both slices landed |
 
 ## Conventions
 

@@ -6,7 +6,7 @@ import type { Capability } from "@sentinel/core";
 const fs = (target: string): Capability => ({ kind: "filesystem", target, evidence: [] });
 const net = (target: string): Capability => ({ kind: "network", target, evidence: [] });
 const HOME = "/home/test";
-const OPTS = { homeDir: HOME, cwd: "/work/pkg", tmpDir: "/tmp/build" };
+const OPTS = { homeDir: HOME, cwd: "/work/pkg", tmpDir: "/tmp/build", nodePrefix: "/usr/local", projectRoot: "/work" };
 const argv = (a: Capability[]) => generateBwrapArgs(a, OPTS).join(" ");
 
 describe("generateBwrapArgs", () => {
@@ -58,7 +58,7 @@ function binds(args: string[], flag: string): string[] {
   return out;
 }
 
-const OPTS2 = { homeDir: "/home/x", cwd: "/work/pkg", tmpDir: "/tmp/build" };
+const OPTS2 = { homeDir: "/home/x", cwd: "/work/pkg", tmpDir: "/tmp/build", nodePrefix: "/usr/local", projectRoot: "/work" };
 
 describe("generateBwrapArgs — write-deny (Phase 25)", () => {
   test("root is mounted read-only (reads work, writes denied)", () => {
@@ -112,5 +112,58 @@ describe("generateBwrapArgs — write-deny (Phase 25)", () => {
   test("with no pathExists predicate, all SENSITIVE masks are emitted (pure/deterministic default)", () => {
     const tmpfs = binds(generateBwrapArgs([], OPTS2), "--tmpfs");
     assert.ok(tmpfs.includes("/home/x/.ssh") && tmpfs.includes("/home/x/.aws"), "default emits every subpath mask");
+  });
+});
+
+const OPTS3 = { homeDir: "/home/x", cwd: "/home/x/app/node_modules/pkg", tmpDir: "/tmp/build", nodePrefix: "/home/x/.nvm/versions/node/v24/prefix", projectRoot: "/home/x/app" };
+
+describe("generateBwrapArgs — $HOME-read-deny (Phase 25 Slice 2)", () => {
+  test("masks $HOME with a tmpfs, then re-binds the node prefix + project root read-only", () => {
+    const args = generateBwrapArgs([], OPTS3);
+    assert.ok(binds(args, "--tmpfs").includes("/home/x"), "$HOME is tmpfs-masked (reads denied)");
+    const ro = binds(args, "--ro-bind-try"); // node prefix / project root are bound with -try (may be absent)
+    assert.ok(ro.includes("/home/x/.nvm/versions/node/v24/prefix"), "node prefix re-bound read-only (node-under-$HOME)");
+    assert.ok(ro.includes("/home/x/app"), "project root re-bound read-only (require resolves)");
+  });
+  test("mount order: $HOME tmpfs, THEN the ro read-allow, THEN the rw cwd on top (cwd stays writable)", () => {
+    const args = generateBwrapArgs([], OPTS3);
+    const tmpfsHome = args.indexOf("/home/x");                       // --tmpfs <home>
+    const roProj = args.indexOf("/home/x/app");                      // --ro-bind-try <projectRoot>
+    const rwCwd = args.indexOf("/home/x/app/node_modules/pkg");      // --bind-try <cwd>
+    assert.ok(tmpfsHome !== -1 && roProj > tmpfsHome, "ro read-allow comes after the $HOME tmpfs");
+    assert.ok(rwCwd > roProj, "the rw cwd bind comes AFTER the ro project bind, so cwd stays writable");
+  });
+  test("write-deny (slice 1) root is still read-only", () => {
+    assert.deepEqual(binds(generateBwrapArgs([], OPTS3), "--ro-bind").slice(0, 1), ["/"]);
+  });
+  test("projectRoot === homeDir does not re-open $HOME for reads (guard drops it); the tmpfs mask stays", () => {
+    const opts = { ...OPTS3, projectRoot: OPTS3.homeDir };
+    const args = generateBwrapArgs([], opts);
+    const ro = binds(args, "--ro-bind-try");
+    assert.ok(!ro.includes("/home/x"), "the guard must drop $HOME itself from the ro read-allow binds");
+    assert.ok(binds(args, "--tmpfs").includes("/home/x"), "the --tmpfs $HOME mask is still present");
+  });
+  test("$HOME under tmpDir: the tmpDir rw bind precedes the $HOME tmpfs so the tmpfs wins (containment preserved)", () => {
+    // A hermetic test's fake $HOME lives under os.tmpdir(), which the floor binds rw. If that
+    // tmpDir bind came AFTER `--tmpfs $HOME` it would overmount and re-expose $HOME's contents.
+    const opts = { homeDir: "/tmp/build/h", cwd: "/tmp/build/h/app/node_modules/pkg", tmpDir: "/tmp/build", nodePrefix: "/usr/local", projectRoot: "/tmp/build/h/app" };
+    const args = generateBwrapArgs([], opts);
+    const tmpDirBind = args.indexOf("/tmp/build");   // --bind-try <tmpDir> (non-home floor, before the tmpfs)
+    const tmpfsHome = args.indexOf("/tmp/build/h");  // --tmpfs <home>
+    assert.ok(tmpDirBind !== -1 && tmpfsHome !== -1, "both the tmpDir rw bind and the $HOME tmpfs are present");
+    assert.ok(tmpDirBind < tmpfsHome, "the tmpDir rw bind must come BEFORE --tmpfs $HOME so the tmpfs wins for the home subtree");
+    // cwd (under $HOME) is re-bound rw AFTER the tmpfs, so it stays writable.
+    assert.ok(args.indexOf("/tmp/build/h/app/node_modules/pkg") > tmpfsHome, "cwd is re-bound rw after the tmpfs");
+  });
+  test("cwd NOT under $HOME with projectRoot===cwd: cwd's rw bind comes AFTER its ro read-allow bind (cwd stays writable)", () => {
+    // The enforce/runLifecycleScripts default: projectRoot falls back to cwd, and cwd is a temp
+    // dir NOT under the real $HOME. cwd is ro-bound (as projectRoot) then must be rw-bound after.
+    const opts = { homeDir: "/home/runner", cwd: "/tmp/bw-run/pkg", tmpDir: "/tmp", nodePrefix: "/usr/local", projectRoot: "/tmp/bw-run/pkg" };
+    const args = generateBwrapArgs([], opts);
+    const roIdx = args.findIndex((a, i) => a === "--ro-bind-try" && args[i + 1] === "/tmp/bw-run/pkg");
+    const rwIdx = args.findIndex((a, i) => a === "--bind-try" && args[i + 1] === "/tmp/bw-run/pkg");
+    assert.ok(roIdx !== -1, "cwd is ro-bound as the projectRoot read-allow");
+    assert.ok(rwIdx !== -1, "cwd is also rw-bound by the write floor");
+    assert.ok(rwIdx > roIdx, "the rw cwd bind must come AFTER the ro projectRoot bind, so cwd stays writable");
   });
 });

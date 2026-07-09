@@ -28,10 +28,11 @@ test("Linux CI must actually run bwrap enforcement (no silent skip)", {
 describe("BubblewrapSandbox enforcement", { skip }, () => {
   test("a denied credential read leaves the secret unobtained (EFFECT)", () => {
     const home = realpathSync(mkdtempSync(join(tmpdir(), "bw-read-")));
+    const work = realpathSync(mkdtempSync(join(tmpdir(), "bw-readwork-")));
     mkdirSync(join(home, ".ssh"));
     writeFileSync(join(home, ".ssh", "id_rsa"), "TOPSECRET-XYZ");
-    const out = join(home, "out.txt");
-    new BubblewrapSandbox().run(`cat ${join(home, ".ssh", "id_rsa")} > ${out} 2>/dev/null || true`, { cwd: home, approved: [], homeDir: home });
+    const out = join(work, "out.txt"); // write to cwd (persists); $HOME is a read-denied tmpfs under Slice 2
+    new BubblewrapSandbox().run(`cat ${join(home, ".ssh", "id_rsa")} > ${out} 2>/dev/null || true`, { cwd: work, approved: [], homeDir: home });
     assert.ok(existsSync(out), "positive control: the sandboxed script must have run (output file created)");
     const got = existsSync(out) ? readFileSync(out, "utf8") : "";
     assert.ok(!got.includes("TOPSECRET-XYZ"), "the secret bytes must NOT have been obtained");
@@ -44,13 +45,14 @@ describe("BubblewrapSandbox enforcement", { skip }, () => {
     await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
     const port = (server.address() as net.AddressInfo).port;
     const home = realpathSync(mkdtempSync(join(tmpdir(), "bw-net-")));
-    const ran = join(home, "ran.txt");
+    const work = realpathSync(mkdtempSync(join(tmpdir(), "bw-network-")));
+    const ran = join(work, "ran.txt"); // cwd (persists); $HOME is a read-denied tmpfs under Slice 2
     // Connect via node, not a /dev/tcp bashism — BubblewrapSandbox runs `/bin/sh -c`, which is
     // dash on Ubuntu (no /dev/tcp). Under --unshare-net the sandbox has its own netns, so this
     // 127.0.0.1 cannot reach the host listener; the assertion is on the listener side (EFFECT).
     // The script also writes a ran-marker so we can prove bwrap actually launched it.
     const connect = `node -e "require('fs').writeFileSync('${ran}','RAN');const s=require('net').connect(${port},'127.0.0.1');s.on('connect',()=>s.end());s.on('error',()=>{});setTimeout(()=>process.exit(0),400)"`;
-    new BubblewrapSandbox().run(connect, { cwd: home, approved: [], homeDir: home });
+    new BubblewrapSandbox().run(connect, { cwd: work, approved: [], homeDir: home });
     await new Promise((r) => setTimeout(r, 200));
     server.close();
     assert.ok(existsSync(ran), "positive control: the sandboxed script must have run");
@@ -59,41 +61,47 @@ describe("BubblewrapSandbox enforcement", { skip }, () => {
 
   test("an unapproved write to a persistence path is denied (planted file unchanged)", () => {
     const home = realpathSync(mkdtempSync(join(tmpdir(), "bw-write-")));
+    const work = realpathSync(mkdtempSync(join(tmpdir(), "bw-writework-")));
     const rc = join(home, ".bashrc");
-    const allowed = join(home, "allowed.txt");
+    const allowed = join(work, "allowed.txt"); // positive control in cwd (persists)
     writeFileSync(rc, "ORIGINAL");
-    new BubblewrapSandbox().run(`echo OK > "${allowed}"; echo PWNED >> "${rc}" 2>/dev/null || true`, { cwd: home, approved: [], homeDir: home });
+    new BubblewrapSandbox().run(`echo OK > "${allowed}"; echo PWNED >> "${rc}" 2>/dev/null || true`, { cwd: work, approved: [], homeDir: home });
     assert.equal(readFileSync(allowed, "utf8").trim(), "OK", "script must have executed (positive control)");
     assert.equal(readFileSync(rc, "utf8"), "ORIGINAL", "the denied write must have been blocked");
   });
 
   test("an unapproved credential env-var never reaches the script; approval passes it through (EFFECT)", () => {
     const home = realpathSync(mkdtempSync(join(tmpdir(), "bw-env-")));
-    const out = join(home, "leak.txt");
+    const work = realpathSync(mkdtempSync(join(tmpdir(), "bw-envwork-")));
+    const out = join(work, "leak.txt"); // cwd (persists); $HOME is a read-denied tmpfs under Slice 2
     const cmd = `node -e "require('fs').writeFileSync('${out}', String(process.env.SECRET_API_KEY||''))"`;
-    new BubblewrapSandbox().run(cmd, { cwd: home, approved: [], homeDir: home, env: scrubEnv({ ...process.env, SECRET_API_KEY: "TOPSECRET-ENV" }, []) });
+    new BubblewrapSandbox().run(cmd, { cwd: work, approved: [], homeDir: home, env: scrubEnv({ ...process.env, SECRET_API_KEY: "TOPSECRET-ENV" }, []) });
     assert.ok(existsSync(out), "positive control: node must have written the output file in the first (no-approval) run");
     assert.ok(!(existsSync(out) ? readFileSync(out, "utf8") : "").includes("TOPSECRET-ENV"), "the credential env-var must not have reached the script");
     const approved: Capability[] = [{ kind: "env", target: "SECRET_API_KEY", evidence: [] }];
-    new BubblewrapSandbox().run(cmd, { cwd: home, approved, homeDir: home, env: scrubEnv({ ...process.env, SECRET_API_KEY: "TOPSECRET-ENV" }, approved) });
+    new BubblewrapSandbox().run(cmd, { cwd: work, approved, homeDir: home, env: scrubEnv({ ...process.env, SECRET_API_KEY: "TOPSECRET-ENV" }, approved) });
     assert.ok(readFileSync(out, "utf8").includes("TOPSECRET-ENV"), "an approved env var is passed through");
   });
 
   test("a filesystem approval relaxes the credential read deny (EFFECT)", () => {
     const home = realpathSync(mkdtempSync(join(tmpdir(), "bw-fsapprove-")));
+    const work = realpathSync(mkdtempSync(join(tmpdir(), "bw-fsapprovework-")));
     mkdirSync(join(home, ".ssh"));
     writeFileSync(join(home, ".ssh", "id_rsa"), "APPROVED-SECRET");
-    const out = join(home, "out.txt");
+    const out = join(work, "out.txt"); // cwd (persists); the approved read of $HOME/.ssh is re-allowed
     const approved: Capability[] = [{ kind: "filesystem", target: ".ssh", evidence: [] }];
-    new BubblewrapSandbox().run(`cat ${join(home, ".ssh", "id_rsa")} > ${out} 2>/dev/null || true`, { cwd: home, approved, homeDir: home });
+    new BubblewrapSandbox().run(`cat ${join(home, ".ssh", "id_rsa")} > ${out} 2>/dev/null || true`, { cwd: work, approved, homeDir: home });
     assert.ok(readFileSync(out, "utf8").includes("APPROVED-SECRET"), "an approved filesystem read must succeed");
   });
 
-  test("a non-denied path stays readable and writable inside the sandbox (positive control)", () => {
+  test("a non-denied path (the Install dir) stays readable and writable inside the sandbox (positive control)", () => {
+    // Under Slice 2 an arbitrary $HOME path is read-DENIED; the read/write positive control uses
+    // the Install directory (cwd), which is re-bound rw and stays fully readable+writable.
     const home = realpathSync(mkdtempSync(join(tmpdir(), "bw-allow-")));
-    writeFileSync(join(home, "data.txt"), "HELLO");
-    const out = join(home, "copy.txt");
-    new BubblewrapSandbox().run(`cat ${join(home, "data.txt")} > ${out}`, { cwd: home, approved: [], homeDir: home });
+    const work = realpathSync(mkdtempSync(join(tmpdir(), "bw-allowwork-")));
+    writeFileSync(join(work, "data.txt"), "HELLO");
+    const out = join(work, "copy.txt");
+    new BubblewrapSandbox().run(`cat ${join(work, "data.txt")} > ${out}`, { cwd: work, approved: [], homeDir: home });
     assert.equal(readFileSync(out, "utf8").trim(), "HELLO", "non-denied read/write must work");
   });
 
@@ -133,5 +141,22 @@ describe("BubblewrapSandbox enforcement", { skip }, () => {
     const r = runLifecycleScripts({ packageDir: dir, sandbox: new BubblewrapSandbox(), homeDir: process.env.HOME ?? "/root" });
     assert.equal(r.failed, false, `postinstall failed under bwrap; child stderr: ${r.results.map((x) => x.stderr).join(" | ")}`);
     assert.equal(readFileSync(join(dir, "built.txt"), "utf8").trim(), "built");
+  });
+
+  test("a $HOME read outside the read-allow list is contained; the project tree stays readable", () => {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "bw-read-")));
+    const proj = join(home, "app"); mkdirSync(join(proj, "node_modules", "dep"), { recursive: true });
+    writeFileSync(join(proj, "node_modules", "dep", "index.js"), "module.exports=1");
+    writeFileSync(join(home, "secret.txt"), "TOPSECRET");
+    const cwd = join(proj, "node_modules", "pkg"); mkdirSync(cwd, { recursive: true });
+    const r = new BubblewrapSandbox().run(
+      `node -e "require('${join(proj, "node_modules", "dep", "index.js")}'); process.stdout.write('DEP_OK'); try{require('fs').readFileSync('${join(home, "secret.txt")}');process.stdout.write('LEAK')}catch(e){process.stdout.write('READ_DENIED')}"`,
+      { cwd, approved: [], homeDir: home, projectRoot: proj },
+    );
+    const diag = ` [stdout=${JSON.stringify(r.stdout)} stderr=${JSON.stringify(r.stderr.slice(-400))}]`;
+    assert.ok(r.stdout.includes("DEP_OK"), "the project tree must be readable" + diag);
+    // Containment only — bwrap tmpfs → ENOENT, which classifyViolation does not classify
+    // (the accepted Seatbelt/bwrap telemetry asymmetry; report is Seatbelt-only, ADR-0023).
+    assert.ok(r.stdout.includes("READ_DENIED") && !r.stdout.includes("LEAK"), "the non-allow-listed $HOME read must be contained" + diag);
   });
 });

@@ -6,18 +6,23 @@ import type { Sandbox, SandboxResult } from "./types.js";
 import type { Capability } from "@sentinel/core";
 import { computeDenySet } from "./deny-set.js";
 import { classifyViolation } from "./violation.js";
+import { nodeInstallPrefix } from "./read-allow.js";
 
 /** bwrap's own errors when the kernel refuses unprivileged user namespaces (Ubuntu 24.04 AppArmor, etc.). */
 const NS_FAILURE = /Creating new namespace failed|No permissions to create new namespace|setting up uid map/i;
 
 /** Enforces a generated bwrap profile via `bwrap`. Fails closed on non-Linux, missing bwrap, or refused namespace. */
 export class BubblewrapSandbox implements Sandbox {
-  run(cmd: string, opts: { cwd: string; approved: Capability[]; homeDir: string; env?: NodeJS.ProcessEnv }): SandboxResult {
+  run(cmd: string, opts: { cwd: string; approved: Capability[]; homeDir: string; env?: NodeJS.ProcessEnv; projectRoot?: string }): SandboxResult {
     if (process.platform !== "linux") {
       throw new Error(`bubblewrap enforcement unavailable on ${process.platform} (Linux required)`);
     }
     const args = [
-      ...generateBwrapArgs(opts.approved, { homeDir: opts.homeDir, cwd: opts.cwd, tmpDir: tmpdir(), pathExists: existsSync }),
+      ...generateBwrapArgs(opts.approved, {
+        homeDir: opts.homeDir, cwd: opts.cwd, tmpDir: tmpdir(), pathExists: existsSync,
+        nodePrefix: nodeInstallPrefix(process.execPath),
+        projectRoot: opts.projectRoot ?? opts.cwd,
+      }),
       "/bin/sh",
       "-c",
       cmd,

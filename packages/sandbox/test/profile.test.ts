@@ -9,6 +9,8 @@ const HOME = "/Users/test";
 const withOpts = (extra: { homeDir: string }) => ({
   cwd: "/work/pkg",
   tmpDir: "/private/tmp/tmpdir-x",
+  nodePrefix: "/usr/local",
+  projectRoot: "/work/pkg",
   ...extra,
 });
 
@@ -99,7 +101,7 @@ describe("generateProfile", () => {
   });
 });
 
-const OPTS = { homeDir: "/Users/x", cwd: "/work/pkg", tmpDir: "/var/folders/z/T" };
+const OPTS = { homeDir: "/Users/x", cwd: "/work/pkg", tmpDir: "/var/folders/z/T", nodePrefix: "/usr/local", projectRoot: "/work/pkg" };
 
 describe("generateProfile — write-deny (Phase 25)", () => {
   test("emits a blanket write-deny before the floor allows", () => {
@@ -158,5 +160,44 @@ describe("generateProfile — write-deny (Phase 25)", () => {
     const p = generateProfile(approved, OPTS);
     const allowLine = p.split("\n").find((l) => l.startsWith("(allow file-write*"))!;
     assert.ok(!allowLine.includes(`(subpath "/")`), "bare root must not be granted");
+  });
+});
+
+const OPTS2 = { homeDir: "/Users/x", cwd: "/Users/x/app/node_modules/pkg", tmpDir: "/var/folders/z/T", nodePrefix: "/usr/local", projectRoot: "/Users/x/app" };
+
+describe("generateProfile — $HOME-read-deny (Phase 25 Slice 2)", () => {
+  test("denies $HOME reads, allows metadata traversal, then re-allows the read-allow list, in that order", () => {
+    const p = generateProfile([], OPTS2);
+    const denyHome = p.indexOf(`(deny file-read* (subpath "/Users/x")`);
+    const metaAllow = p.indexOf(`(allow file-read-metadata (subpath "/Users/x")`);
+    const allowList = p.indexOf(`(allow file-read* `);
+    assert.ok(denyHome !== -1, "$HOME read-deny present");
+    assert.ok(metaAllow > denyHome, "metadata (lstat) traversal allow comes AFTER the $HOME read-deny (so require() can resolve)");
+    assert.ok(allowList > metaAllow, "read-allow list comes AFTER the metadata allow (SBPL last-match-wins)");
+    for (const frag of [`(subpath "/usr/local")`, `(subpath "/Users/x/app")`, `(subpath "/Users/x/.node-gyp")`, `(subpath "/Users/x/.cache")`]) {
+      assert.ok(p.includes(frag), `read-allow must include ${frag}`);
+    }
+  });
+  test("the SENSITIVE read carve-out (incl. /etc/passwd) still comes after the re-allows", () => {
+    const p = generateProfile([], OPTS2);
+    const allowList = p.indexOf(`(allow file-read*`);
+    const carve = p.indexOf(`(deny file-read* (literal "/private/etc/passwd")`);
+    assert.ok(carve > allowList, "/etc/passwd read-deny is a carve-out after the re-allows");
+  });
+  test("write-deny (slice 1) is unchanged", () => {
+    const p = generateProfile([], OPTS2);
+    assert.ok(p.includes("(deny file-write*)"), "slice-1 blanket write-deny still present");
+  });
+  test("an approved filesystem Grant under $HOME is READ-allowed too (Grants confer read+write)", () => {
+    const approved: Capability[] = [{ kind: "filesystem", target: ".config/app", evidence: [] }];
+    const p = generateProfile(approved, OPTS2);
+    const readAllowLine = p.split("\n").find((l) => l.startsWith("(allow file-read*") && !l.includes("metadata"))!;
+    assert.ok(readAllowLine.includes(`(subpath "/Users/x/.config/app")`), "granted path is read-allowed");
+  });
+  test("projectRoot === homeDir does not re-open all of $HOME for reads (guard drops the entry)", () => {
+    const opts = { ...OPTS2, projectRoot: OPTS2.homeDir };
+    const p = generateProfile([], opts);
+    const readAllowLine = p.split("\n").find((l) => l.startsWith("(allow file-read*") && !l.includes("metadata"))!;
+    assert.ok(!readAllowLine.includes(`(subpath "/Users/x")`), "the guard must drop $HOME itself from the read-allow list");
   });
 });

@@ -243,6 +243,33 @@ approved `filesystem:` target now resolves against `homeDir` (`expandHome`
 widened) when emitted as a positive write Grant. Reads are unchanged this
 slice — `$HOME`-read-deny is a separate, gated Slice 2 follow-up. Scoring
 and the approval/manifest model are untouched (invariants #1–#6, ADR-0038).
+Phase 25 Slice 2 flips `$HOME` reads to **deny-by-default** as well,
+completing the ADR-0016/0017/0018 supersession: a pure `readAllowList`
+(`packages/sandbox/src/read-allow.ts`, `{ nodePrefix, projectRoot }`)
+re-opens exactly the node runtime's install prefix
+(`nodeInstallPrefix(execPath)` — a node-under-`$HOME` runtime like
+nvm/fnm/volta still loads its stdlib), the project root
+(`resolveProjectRoot(cwd, INIT_CWD)` — trusts `INIT_CWD` when absolute, else
+walks up to the nearest ancestor `package.json`, else `cwd` — so `require()`
+resolves across the whole project tree), and `~/.node-gyp`/`~/.cache`; system
+paths outside `$HOME` are unaffected. Two new sandbox inputs feed this:
+`nodePrefix` (from `process.execPath`) and `projectRoot` (from `INIT_CWD`,
+now an optional `Sandbox.run` parameter, default `cwd`). Seatbelt's
+`generateProfile` emits three SBPL layers (last-match-wins): `(deny
+file-read* (subpath $HOME))`, then `(allow file-read-metadata (subpath
+$HOME))` — **load-bearing**, probe-verified: without it `require()`'s
+lstat/stat traversal breaks with EPERM — then `(allow file-read*
+…read-allow-list…)`; the existing SENSITIVE read carve-out
+(`/etc/passwd`/`/etc/shadow`) is unchanged and still wins last. bwrap's
+`generateBwrapArgs` does `--tmpfs $HOME` (empties it, denying reads), then
+re-binds the read-allow list read-only (`--ro-bind-try`), then re-binds the
+Slice 1 write floor read-write on top — mount order matters, the broad ro
+project bind must precede the narrow rw `cwd` bind. Accepted telemetry
+asymmetry (extends ADR-0023, CI-confirmed): Seatbelt's read-deny EPERMs,
+which `classifyViolation` reports as `confirmed`; bwrap's tmpfs makes the
+path ENOENT, which is not classified — the read is **contained** on both
+backends regardless, only the *report* differs. Scoring and the
+approval/manifest model are untouched (invariants #1–#6, ADR-0038).
 
 We are the Socket/Chainguard wedge: **do not** try to replace npm. Resolve and
 serve real packages transparently; only attach signal.

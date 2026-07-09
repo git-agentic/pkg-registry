@@ -33,7 +33,7 @@ describe("computeDenySet", () => {
   test("non-drift: every deniedPath appears in the generated Seatbelt profile", () => {
     const approved: Capability[] = [fsCap("~/.aws")];
     const ds = computeDenySet(approved, { homeDir: HOME, platform: "darwin" });
-    const profile = generateProfile(approved, { homeDir: HOME, cwd: "/work/pkg", tmpDir: "/private/tmp/tmpdir-x" });
+    const profile = generateProfile(approved, { homeDir: HOME, cwd: "/work/pkg", tmpDir: "/private/tmp/tmpdir-x", nodePrefix: "/usr/local", projectRoot: "/work/pkg" });
     for (const p of ds.deniedPaths) {
       assert.ok(profile.includes(p), `profile must deny ${p} (deny-set/profile drift)`);
     }

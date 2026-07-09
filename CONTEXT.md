@@ -26,6 +26,13 @@ A deny punched *back* into an otherwise-allowed region — e.g. `/etc` is read-a
 A credential or persistence filesystem location Sentinel treats as dangerous (SSH keys, cloud creds, shell rc files, autostart). The shared source of truth for both code-level detection and sandbox `Carve-out`s.
 _Avoid_: secret path, protected path.
 
+**Read-allow list**:
+The fixed set of paths a sandboxed script may still read *inside* `$HOME` once home-directory reads are `Deny-by-default` — the node install prefix, the `Project root`, and the node build caches. Everything else under `$HOME` is denied; system paths outside `$HOME` are unaffected.
+_Avoid_: read floor (the write-side term is `write floor`; reads use an allow *list*, not a floor, since there's no baseline every script needs beyond the node runtime and its own project).
+
+**Node install prefix**:
+The directory the running node runtime is installed under (one level above its `bin/`) — derived from `process.execPath`. Read-allowed so a node runtime installed *under* `$HOME` (nvm/fnm/volta) can still load its own standard library.
+
 ### Install topology
 
 **Install directory**:

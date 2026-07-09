@@ -284,6 +284,33 @@ approved `filesystem:` target now resolves against `homeDir` (`expandHome`
 widened) when emitted as a positive write Grant. Reads are unchanged this
 slice — `$HOME`-read-deny is a separate, gated Slice 2 follow-up. Scoring
 and the approval/manifest model are untouched (invariants #1–#6, ADR-0038).
+Phase 25 Slice 2 flips `$HOME` reads to **deny-by-default** as well,
+completing the ADR-0016/0017/0018 supersession: a pure `readAllowList`
+(`packages/sandbox/src/read-allow.ts`, `{ nodePrefix, projectRoot }`)
+re-opens exactly the node runtime's install prefix
+(`nodeInstallPrefix(execPath)` — a node-under-`$HOME` runtime like
+nvm/fnm/volta still loads its stdlib), the project root
+(`resolveProjectRoot(cwd, INIT_CWD)` — trusts `INIT_CWD` when absolute, else
+walks up to the nearest ancestor `package.json`, else `cwd` — so `require()`
+resolves across the whole project tree), and `~/.node-gyp`/`~/.cache`; system
+paths outside `$HOME` are unaffected. Two new sandbox inputs feed this:
+`nodePrefix` (from `process.execPath`) and `projectRoot` (from `INIT_CWD`,
+now an optional `Sandbox.run` parameter, default `cwd`). Seatbelt's
+`generateProfile` emits three SBPL layers (last-match-wins): `(deny
+file-read* (subpath $HOME))`, then `(allow file-read-metadata (subpath
+$HOME))` — **load-bearing**, probe-verified: without it `require()`'s
+lstat/stat traversal breaks with EPERM — then `(allow file-read*
+…read-allow-list…)`; the existing SENSITIVE read carve-out
+(`/etc/passwd`/`/etc/shadow`) is unchanged and still wins last. bwrap's
+`generateBwrapArgs` does `--tmpfs $HOME` (empties it, denying reads), then
+re-binds the read-allow list read-only (`--ro-bind-try`), then re-binds the
+Slice 1 write floor read-write on top — mount order matters, the broad ro
+project bind must precede the narrow rw `cwd` bind. Accepted telemetry
+asymmetry (extends ADR-0023, CI-confirmed): Seatbelt's read-deny EPERMs,
+which `classifyViolation` reports as `confirmed`; bwrap's tmpfs makes the
+path ENOENT, which is not classified — the read is **contained** on both
+backends regardless, only the *report* differs. Scoring and the
+approval/manifest model are untouched (invariants #1–#6, ADR-0038).
 
 We are the Socket/Chainguard wedge: **do not** try to replace npm. Resolve and
 serve real packages transparently; only attach signal.
@@ -364,19 +391,31 @@ the audit-tree package cap, and the opt-in token-bucket rate limiter.
 
 ```bash
 npm run build            # tsc --build (project references: core → proxy/cli)
-npm test                 # engine + end-to-end proxy: 638 tests on this host (636 pass, 2 skipped on darwin).
+npm test                 # engine + end-to-end proxy: 661 tests on this host (659 pass, 2 skipped on darwin).
                          # Skips are platform-gated enforcement: "non-darwin throws" skips on darwin
                          # (it verifies darwin-only behaviour), and the "no silent skip" CI guard skips
                          # off-CI. The BubblewrapSandbox enforcement suite and the Linux enforce-e2e tests
-                         # skip as describe-level blocks on darwin ("requires Linux") and are not in the 638
+                         # skip as describe-level blocks on darwin ("requires Linux") and are not in the 661
                          # count. Phase 10's violation-enforce e2e and the darwin-gated runtime-violation
                          # effect test (SeatbeltSandbox: "a denied credential read surfaces a confirmed
                          # runtime violation") RUN on darwin via Seatbelt, the same way the rest of the
-                         # Seatbelt effect suite does, and ARE in the 638 count. Phase 25's
+                         # Seatbelt effect suite does, and ARE in the 661 count. Phase 25 Slice 1's
                          # write-floor SeatbeltSandbox enforcement effect tests (positive control on
                          # the floor, persistence carve-out under a fake $HOME inside the floor's
                          # temp dir, a real /dev/null redirect) are likewise darwin-gated and RUN on
-                         # darwin via Seatbelt.
+                         # darwin via Seatbelt. Phase 25 Slice 2's $HOME-read-deny SeatbeltSandbox
+                         # effect test ("a $HOME read outside the read-allow list is denied; the
+                         # project tree + a build stay readable") is darwin-gated and RUNs on darwin
+                         # via Seatbelt, asserting containment ONLY (the sandboxed script's own
+                         # try/catch observes the read as denied; the test never inspects
+                         # classifyViolation's output) — the equivalent bwrap effect test ("a $HOME
+                         # read outside the read-allow list is contained; the project tree stays
+                         # readable") runs cross-platform and likewise asserts containment ONLY.
+                         # Seatbelt's EPERM->confirmed-violation telemetry is exercised by the
+                         # pre-existing Phase 10 credential-read-violation test, not by either new
+                         # Slice 2 test; bwrap's --tmpfs denial surfaces as ENOENT, not a
+                         # classifiable violation signature (the accepted telemetry asymmetry,
+                         # ADR-0038/ADR-0023).
                          # Phase 7's audit-tree, Phase 8/9's signature/provenance, Phase 10's
                          # classifyViolation/deny-set/violations-store, Phase 11's MCP/approval-request,
                          # Phase 12's auth/authz-e2e, Phase 13's typosquat/dependency-confusion,
@@ -399,11 +438,15 @@ npm test                 # engine + end-to-end proxy: 638 tests on this host (63
                          # 413-over-cap), coalesce (concurrent-uncached-audit stampede fix),
                          # rate-limit (token-bucket unit) + rate-limit-e2e (429 + Retry-After on
                          # audit-tree/explain/policy-preview), and limits-startup (fail-closed FATAL
-                         # parsing of all four env vars) tests, and Phase 25's directional pathCovers
-                         # unit tests, writeAllowFloor unit tests, and generateProfile/
+                         # parsing of all four env vars) tests, and Phase 25 Slice 1's directional
+                         # pathCovers unit tests, writeAllowFloor unit tests, and generateProfile/
                          # generateBwrapArgs write-deny generator tests (blanket deny, floor re-allow,
                          # Grant-as-positive-allow, SENSITIVE carve-out-after-floor, and the deny-set
-                         # non-drift check) are hermetic
+                         # non-drift check), and Phase 25 Slice 2's readAllowList/nodeInstallPrefix/
+                         # resolveProjectRoot unit tests, generateProfile/generateBwrapArgs
+                         # $HOME-read-deny generator tests (blanket deny, file-read-metadata
+                         # traversal layer, read-allow re-open, SENSITIVE read carve-out unchanged),
+                         # and the runLifecycleScripts projectRoot-threading test are hermetic
                          # and platform-neutral, so the darwin/Linux relationship from Phase 6 (Linux one
                          # test higher, one fewer skip) should hold, but hasn't been re-verified on Linux
                          # CI since Phase 7/8/9/10/11/12/13/14/15/16/17/18/19/20/21/22/23/24/25 landed —
