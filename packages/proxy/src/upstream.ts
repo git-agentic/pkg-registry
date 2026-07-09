@@ -127,7 +127,7 @@ export class NpmUpstream implements Upstream {
 
   async getPackument(pkg: string): Promise<UpstreamPackument> {
     const res = await this.fetchPinned(
-      `${this.registry}/${encodeURIComponent(pkg).replace("%40", "@")}`,
+      `${this.registry}/${encodeURIComponent(pkg).replaceAll("%40", "@")}`,
       `packument fetch for ${pkg}`,
     );
     if (!res.ok) throw new HttpError(res.status, `upstream packument ${pkg}: ${res.status}`);
@@ -156,7 +156,7 @@ export class NpmUpstream implements Upstream {
 
   async getAttestations(pkg: string, version: string): Promise<unknown | null> {
     try {
-      const name = encodeURIComponent(pkg).replace("%40", "@");
+      const name = encodeURIComponent(pkg).replaceAll("%40", "@");
       const res = await this.fetchPinned(
         `${this.registry}/-/npm/v1/attestations/${name}@${version}`,
         `attestations fetch for ${pkg}@${version}`,

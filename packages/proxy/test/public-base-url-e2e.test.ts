@@ -76,8 +76,16 @@ describe("packument rewrite base URL vs Host header (ADR-0036)", () => {
     try {
       const { status, body } = await get(port, "/leftpad-lite", "registry.evil.example");
       assert.equal(status, 200);
-      assert.ok(body.includes("https://sentinel.corp.example/leftpad-lite/-/leftpad-lite-"));
-      assert.ok(!body.includes("registry.evil.example"));
+      // Parse the packument and check the rewritten tarball URL by ORIGIN, not a
+      // whole-body substring — a substring match would also pass if the spoofed
+      // host merely appeared somewhere in the URL.
+      const doc = JSON.parse(body) as { versions: Record<string, { dist?: { tarball?: string } }> };
+      const tarballs = Object.values(doc.versions).map((v) => v.dist?.tarball ?? "");
+      assert.ok(tarballs.length > 0);
+      for (const t of tarballs) {
+        assert.equal(new URL(t).origin, "https://sentinel.corp.example");
+        assert.ok(new URL(t).pathname.startsWith("/leftpad-lite/-/leftpad-lite-"));
+      }
     } finally { server.close(); }
   });
 });

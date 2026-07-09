@@ -48,5 +48,7 @@ function scoreCell(p: TreePackageRow): string {
   return p.score === null ? "—" : `${p.score}/100`;
 }
 function escapePipe(s: string): string {
-  return s.replace(/\|/g, "\\|").replace(/\n/g, " ");
+  // Escape backslashes FIRST, else an input `\|` would become `\\|` — a literal
+  // backslash followed by an unescaped pipe that breaks out of the table cell.
+  return s.replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\n/g, " ");
 }

@@ -70,7 +70,7 @@ export class ProxyClient {
   /** Resolve latest via the packument's dist-tags when version is omitted. */
   private async resolveVersion(pkg: string, version?: string): Promise<string> {
     if (version) return version;
-    const doc = await this.getJson<{ "dist-tags"?: Record<string, string> }>(`/${encodeURIComponent(pkg).replace("%40", "@")}`);
+    const doc = await this.getJson<{ "dist-tags"?: Record<string, string> }>(`/${encodeURIComponent(pkg).replaceAll("%40", "@")}`);
     const latest = doc["dist-tags"]?.latest;
     if (!latest) throw new ProxyError(`no latest version for ${pkg}`);
     return latest;

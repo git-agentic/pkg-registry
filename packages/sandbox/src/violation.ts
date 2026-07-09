@@ -2,7 +2,10 @@ import type { DenySet } from "./deny-set.js";
 import { pathCovers } from "./path-cover.js";
 import type { SandboxResult, SandboxViolation } from "./types.js";
 
-const FS_ERROR = /(?:EPERM|EACCES|ENOENT)[^\n]*?['"]([^'"\n]+)['"]/;
+// `[^'"\n]*` (not the lazy `[^\n]*?`) so the run before the opening quote is
+// disjoint from the following `['"]` — linear-time even on a long, quote-free
+// adversarial stderr line (no polynomial backtracking).
+const FS_ERROR = /(?:EPERM|EACCES|ENOENT)[^'"\n]*['"]([^'"\n]+)['"]/;
 const NET_ERROR = /connect (?:EPERM|EACCES) ([0-9.]+):(\d+)/;
 const NET_CLASS = /connect (?:EPERM|EACCES)/;
 const PERM_SIGNATURE = /EPERM|EACCES|operation not permitted|permission denied/i;

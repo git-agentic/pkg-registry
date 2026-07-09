@@ -59,7 +59,10 @@ export function parsePublishBody(name: string, body: unknown): ParsedPublish {
 
 export function publishTokenValid(authHeader: string | undefined, tokens: string[]): boolean {
   if (tokens.length === 0) return false; // no tokens configured ⇒ publishing disabled (fail closed)
-  const m = /^Bearer\s+(.+)$/i.exec(authHeader ?? "");
+  // `\S.*` (not `.+`) so the token's first char is non-whitespace, keeping the
+  // capture disjoint from the preceding `\s+` — linear-time on an adversarial
+  // Authorization header (no polynomial backtracking over a long space run).
+  const m = /^Bearer\s+(\S.*)$/i.exec(authHeader ?? "");
   if (!m) return false;
   const candidate = sha((m[1] ?? "").trim());
   return tokens.some((t) => timingSafeEqual(candidate, sha(t)));

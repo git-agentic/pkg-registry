@@ -83,7 +83,10 @@ function parseYarnV1(raw: string): Coordinate[] {
       const firstSpec = line.trimEnd().replace(/:$/, "").split(",")[0]!.trim();
       headerName = yarnV1Name(firstSpec);
     } else {
-      const v = line.trim().match(/^version\s+"?([^"]+)"?$/);
+      // `[^"\s]` (not `[^"]`) so the value class can't overlap the preceding `\s+`
+      // — a version token has no whitespace, and the disjoint classes make this
+      // linear-time on adversarial lockfile input (no polynomial backtracking).
+      const v = line.trim().match(/^version\s+"?([^"\s]+)"?$/);
       if (v) version = v[1]!;
       const i = line.trim().match(/^integrity\s+(\S+)$/);
       if (i) integrity = i[1]!;

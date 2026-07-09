@@ -930,7 +930,13 @@ throttle protects the expensive read endpoints. Phase 24 closes all four:
   over-limit request gets `429` + `Retry-After`. The install-gate paths
   (`/-/*` tarball/packument routes) are never rate-limited — coalescing and
   the integrity cache already make them cheap, and throttling installs would
-  break the transparent-proxy promise.
+  break the transparent-proxy promise. The same opt-in gate additionally
+  fronts the auth-performing control-plane mutating routes (`POST`/`DELETE`
+  `/-/approvals*`, `POST /-/approval-requests`, `POST`/`DELETE`
+  `/-/violations*`, the publish `PUT`) and the dashboard index, as
+  brute-force defense — added when clearing CodeQL `js/missing-rate-limiting`;
+  a pass-through when the limiter is unconfigured, so default behavior is
+  unchanged.
 - All four env vars are parsed once at startup in
   `packages/proxy/src/index.ts` (`resolvePositiveInt`/`resolveRateLimiter`)
   and logged (`limits:` / `rate-limit:` lines); a malformed value is FATAL,
