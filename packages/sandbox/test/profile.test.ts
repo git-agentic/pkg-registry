@@ -188,4 +188,16 @@ describe("generateProfile — $HOME-read-deny (Phase 25 Slice 2)", () => {
     const p = generateProfile([], OPTS2);
     assert.ok(p.includes("(deny file-write*)"), "slice-1 blanket write-deny still present");
   });
+  test("an approved filesystem Grant under $HOME is READ-allowed too (Grants confer read+write)", () => {
+    const approved: Capability[] = [{ kind: "filesystem", target: ".config/app", evidence: [] }];
+    const p = generateProfile(approved, OPTS2);
+    const readAllowLine = p.split("\n").find((l) => l.startsWith("(allow file-read*") && !l.includes("metadata"))!;
+    assert.ok(readAllowLine.includes(`(subpath "/Users/x/.config/app")`), "granted path is read-allowed");
+  });
+  test("projectRoot === homeDir does not re-open all of $HOME for reads (guard drops the entry)", () => {
+    const opts = { ...OPTS2, projectRoot: OPTS2.homeDir };
+    const p = generateProfile([], opts);
+    const readAllowLine = p.split("\n").find((l) => l.startsWith("(allow file-read*") && !l.includes("metadata"))!;
+    assert.ok(!readAllowLine.includes(`(subpath "/Users/x")`), "the guard must drop $HOME itself from the read-allow list");
+  });
 });

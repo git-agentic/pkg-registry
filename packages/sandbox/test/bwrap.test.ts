@@ -136,4 +136,11 @@ describe("generateBwrapArgs — $HOME-read-deny (Phase 25 Slice 2)", () => {
   test("write-deny (slice 1) root is still read-only", () => {
     assert.deepEqual(binds(generateBwrapArgs([], OPTS3), "--ro-bind").slice(0, 1), ["/"]);
   });
+  test("projectRoot === homeDir does not re-open $HOME for reads (guard drops it); the tmpfs mask stays", () => {
+    const opts = { ...OPTS3, projectRoot: OPTS3.homeDir };
+    const args = generateBwrapArgs([], opts);
+    const ro = binds(args, "--ro-bind-try");
+    assert.ok(!ro.includes("/home/x"), "the guard must drop $HOME itself from the ro read-allow binds");
+    assert.ok(binds(args, "--tmpfs").includes("/home/x"), "the --tmpfs $HOME mask is still present");
+  });
 });

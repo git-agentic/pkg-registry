@@ -1029,9 +1029,10 @@ inputs feed this: `nodePrefix` (from `process.execPath`) and `projectRoot`
   the path not exist from the sandboxed process's view — a read fails
   `ENOENT`, which `classifyViolation` does not classify. The read is
   **contained** on both backends either way; only the *telemetry* differs
-  (bwrap doesn't report it). Effect tests assert containment on both
-  backends; only the Seatbelt test additionally asserts the violation
-  record.
+  (bwrap doesn't report it). The Slice 2 effect tests assert containment on
+  both backends (via the sandboxed script's own try/catch); Seatbelt's
+  EPERM→confirmed-violation telemetry is exercised by the pre-existing
+  Phase 10 credential-read-violation test, not a new Slice 2 test.
 
 This **completes** the ADR-0016/0017/0018 supersession: both writes (Slice 1)
 and `$HOME` reads (Slice 2) are now deny-by-default on both backends.

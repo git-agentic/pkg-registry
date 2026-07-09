@@ -37,8 +37,16 @@ export function generateProfile(
   // allow-list).
   lines.push(`(deny file-read* (subpath "${canon(opts.homeDir)}"))`);
   lines.push(`(allow file-read-metadata (subpath "${canon(opts.homeDir)}"))`);
+  const homeCanon = canon(opts.homeDir);
   const readAllow = readAllowList({ nodePrefix: opts.nodePrefix, projectRoot: opts.projectRoot }).map(canon);
-  lines.push(`(allow file-read* ${readAllow.map((p) => `(subpath "${p}")`).join(" ")})`);
+  // Guard: never re-allow $HOME itself or an ancestor of $HOME (e.g. a projectRoot
+  // that resolved to $HOME) — that would nullify the Slice 2 read-deny wholesale.
+  const readAllowSafe = readAllow.filter((e) => e !== homeCanon && !homeCanon.startsWith(e + "/"));
+  // Approved filesystem Grants confer read+write (a Grant opens exactly that
+  // resource), so they belong in the read-allow too — mirrors the write section
+  // below, which reuses this same `grants` declaration.
+  const grants = approvedFs.filter(isSafeGrantTarget).map(canon);
+  lines.push(`(allow file-read* ${[...readAllowSafe, ...grants].map((p) => `(subpath "${p}")`).join(" ")})`);
 
   // SENSITIVE read carve-out (last-match-wins): re-deny credential paths even if
   // they fell under a re-allow, and deny /etc/passwd + /etc/shadow (which live in
@@ -59,7 +67,6 @@ export function generateProfile(
   // fake $HOME lives under os.tmpdir(), which is in the floor).
   lines.push("(deny file-write*)");
   const floor = writeAllowFloor({ cwd: opts.cwd, tmpDir: opts.tmpDir }).map(canon);
-  const grants = approvedFs.filter(isSafeGrantTarget).map(canon);
   const allowItems = [...floor, ...grants].map((p) => `(subpath "${p}")`).join(" ");
   lines.push(`(allow file-write* ${allowItems})`);
   for (const sp of sensitivePathsFor("darwin")) {

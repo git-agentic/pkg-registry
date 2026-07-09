@@ -29,6 +29,9 @@ export function generateBwrapArgs(
   args.push("--tmpfs", opts.homeDir);
   for (const ro of readAllowList({ nodePrefix: opts.nodePrefix, projectRoot: opts.projectRoot })) {
     const target = expandHome(ro, opts.homeDir);
+    // Guard: never re-open $HOME itself or an ancestor of $HOME (e.g. a projectRoot
+    // that resolved to $HOME) — that would nullify the Slice 2 `--tmpfs $HOME` above.
+    if (target === opts.homeDir || opts.homeDir.startsWith(target + "/")) continue;
     args.push("--ro-bind-try", target, target); // -try: node-gyp/cache dirs may be absent
   }
 

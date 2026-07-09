@@ -406,12 +406,16 @@ npm test                 # engine + end-to-end proxy: 656 tests on this host (65
                          # darwin via Seatbelt. Phase 25 Slice 2's $HOME-read-deny SeatbeltSandbox
                          # effect test ("a $HOME read outside the read-allow list is denied; the
                          # project tree + a build stay readable") is darwin-gated and RUNs on darwin
-                         # via Seatbelt, asserting BOTH containment and the confirmed violation
-                         # record (Seatbelt EPERMs on a denied read); the equivalent bwrap effect
-                         # test ("a $HOME read outside the read-allow list is contained; the project
-                         # tree stays readable") runs cross-platform and asserts containment ONLY —
-                         # bwrap's --tmpfs denial surfaces as ENOENT, not a classifiable violation
-                         # signature (the accepted telemetry asymmetry, ADR-0038/ADR-0023).
+                         # via Seatbelt, asserting containment ONLY (the sandboxed script's own
+                         # try/catch observes the read as denied; the test never inspects
+                         # classifyViolation's output) — the equivalent bwrap effect test ("a $HOME
+                         # read outside the read-allow list is contained; the project tree stays
+                         # readable") runs cross-platform and likewise asserts containment ONLY.
+                         # Seatbelt's EPERM->confirmed-violation telemetry is exercised by the
+                         # pre-existing Phase 10 credential-read-violation test, not by either new
+                         # Slice 2 test; bwrap's --tmpfs denial surfaces as ENOENT, not a
+                         # classifiable violation signature (the accepted telemetry asymmetry,
+                         # ADR-0038/ADR-0023).
                          # Phase 7's audit-tree, Phase 8/9's signature/provenance, Phase 10's
                          # classifyViolation/deny-set/violations-store, Phase 11's MCP/approval-request,
                          # Phase 12's auth/authz-e2e, Phase 13's typosquat/dependency-confusion,

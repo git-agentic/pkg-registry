@@ -81,8 +81,14 @@ gained an optional `projectRoot` parameter, defaulting to `cwd` when absent.
      project root to find `node_modules`/`package.json`. This was
      probe-verified during Task 1 — omitting the metadata layer produces an
      EPERM on `require()` itself, not just on unapproved file contents.
-  3. `(allow file-read* …read-allow-list…)` — re-opens data reads for the
-     node prefix, project root, and caches.
+  3. `(allow file-read* …read-allow-list…, …approved-fs-Grants…)` — re-opens
+     data reads for the node prefix, project root, caches, and any approved
+     `filesystem:` Grant target (a Grant opens exactly that resource for
+     read *and* write, matching bwrap's rw grant bind below — Grants are
+     never write-only). The read-allow-list portion excludes `$HOME` itself
+     and any ancestor of `$HOME` (e.g. a `projectRoot` that resolved to
+     `$HOME`), so that degenerate case falls back to the prior (pre-Slice-2)
+     posture instead of re-opening all of `$HOME`.
 
   The existing SENSITIVE read carve-out (`(deny file-read* /etc/passwd
   /etc/shadow …)`) is unchanged and still applies *after* this, so
@@ -93,7 +99,10 @@ gained an optional `projectRoot` parameter, defaulting to `cwd` when absent.
   1. `--tmpfs $HOME` — replaces `$HOME` with an empty tmpfs, denying its
      reads (and writes, but the write floor below re-opens what's needed).
   2. Read-allow list re-bound read-only on top, `--ro-bind-try` (tolerant of
-     an absent `~/.node-gyp`/`~/.cache`).
+     an absent `~/.node-gyp`/`~/.cache`), excluding `$HOME` itself or any
+     ancestor of `$HOME` for the same reason as Seatbelt above. Approved
+     `filesystem:` Grants are re-bound read-write in the write-floor step
+     below, so they too confer read+write, matching Seatbelt.
   3. The Slice 1 write floor re-bound read-write *on top of that* — order
      matters: the broad ro project bind must land before the narrow rw `cwd`
      bind, or a later ro mount would silently make `cwd` read-only again.
@@ -114,8 +123,12 @@ sandboxed script never obtains the data) on both backends — only the
 *telemetry* differs: Seatbelt reports the denial, bwrap doesn't. This is the
 same containment-over-telemetry principle as the Slice 1 write carve-out and
 the Phase 10 swallowed-denial case: a backend evading *reporting* never means
-it evaded *enforcement*. Both backends' effect tests assert containment;
-only the Seatbelt test additionally asserts the violation record.
+it evaded *enforcement*. The Slice 2 effect tests assert containment on both
+backends (the sandboxed script's own try/catch observes the read as denied;
+neither test inspects `classifyViolation`'s output). Seatbelt's
+EPERM→confirmed-violation telemetry is exercised by the pre-existing Phase 10
+credential-read-violation test, not a new Slice 2 test; the bwrap
+tmpfs→ENOENT path remains contained-but-not-reported, as noted above.
 
 This **completes** the supersession of ADR-0016/0017/0018's allow-default
 stance: both writes (Slice 1) and `$HOME` reads (Slice 2) are now
