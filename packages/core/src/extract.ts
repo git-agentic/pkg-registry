@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { Buffer } from "node:buffer";
+import { createGunzip } from "node:zlib";
 import * as tar from "tar";
 import type { PackageFile } from "./types.js";
 
@@ -21,10 +22,22 @@ export interface ExtractResult {
 /**
  * Extract a `.tgz` npm tarball (gzip+tar) in memory and return its text files.
  * Binary and oversized entries are counted toward size/count but not scanned.
- * Guards against decompression bombs: caps total unpacked bytes and entry count,
- * feeding the parser in slices so a breach halts decompression mid-stream. On a
- * breach it returns `truncated: true` (never throws — throwing is reserved for a
- * malformed tar). `baseline` marks changed files for the diff multiplier.
+ *
+ * Guards against decompression bombs by counting at the **decompression
+ * boundary**, not per tar-entry (ADR-0039). We own the gunzip: every byte we
+ * decompress is counted toward `maxUnpackedBytes` before it is handed to the tar
+ * parser, so a bomb built from tar metadata that never surfaces as an `entry`
+ * event — pax/GNU meta headers (`x`/`g`/`L`/`K`), ignored or oversized meta,
+ * invalid entries — is caught all the same. A prior per-entry counter was blind
+ * to these: node-tar decompresses those bytes but emits no `entry`, so 200 MiB
+ * could unpack under a 1 MiB cap with `truncated:false`. On a breach we set
+ * `truncated: true` and `destroy()` the gunzip — the mechanism that actually
+ * halts decompression (zlib's streaming `maxOutputLength` does not enforce),
+ * bounding CPU/memory. `unpackedSize` is now the total decompressed tar-stream
+ * byte count (headers + padding + all entries), which is the correct cap metric;
+ * `fileCount` remains File-entry count. Never throws on a bomb — throwing is
+ * reserved for a genuinely malformed tar/gzip. `baseline` marks changed files
+ * for the diff multiplier.
  */
 export async function extractTarball(
   tgz: Buffer,
@@ -40,6 +53,11 @@ export async function extractTarball(
   let truncated = false;
   let failure: Error | null = null;
 
+  // The parser is used for FILE EXTRACTION only (retain ≤2 MiB text files, count
+  // File entries and total entries). It is NOT the byte-cap authority — the
+  // gunzip below is. node-tar's Parser auto-detects the gzip magic and only
+  // unzips when present, so the decompressed tar bytes we feed it (no magic) are
+  // parsed as plain tar.
   const parser = new tar.Parser();
   parser.on("entry", (entry: tar.ReadEntry) => {
     if (truncated) {
@@ -57,8 +75,6 @@ export async function extractTarball(
     const chunks: Buffer[] = [];
     let bytes = 0;
     entry.on("data", (c: Buffer) => {
-      unpackedSize += c.length;
-      if (unpackedSize > maxUnpacked) truncated = true;
       if (isFile) {
         bytes += c.length;
         if (!truncated && bytes <= MAX_FILE_BYTES) chunks.push(c);
@@ -83,14 +99,51 @@ export async function extractTarball(
   // for larger tarballs. Set this up before feeding so it can't be missed.
   const done = new Promise<void>((resolve) => parser.on("end", () => resolve()));
 
-  // Feed compressed bytes in slices so a cap breach halts decompression mid-stream
-  // rather than decompressing the whole bomb in one synchronous write. Yield to the
-  // event loop between slices so queued entry/data handlers can set `truncated`.
-  const SLICE = 256 * 1024;
-  for (let off = 0; off < tgz.length && !truncated && !failure; off += SLICE) {
-    parser.write(tgz.subarray(off, off + SLICE));
-    await new Promise<void>((r) => setImmediate(r));
+  const isGzip = tgz.length >= 2 && tgz[0] === 0x1f && tgz[1] === 0x8b;
+
+  if (isGzip) {
+    // Own the gunzip so every decompressed byte is counted at the boundary,
+    // regardless of tar semantics. On a cap breach we destroy() the gunzip,
+    // which halts decompression promptly and bounds CPU/memory.
+    const gunzip = createGunzip();
+    gunzip.on("data", (chunk: Buffer) => {
+      if (truncated || failure) return;
+      unpackedSize += chunk.length;
+      if (unpackedSize > maxUnpacked) {
+        truncated = true;
+        gunzip.destroy();
+        return;
+      }
+      // Feed the decompressed tar bytes onward for file extraction. A parser
+      // entry handler may set `truncated` (entry-count cap) or `failure`
+      // (malformed tar) synchronously during this write — if so, stop
+      // decompressing the rest of the payload.
+      parser.write(chunk);
+      if (truncated || failure) gunzip.destroy();
+    });
+    // A destroy()-induced abort/premature-close error is expected on the
+    // truncate path and must not clobber a genuine gzip/tar failure. Only
+    // record a real failure when we have neither truncated nor already failed.
+    gunzip.on("error", (e: unknown) => {
+      if (!truncated && !failure) failure = e instanceof Error ? e : new Error(String(e));
+    });
+    const gzClosed = new Promise<void>((resolve) => gunzip.on("close", () => resolve()));
+    gunzip.end(tgz);
+    await gzClosed;
+  } else {
+    // Not gzip: the buffer is already an uncompressed tar. Feed it to the parser
+    // directly while still counting its bytes toward `unpackedSize`, in slices so
+    // a cap breach halts before feeding the whole payload. npm tarballs are always
+    // gzip; this preserves robustness for a raw tar.
+    const SLICE = 256 * 1024;
+    for (let off = 0; off < tgz.length && !truncated && !failure; off += SLICE) {
+      const chunk = tgz.subarray(off, off + SLICE);
+      unpackedSize += chunk.length;
+      if (unpackedSize > maxUnpacked) { truncated = true; break; }
+      parser.write(chunk);
+    }
   }
+
   if (!truncated && !failure) {
     parser.end();
     await done;

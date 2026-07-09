@@ -75,6 +75,43 @@ function buildContiguousFileTgz(entryPath: string, size: number): Buffer {
   return gzipSync(tarBuf);
 }
 
+// Hand-build a gzipped tar made entirely of pax meta ('x') header blocks with
+// oversized (2 MiB) bodies. node-tar DECOMPRESSES these bytes but — because each
+// body exceeds its meta-entry size cap — never surfaces them as an `entry` event.
+// A per-entry byte counter is therefore blind to them: the pre-fix extractor
+// unpacked 200 MiB under a 1 MiB cap with `truncated:false, unpackedSize:0`. The
+// fix counts at the decompression boundary, so the cap trips regardless of tar
+// semantics. Ported from scripts/probe-meta.ts.
+function metaTarHeader(entryPath: string, size: number, typeflag: string): Buffer {
+  const header = Buffer.alloc(512);
+  header.write(entryPath, 0, "utf8");
+  header.write("0000644\0", 100, "ascii");
+  header.write("0000000\0", 108, "ascii");
+  header.write("0000000\0", 116, "ascii");
+  header.write(`${size.toString(8).padStart(11, "0")} `, 124, "ascii");
+  header.write("00000000000 ", 136, "ascii");
+  header.write("        ", 148, "ascii");
+  header.write(typeflag, 156, "ascii");
+  header.write("ustar\0", 257, "ascii");
+  header.write("00", 263, "ascii");
+  let sum = 0;
+  for (let i = 0; i < 512; i++) sum += header[i];
+  header.write(`${sum.toString(8).padStart(6, "0")}\0 `, 148, "ascii");
+  return header;
+}
+function metaEntryBlock(entryPath: string, size: number, typeflag: string): Buffer {
+  const header = metaTarHeader(entryPath, size, typeflag);
+  const body = Buffer.alloc(size, 0x00);
+  const pad = (512 - (size % 512)) % 512;
+  return Buffer.concat([header, body, Buffer.alloc(pad)]);
+}
+function buildMetaHeaderBombTgz(entryCount: number, perBytes: number): Buffer {
+  const blocks: Buffer[] = [];
+  for (let i = 0; i < entryCount; i++) blocks.push(metaEntryBlock("pax_global_header", perBytes, "x"));
+  blocks.push(Buffer.alloc(1024)); // two zero blocks: end-of-archive marker
+  return gzipSync(Buffer.concat(blocks));
+}
+
 describe("extractTarball caps", () => {
   test("a benign small tarball is not truncated and yields its text files", async () => {
     const tgz = await makeTgz({ "package/package.json": '{"name":"x","version":"1.0.0"}', "package/index.js": "module.exports=1;\n" });
@@ -120,6 +157,17 @@ describe("extractTarball caps", () => {
     const tgz = await makeDirTgz(50);
     const r = await extractTarball(tgz, undefined, { maxFileCount: 10 });
     assert.equal(r.truncated, true);
+  });
+
+  test("a tarball of oversized pax meta ('x') headers is truncated at the decompression boundary (per-entry-blind bomb bypass)", async () => {
+    // 100 x 2 MiB meta bodies = 200 MiB decompressed, ~205 KiB compressed. None
+    // surface as an `entry`, so a per-entry counter never sees them. Must trip
+    // the 1 MiB cap on the decompressed byte stream.
+    const tgz = buildMetaHeaderBombTgz(100, 2 * 1024 * 1024);
+    const r = await extractTarball(tgz, undefined, { maxUnpackedBytes: 1024 * 1024, maxFileCount: 5 });
+    assert.equal(r.truncated, true, "meta-header bomb must trip the unpacked-bytes cap");
+    assert.ok(r.unpackedSize > 1024 * 1024, `expected unpackedSize to reflect decompressed meta bytes, got ${r.unpackedSize}`);
+    assert.equal(r.files.length, 0, "no text files should be retained from a meta-header bomb");
   });
 
   test("a ContiguousFile (tar type '7') entry's body counts toward maxUnpackedBytes (byte-cap bypass)", async () => {
