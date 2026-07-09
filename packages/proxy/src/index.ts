@@ -3,6 +3,8 @@ import { dirname, join, resolve } from "node:path";
 import { readFileSync, realpathSync } from "node:fs";
 import { validateAuthPublicKey } from "./auth-config.js";
 import { parseTarballOrigins, parsePublicBaseUrl } from "./net-config.js";
+import { parsePositiveInt } from "./limits.js";
+import { createRateLimiter, type RateLimiter } from "./rate-limit.js";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   loadPolicy,
@@ -37,7 +39,11 @@ function env(name: string, fallback: string): string {
   return process.env[name] ?? fallback;
 }
 
-function buildUpstream(tarballOrigins: readonly string[]): Upstream {
+function buildUpstream(
+  tarballOrigins: readonly string[],
+  maxTarballBytes: number | undefined,
+  maxPackumentBytes: number | undefined,
+): Upstream {
   const mode = env("SENTINEL_UPSTREAM", "npm");
   if (mode === "fixtures" || mode.startsWith("fixtures:")) {
     const dir = mode.includes(":")
@@ -45,7 +51,12 @@ function buildUpstream(tarballOrigins: readonly string[]): Upstream {
       : resolve(env("SENTINEL_FIXTURES", "fixtures"));
     return new LocalFixtureUpstream(dir);
   }
-  return new NpmUpstream(env("SENTINEL_REGISTRY", "https://registry.npmjs.org"), tarballOrigins);
+  return new NpmUpstream(
+    env("SENTINEL_REGISTRY", "https://registry.npmjs.org"),
+    tarballOrigins,
+    maxTarballBytes ?? 256 * 1024 * 1024,
+    maxPackumentBytes ?? 128 * 1024 * 1024,
+  );
 }
 
 function resolveEnterprisePolicy(): { policy: EnterprisePolicy; hash: string } {
@@ -152,6 +163,24 @@ function resolvePublicBaseUrl(): string | undefined {
   }
 }
 
+/** Parse a positive-int env var, FATAL on invalid; undefined when unset. */
+function resolvePositiveInt(name: string): number | undefined {
+  const raw = process.env[name];
+  if (!raw) return undefined;
+  try {
+    return parsePositiveInt(raw, name);
+  } catch (err) {
+    console.error(`FATAL: ${(err as Error).message}`);
+    process.exit(1);
+  }
+}
+
+function resolveRateLimiter(): RateLimiter | undefined {
+  const rpm = resolvePositiveInt("SENTINEL_RATE_LIMIT_RPM");
+  if (rpm === undefined) return undefined;
+  return createRateLimiter({ rpm, now: () => Date.now() });
+}
+
 function resolveTrustMaterial(): ProvenanceTrustMaterial | null | undefined {
   const rootPath = process.env.SENTINEL_TRUSTED_ROOT;
   if (!rootPath) return undefined; // bundled default
@@ -169,7 +198,11 @@ function main(): void {
   const policy = env("SENTINEL_POLICY", "observe") as ProxyPolicy;
   const tarballOrigins = resolveTarballOrigins();
   const publicBaseUrl = resolvePublicBaseUrl();
-  const upstream = buildUpstream(tarballOrigins);
+  const maxTarballBytes = resolvePositiveInt("SENTINEL_MAX_TARBALL_BYTES");
+  const maxPackumentBytes = resolvePositiveInt("SENTINEL_MAX_PACKUMENT_BYTES");
+  const maxTreePackages = resolvePositiveInt("SENTINEL_MAX_TREE_PACKAGES");
+  const rateLimiter = resolveRateLimiter();
+  const upstream = buildUpstream(tarballOrigins, maxTarballBytes, maxPackumentBytes);
   const { policy: enterprisePolicy, hash: policyHash } = resolveEnterprisePolicy();
   const history = process.env.SENTINEL_HISTORY_DB ? new HistoryDb(process.env.SENTINEL_HISTORY_DB) : undefined;
   const store = new AuditStore(process.env.SENTINEL_STORE, policyHash, history);
@@ -185,7 +218,7 @@ function main(): void {
   const advisories = resolveAdvisories();
   const vulnerabilities = resolveVulnerabilities();
 
-  const app = createServer({ upstream, store, approvals, enterprisePolicy, policyHash, policy, publicDir, privateStore, publishTokens, trustMaterial, violations, approvalRequests, authPublicKey, history, advisories, vulnerabilities, publicBaseUrl });
+  const app = createServer({ upstream, store, approvals, enterprisePolicy, policyHash, policy, publicDir, privateStore, publishTokens, trustMaterial, violations, approvalRequests, authPublicKey, history, advisories, vulnerabilities, publicBaseUrl, maxTreePackages, rateLimiter });
   app.listen(port, () => {
     console.log(`Sentinel proxy listening on http://localhost:${port}`);
     console.log(`  upstream : ${upstream.name}`);
@@ -194,6 +227,8 @@ function main(): void {
     console.log(`  policy   : ${policy}  (observe = audit+serve, block = 403 on block verdict)`);
     console.log(`  trust    : ${trustMaterial === undefined ? "bundled Sigstore root" : "operator-supplied root"}`);
     console.log(`  auth     : ${authPublicKey ? "enabled (signed role tokens)" : "disabled (open control plane)"}`);
+    console.log(`  limits   : tree ${maxTreePackages ?? 5000} pkgs, tarball ${(maxTarballBytes ?? 256 * 1024 * 1024)} B, packument ${(maxPackumentBytes ?? 128 * 1024 * 1024)} B`);
+    console.log(`  rate-limit: ${rateLimiter ? `${process.env.SENTINEL_RATE_LIMIT_RPM} rpm/source` : "disabled"}`);
     console.log(`  violations: ${process.env.SENTINEL_VIOLATIONS ? "persisted" : "in-memory"}`);
     console.log(`  approval-requests: ${process.env.SENTINEL_APPROVAL_REQUESTS ? "persisted" : "in-memory"}`);
     console.log(`  history  : ${history ? `enabled (${process.env.SENTINEL_HISTORY_DB})` : "disabled"}`);
