@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { RegistrySignature } from "@sentinel/core";
+import { assertAllowedTarballUrl } from "./net-config.js";
 
 export interface UpstreamVersion {
   version: string;
@@ -76,7 +77,14 @@ function normalizeVersion(m: VersionManifest): UpstreamVersion {
 /** Fetches from the real npm registry. */
 export class NpmUpstream implements Upstream {
   readonly name = "npm";
-  constructor(private readonly registry = "https://registry.npmjs.org") {}
+  /** Origin tarball URLs must match — a packument-controlled URL is never fetched cross-origin (ADR-0036). */
+  private readonly registryOrigin: string;
+  constructor(
+    private readonly registry = "https://registry.npmjs.org",
+    private readonly tarballOrigins: readonly string[] = [],
+  ) {
+    this.registryOrigin = new URL(registry).origin;
+  }
 
   async getPackument(pkg: string): Promise<UpstreamPackument> {
     const res = await fetch(`${this.registry}/${encodeURIComponent(pkg).replace("%40", "@")}`, {
@@ -98,6 +106,11 @@ export class NpmUpstream implements Upstream {
     const pm = await this.getPackument(pkg);
     const url = pm.doc.versions[version]?.dist?.tarball;
     if (!url) throw new HttpError(404, `no tarball for ${pkg}@${version}`);
+    try {
+      assertAllowedTarballUrl(url, this.registryOrigin, this.tarballOrigins);
+    } catch (err) {
+      throw new HttpError(502, `refusing tarball fetch for ${pkg}@${version}: ${(err as Error).message}`);
+    }
     const res = await fetch(url);
     if (!res.ok) throw new HttpError(res.status, `upstream tarball ${pkg}@${version}: ${res.status}`);
     return Buffer.from(await res.arrayBuffer());
