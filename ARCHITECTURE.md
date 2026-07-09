@@ -876,6 +876,60 @@ and validation are pure and unit-tested in isolation from I/O. Scoring,
 caching, and the packument passthrough (rewriting only `dist.tarball`) are
 untouched — see [ADR-0036](./docs/adr/0036-network-trust-boundary.md).
 
+### 3.23 Resource robustness (Phase 24, ADR-0037)
+
+The same external audit flagged unbounded-work paths: `/-/audit-tree` fans
+out over an arbitrary coordinate list, each fetch fully buffers a tarball
+(or packument/attestations) in memory, concurrent uncached requests for the
+same package each run the full pipeline (cache stampede), and no in-process
+throttle protects the expensive read endpoints. Phase 24 closes all four:
+
+- **Audit-tree caps + dedupe (`server.ts`, `/-/audit-tree`).** Coordinates
+  are deduped by `name@version` before fan-out — `auditVersion` is
+  deterministic, so auditing a distinct coordinate once and re-expanding to
+  one row per requested coordinate (in request order) is behavior-neutral.
+  If the distinct count exceeds `SENTINEL_MAX_TREE_PACKAGES` (default 5000),
+  the route returns **413** rather than silently truncating. Dedupe keys on
+  `name@version` only, not integrity, so if a single request carries two
+  entries with the same `name@version` but different claimed integrity, only
+  the first is integrity-checked and the second silently shares its row — a
+  well-formed lockfile never does this.
+- **Streamed byte caps (`packages/proxy/src/limits.ts`).** `parsePositiveInt`
+  and `readBodyCapped` replace `NpmUpstream`'s unbounded
+  `arrayBuffer()`/`json()` reads with a byte-counting reader: it rejects up
+  front when the declared `content-length` exceeds the cap, and aborts
+  mid-stream when the running total does (content-length can lie or be
+  absent). `SENTINEL_MAX_TARBALL_BYTES` (default 256 MB) bounds tarball
+  fetches; `SENTINEL_MAX_PACKUMENT_BYTES` (default 128 MB) bounds packument
+  and attestation fetches. Over-cap is a `502` for tarballs/packuments, or a
+  `null` attestation — preserving that path's existing fail-open contract.
+- **Request coalescing (`server.ts`, `auditVersion`).** An in-flight
+  `name@version` map lets concurrent uncached public audits for the same
+  coordinate share one fetch/extract/score pipeline; the entry clears on
+  settle (success or failure) so a failed run isn't cached. The
+  integrity-keyed `store` stays the durable cache (invariant #4) — the map
+  is transient concurrency dedupe only, scoped to the process.
+- **Opt-in rate limiting (`packages/proxy/src/rate-limit.ts`).** A pure
+  token-bucket `RateLimiter` (`createRateLimiter({ rpm, now })`, injectable
+  clock, capacity = rpm refilling over a 60s window) gates
+  `POST /-/audit-tree`, `GET /-/explain/*`, and `POST /-/policy/preview`
+  when `SENTINEL_RATE_LIMIT_RPM` is set, keyed by `req.socket.remoteAddress`
+  (not `X-Forwarded-For` — spoofable without a trusted-proxy config). An
+  over-limit request gets `429` + `Retry-After`. The install-gate paths
+  (`/-/*` tarball/packument routes) are never rate-limited — coalescing and
+  the integrity cache already make them cheap, and throttling installs would
+  break the transparent-proxy promise.
+- All four env vars are parsed once at startup in
+  `packages/proxy/src/index.ts` (`resolvePositiveInt`/`resolveRateLimiter`)
+  and logged (`limits:` / `rate-limit:` lines); a malformed value is FATAL,
+  the same posture as `SENTINEL_AUTH_PUBKEY`/`SENTINEL_TARBALL_ORIGINS`.
+
+`limits.ts` and `rate-limit.ts` are pure — no env access, clock injected —
+so the caps and the limiter are unit-tested without wall-clock or network
+I/O. Scoring, the integrity cache key, and the packument passthrough are
+untouched (invariants #1–#6) — see
+[ADR-0037](./docs/adr/0037-resource-robustness.md).
+
 ---
 
 ## 4. The audit engine (`@sentinel/core`)

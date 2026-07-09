@@ -41,6 +41,7 @@ import { ApprovalRequestStore } from "./approval-requests.js";
 import { makeAuthz } from "./authz.js";
 import { isLoopbackHost } from "./net-config.js";
 import type { HistoryDb } from "./history-db.js";
+import type { RateLimiter } from "./rate-limit.js";
 
 export type ProxyPolicy = "observe" | "block";
 
@@ -78,6 +79,10 @@ export interface ServerOptions {
   vulnerabilities?: VulnAdvisory[];
   /** Public base URL for rewritten dist.tarball links (ADR-0036). Undefined ⇒ loopback-Host-derived only. */
   publicBaseUrl?: string;
+  /** Max distinct packages per audit-tree request (ADR-0037). Undefined ⇒ 5000. */
+  maxTreePackages?: number;
+  /** Opt-in per-source rate limiter for expensive open endpoints (ADR-0037). Undefined ⇒ unlimited. */
+  rateLimiter?: RateLimiter;
 }
 
 const TARBALL_RE = /^(.+)\/-\/([^/]+\.tgz)$/;
@@ -134,12 +139,29 @@ export function createServer(opts: ServerOptions) {
   const advisories = opts.advisories;
   const vulnerabilities = opts.vulnerabilities;
   const publicBaseUrl = opts.publicBaseUrl;
+  const maxTreePackages = opts.maxTreePackages ?? 5000;
   const authz = makeAuthz(opts.authPublicKey);
   const app = express();
   app.disable("x-powered-by");
   const jsonSmall = express.json({ limit: "1mb" });
   app.use((req, res, next) => (req.method === "PUT" ? next() : jsonSmall(req, res, next)));
   const jsonPublish = express.json({ limit: "64mb" });
+
+  const rateLimiter = opts.rateLimiter;
+  const rateGate: express.RequestHandler = rateLimiter
+    ? (req, res, next) => {
+        const key = req.socket.remoteAddress ?? "unknown";
+        const { allowed, retryAfterSec } = rateLimiter.check(key);
+        if (allowed) return next();
+        res.setHeader("Retry-After", String(retryAfterSec));
+        return res.status(429).json({ error: "rate limit exceeded — retry later or raise SENTINEL_RATE_LIMIT_RPM" });
+      }
+    : (_req, _res, next) => next();
+
+  // Transient concurrency dedupe: concurrent uncached public audits for the same
+  // name@version share one pipeline. The integrity-keyed `store` stays the durable
+  // cache (invariant #4); this map lives only within the overlapping-request window.
+  const inFlight = new Map<string, Promise<{ report: AuditReport; tarball: Buffer }>>();
 
   /** Audit a specific version, using the verdict cache (integrity-keyed). */
   async function auditVersion(
@@ -156,7 +178,23 @@ export function createServer(opts: ServerOptions) {
       store.put(report); // populate verdict store so /-/approvals can find the integrity
       return { report, tarball };
     }
+    // A caller that already holds the bytes skips the fetch entirely — no coalescing needed.
+    if (providedTarball) return auditPublicUncached(pkg, version, providedTarball);
 
+    // Coalesce concurrent uncached fetches for the same coordinate.
+    const key = `${pkg}@${version}`;
+    const existing = inFlight.get(key);
+    if (existing) return existing;
+    const p = auditPublicUncached(pkg, version, undefined).finally(() => inFlight.delete(key));
+    inFlight.set(key, p);
+    return p;
+  }
+
+  async function auditPublicUncached(
+    pkg: string,
+    version: string,
+    providedTarball: Buffer | undefined,
+  ): Promise<{ report: AuditReport; tarball: Buffer }> {
     const pm = await upstream.getPackument(pkg);
     const vmeta = pm.versions[version];
     if (!vmeta) throw new HttpError(404, `unknown version ${pkg}@${version}`);
@@ -289,7 +327,7 @@ export function createServer(opts: ServerOptions) {
 
   // Explain a verdict + suggest remediation + walk back to the last known-good release.
   // Off the inline gate (invariant #3) — this route is expected to be slower.
-  app.get(/^\/-\/explain\/(.+)\/([^/]+)$/, async (req, res) => {
+  app.get(/^\/-\/explain\/(.+)\/([^/]+)$/, rateGate, async (req, res) => {
     const pkg = decodeURIComponent(req.params[0] ?? "");
     const version = req.params[1] ?? "";
     try {
@@ -341,7 +379,7 @@ export function createServer(opts: ServerOptions) {
   // stored audit history via score()'s determinism (invariant #1) — never applied,
   // stored, or signed. Requires a HistoryDb; 501 otherwise (same contract as the rest
   // of this observability block).
-  app.post("/-/policy/preview", (req, res) => {
+  app.post("/-/policy/preview", rateGate, (req, res) => {
     if (!history) return disabled(res);
     let candidate: EnterprisePolicy;
     try {
@@ -379,7 +417,7 @@ export function createServer(opts: ServerOptions) {
 
   // Whole-tree audit: fan out over the integrity-cached auditVersion path and
   // roll up a policy-gated aggregate (ADR-0020). Batch endpoint, not the gate path.
-  app.post("/-/audit-tree", async (req, res) => {
+  app.post("/-/audit-tree", rateGate, async (req, res) => {
     const body = req.body as { packages?: unknown; failOnError?: unknown };
     if (!body || !Array.isArray(body.packages)) {
       return res.status(400).json({ error: "expected { packages: [{ name, version, integrity? }] }" });
@@ -391,8 +429,23 @@ export function createServer(opts: ServerOptions) {
       }
     }
     const failOnError = body.failOnError === true;
-    const rows: TreePackageRow[] = await mapPool(
-      coords as { name: string; version: string; integrity?: string }[],
+    // Dedupe by name@version before fanning out — auditVersion is deterministic,
+    // so auditing a distinct coordinate once and re-expanding to per-request rows
+    // is behavior-neutral (ADR-0037).
+    const validCoords = coords as { name: string; version: string; integrity?: string }[];
+    const distinctKeys: string[] = [];
+    const distinctByKey = new Map<string, { name: string; version: string; integrity?: string }>();
+    for (const co of validCoords) {
+      const key = `${co.name}@${co.version}`;
+      if (!distinctByKey.has(key)) { distinctByKey.set(key, co); distinctKeys.push(key); }
+    }
+    if (distinctKeys.length > maxTreePackages) {
+      return res.status(413).json({
+        error: `audit-tree request has ${distinctKeys.length} distinct packages, which exceeds the limit of ${maxTreePackages} (raise SENTINEL_MAX_TREE_PACKAGES)`,
+      });
+    }
+    const distinctRows: TreePackageRow[] = await mapPool(
+      distinctKeys.map((k) => distinctByKey.get(k)!),
       8,
       async (co) => {
         try {
@@ -428,10 +481,9 @@ export function createServer(opts: ServerOptions) {
         }
       },
     );
-    rows.sort((a, b) => {
-      const ka = `${a.name}@${a.version}`, kb = `${b.name}@${b.version}`;
-      return ka < kb ? -1 : ka > kb ? 1 : 0;
-    });
+    const rowByKey = new Map<string, TreePackageRow>();
+    for (const row of distinctRows) rowByKey.set(`${row.name}@${row.version}`, row);
+    const rows: TreePackageRow[] = validCoords.map((co) => rowByKey.get(`${co.name}@${co.version}`)!);
     const aggregate = aggregateTree(rows, treeGateOf(enterprisePolicy), { failOnError });
     const result: TreeAuditResult = { aggregate, packages: rows, policyHash };
     res.json(result);

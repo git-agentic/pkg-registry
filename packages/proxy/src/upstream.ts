@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { RegistrySignature } from "@sentinel/core";
 import { assertAllowedTarballUrl } from "./net-config.js";
+import { readBodyCapped } from "./limits.js";
 
 export interface UpstreamVersion {
   version: string;
@@ -88,6 +89,8 @@ export class NpmUpstream implements Upstream {
   constructor(
     private readonly registry = "https://registry.npmjs.org",
     private readonly tarballOrigins: readonly string[] = [],
+    private readonly maxTarballBytes = 256 * 1024 * 1024,
+    private readonly maxPackumentBytes = 128 * 1024 * 1024,
   ) {
     this.registryOrigin = new URL(registry).origin;
   }
@@ -128,7 +131,9 @@ export class NpmUpstream implements Upstream {
       `packument fetch for ${pkg}`,
     );
     if (!res.ok) throw new HttpError(res.status, `upstream packument ${pkg}: ${res.status}`);
-    const doc = (await res.json()) as PackumentDoc;
+    const body = await readBodyCapped(res, this.maxPackumentBytes, `packument ${pkg}`)
+      .catch((err) => { throw new HttpError(502, `upstream packument ${pkg}: ${(err as Error).message}`); });
+    const doc = JSON.parse(body.toString("utf8")) as PackumentDoc;
     const versions: Record<string, UpstreamVersion> = {};
     for (const [v, m] of Object.entries(doc.versions ?? {})) {
       versions[v] = normalizeVersion(m);
@@ -145,7 +150,8 @@ export class NpmUpstream implements Upstream {
     if (!url) throw new HttpError(404, `no tarball for ${pkg}@${version}`);
     const res = await this.fetchPinned(url, `tarball fetch for ${pkg}@${version}`);
     if (!res.ok) throw new HttpError(res.status, `upstream tarball ${pkg}@${version}: ${res.status}`);
-    return Buffer.from(await res.arrayBuffer());
+    return readBodyCapped(res, this.maxTarballBytes, `tarball ${pkg}@${version}`)
+      .catch((err) => { throw new HttpError(502, `upstream tarball ${pkg}@${version}: ${(err as Error).message}`); });
   }
 
   async getAttestations(pkg: string, version: string): Promise<unknown | null> {
@@ -156,7 +162,8 @@ export class NpmUpstream implements Upstream {
         `attestations fetch for ${pkg}@${version}`,
       );
       if (!res.ok) return null;
-      return await res.json();
+      const body = await readBodyCapped(res, this.maxPackumentBytes, `attestations ${pkg}@${version}`);
+      return JSON.parse(body.toString("utf8"));
     } catch {
       return null; // fail-open to "unknown" — an outage must not break installs
     }

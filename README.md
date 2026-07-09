@@ -90,6 +90,10 @@ node packages/cli/dist/index.js install lodash
 | `SENTINEL_VULNERABILITIES` | _(unset ⇒ bundled corpus only)_ | path to a JSON `VulnAdvisory[]` file, loaded once at startup (fatal error on an unreadable path, or on a corrupt non-JSON/non-array file); merged with the bundled known-vulnerable-range corpus and checked on the public install audit path |
 | `SENTINEL_TARBALL_ORIGINS` | _(registry origin only)_ | comma-separated allowlist of extra bare http(s) origins tarball fetches may target, beyond `SENTINEL_REGISTRY`'s own origin; validated once at startup (fatal error on a malformed entry), and a disallowed origin is never fetched (502) |
 | `SENTINEL_PUBLIC_BASE_URL` | _(unset ⇒ loopback-derived)_ | base URL used to rewrite `dist.tarball` links; when unset, only a loopback request Host (`localhost`, `127.0.0.0/8`, `[::1]`) may derive it — any other Host is refused with 421 |
+| `SENTINEL_MAX_TARBALL_BYTES` | `256 MB` | byte cap on a single tarball fetch (streamed, content-length + mid-stream enforced); over-cap ⇒ 502 |
+| `SENTINEL_MAX_PACKUMENT_BYTES` | `128 MB` | byte cap on a single packument or attestation fetch; over-cap ⇒ 502 (attestations ⇒ null, fail-open) |
+| `SENTINEL_MAX_TREE_PACKAGES` | `5000` | cap on distinct `name@version` coordinates in a single `/-/audit-tree` request; over-cap ⇒ 413, no silent truncation |
+| `SENTINEL_RATE_LIMIT_RPM` | _(unset ⇒ disabled)_ | requests-per-minute token-bucket cap, keyed by socket remote address, applied to `POST /-/audit-tree`, `GET /-/explain/*`, and `POST /-/policy/preview`; over-limit ⇒ 429 + `Retry-After`. Install-gate paths are never limited |
 
 ## CLI
 

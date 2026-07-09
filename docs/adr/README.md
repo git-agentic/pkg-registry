@@ -57,6 +57,12 @@ not yet built · `Superseded` / `Deprecated` — replaced; see the linked succes
 |-----|-------|----------------------|
 | [0036](./0036-network-trust-boundary.md) | Network trust boundary | Pin outbound tarball fetches to the registry origin/allowlist; require a configured public base URL off loopback |
 
+## Phase 24 — resource robustness (Accepted, implemented)
+
+| ADR | Title | Decision in one line |
+|-----|-------|----------------------|
+| [0037](./0037-resource-robustness.md) | Resource robustness | Audit-tree dedupe + cap, streamed byte caps, request coalescing, opt-in token-bucket rate limiting |
+
 ## Conventions
 
 - One decision per record; number sequentially; never renumber.

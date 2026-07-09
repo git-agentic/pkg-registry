@@ -238,6 +238,31 @@ loopback-derived base only for a loopback Host (`localhost`, `127.0.0.0/8`,
 fail-closed at proxy startup (malformed ⇒ FATAL, same posture as
 `SENTINEL_AUTH_PUBKEY`). Scoring, caching, and the packument passthrough are
 untouched (invariants #1–#5, ADR-0036).
+Phase 24 adds **resource robustness**: `/-/audit-tree` now dedupes
+coordinates by `name@version` before fan-out (auditing each distinct
+coordinate once, re-expanding to per-request rows in request order —
+behavior-neutral since `auditVersion` is deterministic) and returns **413**
+over `SENTINEL_MAX_TREE_PACKAGES` (default 5000) instead of silently
+truncating; dedupe keys on `name@version` only, so two coordinates sharing a
+`name@version` but claiming different integrity would only have the first
+checked (well-formed lockfiles never do this). A shared byte-counting reader,
+`readBodyCapped` (`packages/proxy/src/limits.ts`), replaces `NpmUpstream`'s
+unbounded `arrayBuffer()`/`json()` reads — reject-up-front on an over-cap
+`content-length`, abort mid-stream on an over-cap running total —
+bounding tarball fetches to `SENTINEL_MAX_TARBALL_BYTES` (default 256 MB)
+and packument/attestation fetches to `SENTINEL_MAX_PACKUMENT_BYTES` (default
+128 MB); over-cap is a 502, or a null attestation (fail-open unchanged). An
+in-flight `name@version` map in `server.ts` coalesces concurrent uncached
+public audits for the same coordinate onto one pipeline (cache-stampede
+fix) — the integrity-keyed `store` stays the durable cache (invariant #4);
+the map is transient and clears on settle. A pure token-bucket
+`RateLimiter` (`packages/proxy/src/rate-limit.ts`, injectable clock, keyed by
+`req.socket.remoteAddress` — not `X-Forwarded-For`) opt-in gates
+`POST /-/audit-tree`, `GET /-/explain/*`, and `POST /-/policy/preview` when
+`SENTINEL_RATE_LIMIT_RPM` is set; over-limit ⇒ 429 + `Retry-After`. The
+install-gate paths are never rate-limited. All four env vars parse
+fail-closed at startup (malformed ⇒ FATAL). Scoring, caching, and the
+packument passthrough are untouched (invariants #1–#6, ADR-0037).
 
 We are the Socket/Chainguard wedge: **do not** try to replace npm. Resolve and
 serve real packages transparently; only attach signal.
@@ -309,21 +334,24 @@ an optional, fail-closed, load-once-at-startup operator vuln feed for the
 public install audit path. `SENTINEL_TARBALL_ORIGINS`/`SENTINEL_PUBLIC_BASE_URL`
 (Phase 23) are the same fail-closed, load-once-at-startup posture for the
 outbound tarball-origin allowlist and the inbound public base URL,
-respectively.
+respectively. `SENTINEL_MAX_TARBALL_BYTES`/`SENTINEL_MAX_PACKUMENT_BYTES`/
+`SENTINEL_MAX_TREE_PACKAGES`/`SENTINEL_RATE_LIMIT_RPM` (Phase 24) round out
+the same fail-closed, load-once-at-startup posture for the fetch byte caps,
+the audit-tree package cap, and the opt-in token-bucket rate limiter.
 
 ## Build / test / run
 
 ```bash
 npm run build            # tsc --build (project references: core → proxy/cli)
-npm test                 # engine + end-to-end proxy: 580 tests on this host (578 pass, 2 skipped on darwin).
+npm test                 # engine + end-to-end proxy: 613 tests on this host (611 pass, 2 skipped on darwin).
                          # Skips are platform-gated enforcement: "non-darwin throws" skips on darwin
                          # (it verifies darwin-only behaviour), and the "no silent skip" CI guard skips
                          # off-CI. The BubblewrapSandbox enforcement suite and the Linux enforce-e2e tests
-                         # skip as describe-level blocks on darwin ("requires Linux") and are not in the 580
+                         # skip as describe-level blocks on darwin ("requires Linux") and are not in the 613
                          # count. Phase 10's violation-enforce e2e and the darwin-gated runtime-violation
                          # effect test (SeatbeltSandbox: "a denied credential read surfaces a confirmed
                          # runtime violation") RUN on darwin via Seatbelt, the same way the rest of the
-                         # Seatbelt effect suite does, and ARE in the 580 count.
+                         # Seatbelt effect suite does, and ARE in the 613 count.
                          # Phase 7's audit-tree, Phase 8/9's signature/provenance, Phase 10's
                          # classifyViolation/deny-set/violations-store, Phase 11's MCP/approval-request,
                          # Phase 12's auth/authz-e2e, Phase 13's typosquat/dependency-confusion,
@@ -340,13 +368,19 @@ npm test                 # engine + end-to-end proxy: 580 tests on this host (57
                          # net-config parsing/validation, tarball-origin-e2e (poisoned-packument
                          # never-fetched canary + malformed-allowlist FATAL), public-base-url-e2e
                          # (configured base + loopback fallback + non-loopback 421), and net-startup
-                         # (fail-closed FATAL parsing of both env vars) tests are hermetic
+                         # (fail-closed FATAL parsing of both env vars) tests, and Phase 24's
+                         # limits (parsePositiveInt/readBodyCapped early-reject + mid-stream abort),
+                         # tarball-size/packument-size caps, audit-tree-limits-e2e (dedupe +
+                         # 413-over-cap), coalesce (concurrent-uncached-audit stampede fix),
+                         # rate-limit (token-bucket unit) + rate-limit-e2e (429 + Retry-After on
+                         # audit-tree/explain/policy-preview), and limits-startup (fail-closed FATAL
+                         # parsing of all four env vars) tests are hermetic
                          # and platform-neutral, so the darwin/Linux relationship from Phase 6 (Linux one
                          # test higher, one fewer skip) should hold, but hasn't been re-verified on Linux
-                         # CI since Phase 7/8/9/10/11/12/13/14/15/16/17/18/19/20/21/22/23 landed — confirm
-                         # on the next Linux CI run rather than trusting an extrapolated count here. Each
-                         # platform's enforcement is verified on that platform (macOS dev host /
-                         # ubuntu-latest CI).
+                         # CI since Phase 7/8/9/10/11/12/13/14/15/16/17/18/19/20/21/22/23/24 landed —
+                         # confirm on the next Linux CI run rather than trusting an extrapolated count
+                         # here. Each platform's enforcement is verified on that platform (macOS dev
+                         # host / ubuntu-latest CI).
 npm run demo             # offline malware-detection walkthrough
 node packages/proxy/dist/index.js   # run the proxy (see README for env vars)
 ```
