@@ -56,4 +56,13 @@ describe("extractTarball caps", () => {
     const r = await extractTarball(tgz);
     assert.equal(r.truncated, false);
   });
+
+  test("a many-entry tarball is fully extracted (regression: 'finish' fires before parser 'end')", async () => {
+    const files: Record<string, string> = {};
+    for (let i = 0; i < 200; i++) files[`package/f${i}.js`] = `module.exports = ${i};\n`;
+    const tgz = await makeTgz(files);
+    const r = await extractTarball(tgz);
+    assert.equal(r.truncated, false);
+    assert.equal(r.files.length, 200, `expected all 200 files present, got ${r.files.length}`);
+  });
 });

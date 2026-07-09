@@ -72,6 +72,12 @@ export async function extractTarball(
   });
   parser.on("error", (e: unknown) => { failure = e instanceof Error ? e : new Error(String(e)); });
 
+  // Resolve on the parser's own 'end' event, not the writable-side 'finish'
+  // callback passed to `.end()` — 'finish' can fire before every entry's
+  // 'data'/'end' handlers have run, which would return an incomplete `files`
+  // for larger tarballs. Set this up before feeding so it can't be missed.
+  const done = new Promise<void>((resolve) => parser.on("end", () => resolve()));
+
   // Feed compressed bytes in slices so a cap breach halts decompression mid-stream
   // rather than decompressing the whole bomb in one synchronous write. Yield to the
   // event loop between slices so queued entry/data handlers can set `truncated`.
@@ -81,7 +87,8 @@ export async function extractTarball(
     await new Promise<void>((r) => setImmediate(r));
   }
   if (!truncated && !failure) {
-    await new Promise<void>((resolve) => parser.end(() => resolve()));
+    parser.end();
+    await done;
   }
   if (failure) throw failure;
   return { files, unpackedSize, fileCount, truncated };
