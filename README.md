@@ -30,7 +30,7 @@ audit placement, data model, npm hooks, stack justification).
 npm install          # install workspace deps
 npm run build        # compile all packages (tsc --build)
 npm run fixtures     # pack the test fixtures into real .tgz tarballs
-npm test             # 308 tests: engine + end-to-end proxy (see CLAUDE.md for the exact/skip breakdown)
+npm test             # engine + end-to-end proxy — see CLAUDE.md for the current count and skip breakdown
 npm run demo         # self-contained malware-detection demo (no network)
 ```
 

@@ -8,3 +8,4 @@ fixtures/signing-keys.json
 fixtures/registry.json
 .env
 sentinel-sbom.json
+.superpowers/
