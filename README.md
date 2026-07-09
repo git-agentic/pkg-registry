@@ -88,6 +88,8 @@ node packages/cli/dist/index.js install lodash
 | `SENTINEL_HISTORY_DB` | _(unset ⇒ disabled)_ | path to a SQLite file (`node:sqlite`, built-in); enables durable audit/violation history, `/-/metrics`, `/-/history`, `/-/violations/timeline`, `sentinel stats`/`history`, and the dashboard's Observability section. Node 24 runs it unflagged; Node 22 needs `--experimental-sqlite` |
 | `SENTINEL_ADVISORIES` | _(unset ⇒ bundled corpus only)_ | path to a JSON `Advisory[]` file, loaded once at startup (fatal error on an unreadable path); merged with the bundled known-malicious corpus and checked on the public install audit path |
 | `SENTINEL_VULNERABILITIES` | _(unset ⇒ bundled corpus only)_ | path to a JSON `VulnAdvisory[]` file, loaded once at startup (fatal error on an unreadable path, or on a corrupt non-JSON/non-array file); merged with the bundled known-vulnerable-range corpus and checked on the public install audit path |
+| `SENTINEL_TARBALL_ORIGINS` | _(registry origin only)_ | comma-separated allowlist of extra bare http(s) origins tarball fetches may target, beyond `SENTINEL_REGISTRY`'s own origin; validated once at startup (fatal error on a malformed entry), and a disallowed origin is never fetched (502) |
+| `SENTINEL_PUBLIC_BASE_URL` | _(unset ⇒ loopback-derived)_ | base URL used to rewrite `dist.tarball` links; when unset, only a loopback request Host (`localhost`, `127.0.0.0/8`, `[::1]`) may derive it — any other Host is refused with 421 |
 
 ## CLI
 
