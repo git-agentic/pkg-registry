@@ -104,6 +104,7 @@ node packages/cli/dist/index.js install lodash
 | `SENTINEL_REGISTRY` | `https://registry.npmjs.org` | upstream registry when in npm mode |
 | `SENTINEL_STORE` | _(memory only)_ | path to a JSON file to persist the audit log |
 | `SENTINEL_VIOLATIONS` | _(memory only)_ | path to a JSON file to persist runtime-violation records (quarantine state) |
+| `SENTINEL_AUTO_QUARANTINE` | _(unset ⇒ record-only)_ | set to `1` to let a confirmed runtime-violation report quarantine its integrity (force `block` at serve time); requires `SENTINEL_AUTH_PUBKEY` to also be set — a fatal error at startup otherwise, so auto-quarantine is only ever attributable to an authenticated caller (ADR-0040) |
 | `SENTINEL_APPROVAL_REQUESTS` | _(memory only)_ | path to a JSON file to persist pending approval requests (MCP `sentinel_request_approval` and any other caller) |
 | `SENTINEL_TRUSTED_ROOT` | _(bundled root)_ | path to a Sigstore `trusted_root.json` for provenance verification (fatal error on a bad path) |
 | `SENTINEL_NPM_ATTESTATION_KEYS` | _(bundled keys)_ | path to an npm publish-attestation keys JSON, used alongside `SENTINEL_TRUSTED_ROOT` |

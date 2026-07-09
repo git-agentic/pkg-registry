@@ -1,6 +1,6 @@
 # ADR-0023: Runtime violation telemetry (sandbox-as-sensor + fleet quarantine)
 
-**Status:** Accepted (Phase 10)
+**Status:** Accepted (Phase 10) (superseded by ADR-0040 for the auto-quarantine default)
 **Date:** 2026-07-07
 
 ## Context
