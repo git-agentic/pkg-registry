@@ -409,7 +409,9 @@ respectively. `SENTINEL_MAX_TARBALL_BYTES`/`SENTINEL_MAX_PACKUMENT_BYTES`/
 the same fail-closed, load-once-at-startup posture for the fetch byte caps,
 the audit-tree package cap, and the opt-in token-bucket rate limiter.
 `SENTINEL_AUTO_QUARANTINE` (Phase 26 Part B, ADR-0040) is `0`/unset by
-default (record-only); setting it to `1` requires `SENTINEL_AUTH_PUBKEY` to
+default (record-only); only the exact value `1` enables it (any other value,
+e.g. `true`, is treated as off — matching the `SENTINEL_ENFORCE="1"`
+convention), and enabling it requires `SENTINEL_AUTH_PUBKEY` to
 also be set, or the proxy FATALs at startup — the same fail-closed posture as
 the rest of this list, applied to the auto-quarantine decision itself.
 
