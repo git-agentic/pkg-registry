@@ -930,16 +930,17 @@ I/O. Scoring, the integrity cache key, and the packument passthrough are
 untouched (invariants #1–#6) — see
 [ADR-0037](./docs/adr/0037-resource-robustness.md).
 
-### 3.24 Sandbox default-deny — write slice (Phase 25, ADR-0038)
+### 3.24 Sandbox default-deny — writes + reads (Phase 25, ADR-0038)
 
 The sandbox's prior posture was allow-default: `(allow default)` (Seatbelt) /
 `--bind / /` (bwrap) minus the fixed `SENSITIVE_PATHS` deny list, so a
-lifecycle script could write anywhere not explicitly enumerated —
-contradicting the "approved capability manifest" model an external audit
-expected. Phase 25 inverts writes only; it lands as two slices because reads
-and writes have sharply different risk profiles. Slice 1 (this phase) covers
-writes; `$HOME`-read-deny is a separate, gated follow-up (Slice 2) — reads
-stay allow-default-minus-`SENSITIVE_PATHS` until then.
+lifecycle script could write — and read — anywhere not explicitly
+enumerated, contradicting the "approved capability manifest" model an
+external audit expected. Phase 25 inverts the posture in two slices because
+writes and `$HOME` reads have sharply different risk profiles: Slice 1
+(writes) and Slice 2 (`$HOME`-read-deny), both now landed on this branch.
+
+**Slice 1 — writes.**
 
 - **`pathCovers` is now directional (`packages/sandbox/src/path-cover.ts`).**
   `pathCovers(approvedTarget, target)` is true only when `approvedTarget` is
@@ -990,8 +991,52 @@ stay allow-default-minus-`SENSITIVE_PATHS` until then.
   resolves to `<homeDir>/.config/app` when emitted as a positive write
   Grant — an absolute or `~/`-prefixed target is unchanged.
 
-Scoring, the deny-set's read-side behavior, and the approval/manifest model
-are untouched (invariants #1–#6) — see
+**Slice 2 — `$HOME`-read-deny.** `$HOME` reads flip to deny-by-default too,
+re-opened by a **read-allow list** (`packages/sandbox/src/read-allow.ts`,
+`readAllowList({ nodePrefix, projectRoot })`): the node runtime's install
+prefix (`nodeInstallPrefix(execPath)` — `dirname(dirname(execPath))`, so a
+node-under-`$HOME` runtime installed via nvm/fnm/volta can still load its own
+stdlib), the project root (`resolveProjectRoot(cwd, INIT_CWD)` — trusts npm's
+`INIT_CWD` when absolute, else walks up from `cwd` to the nearest ancestor
+`package.json`, else falls back to `cwd` — so a lifecycle script's `require()`
+resolves across the whole project tree, not just its own install directory
+deep in `node_modules`), and the node build caches `~/.node-gyp` and
+`~/.cache`. System paths outside `$HOME` are unaffected — they stay readable
+via each backend's existing allow-default / `--ro-bind / /`. Two new sandbox
+inputs feed this: `nodePrefix` (from `process.execPath`) and `projectRoot`
+(from `INIT_CWD`); `Sandbox.run` gained an optional `projectRoot` parameter
+(defaults to `cwd`).
+
+- **Seatbelt (`generateProfile`).** Three SBPL layers (SBPL is
+  last-match-wins): `(deny file-read* (subpath $HOME))`, then `(allow
+  file-read-metadata (subpath $HOME))` — **load-bearing**: without it,
+  `require()`'s directory traversal (`lstat`/`stat` up to the project root)
+  breaks with EPERM, probe-verified before this landed — then `(allow
+  file-read* …read-allow-list…)` to re-open data reads for the node
+  prefix/project root/caches. The existing SENSITIVE read carve-out
+  (`/etc/passwd`, `/etc/shadow`) is unchanged and still applies after this,
+  so those stay denied even though `/etc` itself is read-allowed.
+- **bwrap (`generateBwrapArgs`).** `--tmpfs $HOME` empties `$HOME` (denying
+  its reads), then the read-allow list is re-bound read-only on top
+  (`--ro-bind-try`, tolerant of an absent `~/.node-gyp`/`~/.cache`), then the
+  Slice 1 write floor is re-bound read-write on top of *that* — mount order
+  matters: the broad ro project bind must land before the narrow rw `cwd`
+  bind, or a later ro mount would silently make `cwd` read-only again.
+  `SENSITIVE_PATHS` masks still apply last.
+- **Accepted telemetry asymmetry (extends ADR-0023, CI-confirmed).**
+  Seatbelt's read-deny produces an `EPERM`, which `classifyViolation` reports
+  as a `confirmed` runtime violation. bwrap's `--tmpfs $HOME` instead makes
+  the path not exist from the sandboxed process's view — a read fails
+  `ENOENT`, which `classifyViolation` does not classify. The read is
+  **contained** on both backends either way; only the *telemetry* differs
+  (bwrap doesn't report it). Effect tests assert containment on both
+  backends; only the Seatbelt test additionally asserts the violation
+  record.
+
+This **completes** the ADR-0016/0017/0018 supersession: both writes (Slice 1)
+and `$HOME` reads (Slice 2) are now deny-by-default on both backends.
+Scoring, the deny-set's read-side attribution model, and the
+approval/manifest model are untouched (invariants #1–#6) — see
 [ADR-0038](./docs/adr/0038-sandbox-default-deny.md).
 
 ---
