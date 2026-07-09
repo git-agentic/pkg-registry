@@ -930,6 +930,70 @@ I/O. Scoring, the integrity cache key, and the packument passthrough are
 untouched (invariants #1–#6) — see
 [ADR-0037](./docs/adr/0037-resource-robustness.md).
 
+### 3.24 Sandbox default-deny — write slice (Phase 25, ADR-0038)
+
+The sandbox's prior posture was allow-default: `(allow default)` (Seatbelt) /
+`--bind / /` (bwrap) minus the fixed `SENSITIVE_PATHS` deny list, so a
+lifecycle script could write anywhere not explicitly enumerated —
+contradicting the "approved capability manifest" model an external audit
+expected. Phase 25 inverts writes only; it lands as two slices because reads
+and writes have sharply different risk profiles. Slice 1 (this phase) covers
+writes; `$HOME`-read-deny is a separate, gated follow-up (Slice 2) — reads
+stay allow-default-minus-`SENSITIVE_PATHS` until then.
+
+- **`pathCovers` is now directional (`packages/sandbox/src/path-cover.ts`).**
+  `pathCovers(approvedTarget, target)` is true only when `approvedTarget` is
+  an ancestor-or-equal of `target` — an approval covers exactly its own
+  subtree and never widens up to an ancestor. Segment-anchored, so `ssh` does
+  not cover `.ssh`.
+- **A fixed write floor (`packages/sandbox/src/write-floor.ts`).**
+  `writeAllowFloor({ cwd, tmpDir })` returns the baseline writable set every
+  sandboxed script gets regardless of its approved capabilities: the Install
+  directory (`cwd`), `os.tmpdir()`, `/tmp`, `/dev` (so `2>/dev/null` and
+  similar device writes keep working), and the node-gyp/npm build caches
+  (`~/.node-gyp`, `~/.cache/node-gyp`, `~/.npm/_logs`). The floor is pure and
+  deliberately **not** operator-configurable — a widenable floor would reopen
+  the persistence class Phase 25 closes. Per-package needs beyond the floor
+  are met by approved `filesystem:` Grants.
+- **Seatbelt (`packages/sandbox/src/profile.ts`, `generateProfile`).** Writes
+  flip to `(deny file-write*)` followed by `(allow file-write* …)` over the
+  canonicalized floor plus approved-filesystem Grant subpaths (SBPL is
+  last-match-wins, so the allow — placed after the blanket deny — wins).
+  `SENSITIVE_PATHS` write entries are then re-emitted as a `(deny
+  file-write* …)` **carve-out** *after* the floor/Grant allow, so a
+  persistence path (e.g. a shell rc file that happens to live under the
+  floor's temp dir in a test) stays denied even though it sits under an
+  allowed ancestor — unless an approved Grant explicitly covers that exact
+  path, which lifts the carve-out. Reads are unchanged. `generateProfile`
+  now takes `{ homeDir, cwd, tmpDir }`.
+- **bwrap (`packages/sandbox/src/bwrap.ts`, `generateBwrapArgs`).** The root
+  mount flips from read-write (`--bind / /`) to **read-only**
+  (`--ro-bind / /`), so writes are denied by default while reads keep
+  working unchanged; the floor and approved-filesystem Grants are then
+  re-bound read-write on top via `--bind-try` (tolerant of a
+  not-yet-created cache directory). `SENSITIVE_PATHS` masks (`--tmpfs` /
+  `--ro-bind /dev/null`) are applied *after* the floor/Grant binds, the
+  same carve-out-after-allow ordering as Seatbelt, since a later bwrap
+  mount always wins. `generateBwrapArgs` also takes `{ homeDir, cwd,
+  tmpDir }`.
+- **`/dev` is cross-backend asymmetric by design.** `/dev` sits in the
+  shared `writeAllowFloor` for Seatbelt, which has no isolated-device-tree
+  primitive and whose prior allow-default posture already permitted `/dev`
+  writes (not a regression). The bwrap generator explicitly filters `/dev`
+  out of its read-write re-binds: `--dev /dev` (already present in the base
+  argv) gives the sandbox its own isolated, writable `/dev`, and binding the
+  host `/dev` on top would overmount that isolation with the real host
+  device tree (bwrap: later mount wins).
+- **Bare-relative Grant targets resolve against `homeDir`.** `expandHome`
+  (`packages/sandbox/src/deny-set.ts`) was widened so an approved
+  `filesystem:` target with no leading `/` or `~/` (e.g. `.config/app`)
+  resolves to `<homeDir>/.config/app` when emitted as a positive write
+  Grant — an absolute or `~/`-prefixed target is unchanged.
+
+Scoring, the deny-set's read-side behavior, and the approval/manifest model
+are untouched (invariants #1–#6) — see
+[ADR-0038](./docs/adr/0038-sandbox-default-deny.md).
+
 ---
 
 ## 4. The audit engine (`@sentinel/core`)

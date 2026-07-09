@@ -1,6 +1,6 @@
 # ADR-0016: macOS Seatbelt sandbox runner (ADR-0011 stage A, partial)
 
-**Status:** Accepted
+**Status:** Accepted (write-posture stance partially superseded by ADR-0038 — writes are now deny-by-default; the Seatbelt runner itself is unchanged)
 **Date:** 2026-06-26
 **Phase:** 3 (implements ADR-0011 Option A for macOS)
 

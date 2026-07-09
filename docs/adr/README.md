@@ -63,6 +63,12 @@ not yet built · `Superseded` / `Deprecated` — replaced; see the linked succes
 |-----|-------|----------------------|
 | [0037](./0037-resource-robustness.md) | Resource robustness | Audit-tree dedupe + cap, streamed byte caps, request coalescing, opt-in token-bucket rate limiting |
 
+## Phase 25 — sandbox default-deny (Accepted, implemented)
+
+| ADR | Title | Decision in one line |
+|-----|-------|----------------------|
+| [0038](./0038-sandbox-default-deny.md) | Sandbox default-deny (write slice) | Writes deny-by-default with a fixed floor + Grant re-allow; reads unchanged pending Slice 2 |
+
 ## Conventions
 
 - One decision per record; number sequentially; never renumber.
