@@ -699,9 +699,9 @@ composition analysis (SCA), not just malware detection.
 
 See [ADR-0035](./docs/adr/0035-known-vulnerability-sca.md).
 
-## Status
+## Phase log
 
-Phases 1–14 are built. Phase 1 is the transparent auditing proxy. Phase 2 adds the
+Phases 1–25 are built; see [CLAUDE.md](./CLAUDE.md) for the complete log. Phase 1 is the transparent auditing proxy. Phase 2 adds the
 install-time permission manifest + approval gate, signed per-enterprise policy, and
 the private-namespace registry. Phases 3–6 add cross-platform sandbox enforcement
 (macOS Seatbelt, Linux bubblewrap) up through `sentinel install --enforce`, which
@@ -748,6 +748,13 @@ Phase 21 adds known-advisory detection: a bundled, static corpus of
 publicly-documented known-malicious npm releases hard-blocks an exact
 version match by default, with an operator-supplied `SENTINEL_ADVISORIES`
 file merged in at proxy startup.
+Phase 22 adds known-vulnerability (semver-range CVE) detection over a bundled offline
+corpus. Phase 23 hardens the network trust boundary: outbound tarball fetches are
+pinned to allowlisted origins and packument tarball rewrites use a configured public
+base URL instead of trusting the Host header. Phase 24 adds resource robustness —
+fetch byte caps, audit-tree dedupe + a package cap, request coalescing, and an opt-in
+rate limiter. Phase 25 flips the sandbox to deny-by-default: writes and `$HOME` reads
+are denied unless a fixed floor or an approved capability grant re-opens them.
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full design and [docs/adr/](./docs/adr/)
 for the decision log.
 
