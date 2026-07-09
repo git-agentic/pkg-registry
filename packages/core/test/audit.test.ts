@@ -1,8 +1,33 @@
 import assert from "node:assert/strict";
 import { before, describe, test } from "node:test";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
+import { create } from "tar";
 import { auditTarball, runAudit, integrityOf, NPM_SIGNING_KEYS, type AuditReport, type NpmSigningKey, type RegistrySignature } from "../src/index.js";
 import { ensureFixtures, tarball } from "./helpers.js";
+
+// Build an in-memory .tgz from a { path -> contents } map, npm-style (package/ prefix).
+// Copied from extract.test.ts (Task A1) so audit.test.ts can build its own bomb fixtures.
+async function makeTgz(files: Record<string, string>): Promise<Buffer> {
+  const { mkdtempSync, writeFileSync, mkdirSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join, dirname } = await import("node:path");
+  const dir = mkdtempSync(join(tmpdir(), "sentinel-audit-"));
+  try {
+    for (const [p, c] of Object.entries(files)) {
+      const full = join(dir, p);
+      mkdirSync(dirname(full), { recursive: true });
+      writeFileSync(full, c);
+    }
+    const chunks: Buffer[] = [];
+    const stream = create({ cwd: dir, gzip: true }, Object.keys(files));
+    for await (const ch of stream) chunks.push(Buffer.from(ch));
+    return Buffer.concat(chunks);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+const metaFor = (name: string) => ({ name, version: "1.0.0", author: null, maintainers: [] as string[], license: null, hasInstallScripts: false });
 
 const baseMeta = {
   author: null,
@@ -159,5 +184,25 @@ describe("phase 9: integrity recompute + provenance wiring", () => {
       hasProvenance: true, attestations: null, trustMaterial: null,
     });
     assert.equal(audit.meta.provenance, "unknown");
+  });
+});
+
+describe("task A2: resource-abuse (decompression-bomb) finding", () => {
+  test("a decompression-bomb tarball blocks with a critical resource-abuse finding", async () => {
+    const big = "A".repeat(4 * 1024 * 1024);
+    const tgz = await makeTgz({ "package/package.json": '{"name":"bomb","version":"1.0.0"}', "package/big.txt": big });
+    const report = await auditTarball({
+      meta: metaFor("bomb"),
+      tarball: tgz,
+      extractLimits: { maxUnpackedBytes: 1024 * 1024 },
+    });
+    assert.equal(report.verdict, "block");
+    assert.ok(report.findings.some((f) => f.ruleId === "resource-abuse" && f.severity === "critical"));
+  });
+
+  test("a benign tarball produces no resource-abuse finding", async () => {
+    const tgz = await makeTgz({ "package/package.json": '{"name":"ok","version":"1.0.0"}', "package/index.js": "module.exports=1\n" });
+    const report = await auditTarball({ meta: metaFor("ok"), tarball: tgz });
+    assert.ok(!report.findings.some((f) => f.ruleId === "resource-abuse"));
   });
 });
