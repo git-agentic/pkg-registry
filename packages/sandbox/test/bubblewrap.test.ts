@@ -134,4 +134,20 @@ describe("BubblewrapSandbox enforcement", { skip }, () => {
     assert.equal(r.failed, false, `postinstall failed under bwrap; child stderr: ${r.results.map((x) => x.stderr).join(" | ")}`);
     assert.equal(readFileSync(join(dir, "built.txt"), "utf8").trim(), "built");
   });
+
+  test("a $HOME read outside the read-allow list is contained; the project tree stays readable", () => {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "bw-read-")));
+    const proj = join(home, "app"); mkdirSync(join(proj, "node_modules", "dep"), { recursive: true });
+    writeFileSync(join(proj, "node_modules", "dep", "index.js"), "module.exports=1");
+    writeFileSync(join(home, "secret.txt"), "TOPSECRET");
+    const cwd = join(proj, "node_modules", "pkg"); mkdirSync(cwd, { recursive: true });
+    const r = new BubblewrapSandbox().run(
+      `node -e "require('${join(proj, "node_modules", "dep", "index.js")}'); process.stdout.write('DEP_OK'); try{require('fs').readFileSync('${join(home, "secret.txt")}');process.stdout.write('LEAK')}catch(e){process.stdout.write('READ_DENIED')}"`,
+      { cwd, approved: [], homeDir: home, projectRoot: proj },
+    );
+    assert.ok(r.stdout.includes("DEP_OK"), "the project tree must be readable");
+    // Containment only — bwrap tmpfs → ENOENT, which classifyViolation does not classify
+    // (the accepted Seatbelt/bwrap telemetry asymmetry; report is Seatbelt-only, ADR-0023).
+    assert.ok(r.stdout.includes("READ_DENIED") && !r.stdout.includes("LEAK"), "the non-allow-listed $HOME read must be contained");
+  });
 });
