@@ -71,6 +71,8 @@ export { toCycloneDX, type CycloneDXBom, type CycloneDXComponent } from "./sbom.
 export { remediate, remediationHint, type Remediation, type RemediationItem, type WaiverTemplate } from "./remediation.js";
 export { KNOWN_ADVISORIES, parseAdvisories, parseAdvisoriesStrict, buildAdvisoryIndex, type Advisory } from "./advisory-corpus.js";
 export { knownAdvisoryRule } from "./rules/known-advisory.js";
+export { KNOWN_VULNERABILITIES, parseVulnAdvisories, parseVulnAdvisoriesStrict, buildVulnIndex, type VulnAdvisory } from "./vuln-corpus.js";
+export { knownVulnerabilityRule } from "./rules/known-vulnerability.js";
 export {
   buildAuditStatement, signAttestation, verifyAttestation, attestationKeyid, pae, SENTINEL_PREDICATE_TYPE,
   type InTotoStatementV1, type AuditPredicate, type DsseEnvelope, type VerifyResult, type VerifyReason,

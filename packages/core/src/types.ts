@@ -7,6 +7,7 @@
  */
 
 import type { Advisory } from "./advisory-corpus.js";
+import type { VulnAdvisory } from "./vuln-corpus.js";
 
 export type Verdict = "allow" | "warn" | "block";
 
@@ -40,7 +41,8 @@ export type Category =
   | "secret-exfil"
   | "install-script"
   | "metadata"
-  | "provenance";
+  | "provenance"
+  | "vulnerability";
 
 export interface Evidence {
   /** File path inside the package (npm convention: `package/<path>`). */
@@ -180,6 +182,8 @@ export interface AuditInput {
   releaseContext?: ReleaseContext;
   /** Operator-supplied known-malicious advisories, merged with the bundled corpus (Phase 21). */
   advisories?: Advisory[];
+  /** Operator-supplied known vulnerabilities, merged with the bundled corpus (Phase 22). */
+  vulnerabilities?: VulnAdvisory[];
 }
 
 /** A pure, deterministic detection rule. */
