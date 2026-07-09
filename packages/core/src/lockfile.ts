@@ -18,7 +18,8 @@ interface LockPackageEntry {
 /**
  * Parse an npm `package-lock.json` (v2/v3) into deduped, `name@version`-sorted
  * registry coordinates. Lockfile-format knowledge lives here, not on the proxy.
- * Skips the root ("") entry, `link:`/`file:` entries, and (when `omitDev`) dev deps.
+ * Skips the root ("") entry, workspace source entries (paths outside
+ * node_modules/), `link:`/`file:` entries, and (when `omitDev`) dev deps.
  */
 export function parseLockfile(raw: string, opts: { omitDev?: boolean } = {}): Coordinate[] {
   const doc = JSON.parse(raw) as { packages?: Record<string, LockPackageEntry> };
@@ -29,6 +30,9 @@ export function parseLockfile(raw: string, opts: { omitDev?: boolean } = {}): Co
   const byKey = new Map<string, Coordinate>();
   for (const [path, entry] of Object.entries(packages)) {
     if (path === "" || !entry || entry.link) continue;
+    // Workspace source entries live at their project path ("packages/api"), not
+    // under node_modules/ — they are local projects, not registry coordinates.
+    if (!path.includes("node_modules/")) continue;
     const resolved = entry.resolved ?? "";
     if (resolved.startsWith("file:") || resolved.startsWith("link:")) continue;
     if (opts.omitDev && entry.dev) continue;

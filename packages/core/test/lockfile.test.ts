@@ -39,4 +39,21 @@ describe("parseLockfile", () => {
   test("rejects a lockfile with no packages map", () => {
     assert.throws(() => parseLockfile(JSON.stringify({ dependencies: {} })), /packages/);
   });
+
+  test("skips workspace source entries (paths outside node_modules)", () => {
+    // npm workspaces: the workspace project appears twice — as its source path
+    // ("packages/api", no link flag, no resolved) and as a node_modules link
+    // entry. Neither is a registry coordinate; auditing it upstream can only 404.
+    const lock = JSON.stringify({
+      name: "root", version: "1.0.0", lockfileVersion: 3,
+      packages: {
+        "": { name: "root", version: "1.0.0" },
+        "packages/api": { name: "@acme/api", version: "0.1.0" },
+        "node_modules/@acme/api": { resolved: "packages/api", link: true },
+        "node_modules/leftpad-lite": { version: "1.0.0", resolved: "https://r/leftpad-lite/-/leftpad-lite-1.0.0.tgz" },
+      },
+    });
+    const coords = parseLockfile(lock);
+    assert.deepEqual(coords.map((c) => `${c.name}@${c.version}`), ["leftpad-lite@1.0.0"]);
+  });
 });
