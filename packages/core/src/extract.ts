@@ -52,21 +52,20 @@ export async function extractTarball(
       entry.resume();
       return;
     }
-    if (entry.type !== "File") {
-      entry.resume();
-      return;
-    }
-    fileCount += 1;
+    const isFile = entry.type === "File";
+    if (isFile) fileCount += 1;
     const chunks: Buffer[] = [];
     let bytes = 0;
     entry.on("data", (c: Buffer) => {
       unpackedSize += c.length;
       if (unpackedSize > maxUnpacked) truncated = true;
-      bytes += c.length;
-      if (!truncated && bytes <= MAX_FILE_BYTES) chunks.push(c);
+      if (isFile) {
+        bytes += c.length;
+        if (!truncated && bytes <= MAX_FILE_BYTES) chunks.push(c);
+      }
     });
     entry.on("end", () => {
-      if (truncated) return;
+      if (truncated || !isFile) return;
       const path = normalize(entry.path);
       if (bytes <= MAX_FILE_BYTES && TEXT_EXT.test(path)) {
         const content = Buffer.concat(chunks).toString("utf8");

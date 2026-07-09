@@ -48,6 +48,33 @@ async function makeDirTgz(dirCount: number): Promise<Buffer> {
   }
 }
 
+// Hand-build a single-entry .tgz whose entry is tar type '7' (ContiguousFile),
+// which node-tar streams full-body data for but which the pre-fix extractor
+// only measured `unpackedSize` for `entry.type === "File"` (type '0'). Built
+// manually (not via `tar.create`, which has no ergonomic ContiguousFile knob)
+// per the POSIX ustar header layout.
+function buildContiguousFileTgz(entryPath: string, size: number): Buffer {
+  const header = Buffer.alloc(512);
+  header.write(entryPath, 0, "utf8");
+  header.write("0000644\0", 100, "ascii"); // mode
+  header.write("0000000\0", 108, "ascii"); // uid
+  header.write("0000000\0", 116, "ascii"); // gid
+  header.write(`${size.toString(8).padStart(11, "0")} `, 124, "ascii"); // size
+  header.write("00000000000 ", 136, "ascii"); // mtime
+  header.write("        ", 148, "ascii"); // chksum placeholder (8 spaces)
+  header.write("7", 156, "ascii"); // typeflag: ContiguousFile
+  header.write("ustar\0", 257, "ascii");
+  header.write("00", 263, "ascii");
+  let sum = 0;
+  for (let i = 0; i < 512; i++) sum += header[i];
+  header.write(`${sum.toString(8).padStart(6, "0")}\0 `, 148, "ascii");
+
+  const body = Buffer.alloc(size, 0x41);
+  const pad = (512 - (size % 512)) % 512;
+  const tarBuf = Buffer.concat([header, body, Buffer.alloc(pad), Buffer.alloc(1024)]);
+  return gzipSync(tarBuf);
+}
+
 describe("extractTarball caps", () => {
   test("a benign small tarball is not truncated and yields its text files", async () => {
     const tgz = await makeTgz({ "package/package.json": '{"name":"x","version":"1.0.0"}', "package/index.js": "module.exports=1;\n" });
@@ -93,5 +120,13 @@ describe("extractTarball caps", () => {
     const tgz = await makeDirTgz(50);
     const r = await extractTarball(tgz, undefined, { maxFileCount: 10 });
     assert.equal(r.truncated, true);
+  });
+
+  test("a ContiguousFile (tar type '7') entry's body counts toward maxUnpackedBytes (byte-cap bypass)", async () => {
+    // 8 MiB of a repeated byte, gzip-compresses to a few KB.
+    const tgz = buildContiguousFileTgz("package/big.bin", 8 * 1024 * 1024);
+    const r = await extractTarball(tgz, undefined, { maxUnpackedBytes: 1024 * 1024 });
+    assert.equal(r.truncated, true);
+    assert.ok(r.unpackedSize > 1024 * 1024, `expected unpackedSize to reflect the streamed body, got ${r.unpackedSize}`);
   });
 });
