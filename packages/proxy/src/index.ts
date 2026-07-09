@@ -2,6 +2,7 @@
 import { dirname, join, resolve } from "node:path";
 import { readFileSync, realpathSync } from "node:fs";
 import { validateAuthPublicKey } from "./auth-config.js";
+import { parseTarballOrigins, parsePublicBaseUrl } from "./net-config.js";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   loadPolicy,
@@ -36,7 +37,7 @@ function env(name: string, fallback: string): string {
   return process.env[name] ?? fallback;
 }
 
-function buildUpstream(): Upstream {
+function buildUpstream(tarballOrigins: readonly string[]): Upstream {
   const mode = env("SENTINEL_UPSTREAM", "npm");
   if (mode === "fixtures" || mode.startsWith("fixtures:")) {
     const dir = mode.includes(":")
@@ -44,7 +45,7 @@ function buildUpstream(): Upstream {
       : resolve(env("SENTINEL_FIXTURES", "fixtures"));
     return new LocalFixtureUpstream(dir);
   }
-  return new NpmUpstream(env("SENTINEL_REGISTRY", "https://registry.npmjs.org"));
+  return new NpmUpstream(env("SENTINEL_REGISTRY", "https://registry.npmjs.org"), tarballOrigins);
 }
 
 function resolveEnterprisePolicy(): { policy: EnterprisePolicy; hash: string } {
@@ -129,6 +130,28 @@ function resolveVulnerabilities(): VulnAdvisory[] | undefined {
   return vulnerabilities;
 }
 
+function resolveTarballOrigins(): string[] {
+  const raw = process.env.SENTINEL_TARBALL_ORIGINS;
+  if (!raw) return [];
+  try {
+    return parseTarballOrigins(raw);
+  } catch (err) {
+    console.error(`FATAL: ${(err as Error).message}`);
+    process.exit(1);
+  }
+}
+
+function resolvePublicBaseUrl(): string | undefined {
+  const raw = process.env.SENTINEL_PUBLIC_BASE_URL;
+  if (!raw) return undefined;
+  try {
+    return parsePublicBaseUrl(raw);
+  } catch (err) {
+    console.error(`FATAL: ${(err as Error).message}`);
+    process.exit(1);
+  }
+}
+
 function resolveTrustMaterial(): ProvenanceTrustMaterial | null | undefined {
   const rootPath = process.env.SENTINEL_TRUSTED_ROOT;
   if (!rootPath) return undefined; // bundled default
@@ -144,7 +167,9 @@ function main(): void {
   const here = dirname(fileURLToPath(import.meta.url));
   const port = Number(env("SENTINEL_PORT", "4873"));
   const policy = env("SENTINEL_POLICY", "observe") as ProxyPolicy;
-  const upstream = buildUpstream();
+  const tarballOrigins = resolveTarballOrigins();
+  const publicBaseUrl = resolvePublicBaseUrl();
+  const upstream = buildUpstream(tarballOrigins);
   const { policy: enterprisePolicy, hash: policyHash } = resolveEnterprisePolicy();
   const history = process.env.SENTINEL_HISTORY_DB ? new HistoryDb(process.env.SENTINEL_HISTORY_DB) : undefined;
   const store = new AuditStore(process.env.SENTINEL_STORE, policyHash, history);
@@ -160,10 +185,12 @@ function main(): void {
   const advisories = resolveAdvisories();
   const vulnerabilities = resolveVulnerabilities();
 
-  const app = createServer({ upstream, store, approvals, enterprisePolicy, policyHash, policy, publicDir, privateStore, publishTokens, trustMaterial, violations, approvalRequests, authPublicKey, history, advisories, vulnerabilities });
+  const app = createServer({ upstream, store, approvals, enterprisePolicy, policyHash, policy, publicDir, privateStore, publishTokens, trustMaterial, violations, approvalRequests, authPublicKey, history, advisories, vulnerabilities, publicBaseUrl });
   app.listen(port, () => {
     console.log(`Sentinel proxy listening on http://localhost:${port}`);
     console.log(`  upstream : ${upstream.name}`);
+    console.log(`  tarball-origins: registry origin${tarballOrigins.length ? " + " + tarballOrigins.join(", ") : " only"}`);
+    console.log(`  public-url: ${publicBaseUrl ?? "loopback-derived (set SENTINEL_PUBLIC_BASE_URL for network deployments)"}`);
     console.log(`  policy   : ${policy}  (observe = audit+serve, block = 403 on block verdict)`);
     console.log(`  trust    : ${trustMaterial === undefined ? "bundled Sigstore root" : "operator-supplied root"}`);
     console.log(`  auth     : ${authPublicKey ? "enabled (signed role tokens)" : "disabled (open control plane)"}`);
