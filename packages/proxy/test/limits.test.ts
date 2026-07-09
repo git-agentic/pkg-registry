@@ -44,14 +44,13 @@ describe("readBodyCapped", () => {
     assert.equal(buf.toString(), "hello world");
   });
 
-  test("early-rejects when content-length exceeds the cap (body never read)", async () => {
-    let bodyRead = false;
-    const stream = new ReadableStream<Uint8Array>({
-      pull(controller) { bodyRead = true; controller.enqueue(new Uint8Array(Buffer.from("x"))); controller.close(); },
-    });
-    const res = new Response(stream, { headers: { "content-length": "999999" } });
+  test("early-rejects when content-length exceeds the cap (body not consumed)", async () => {
+    // undici pulls a pull-driven ReadableStream at Response construction regardless of
+    // our code, so we assert on res.bodyUsed — it flips true only if readBodyCapped
+    // calls getReader(), which the content-length early-reject path must never do.
+    const res = streamResponse([Buffer.from("x".repeat(100))], 999999);
     await assert.rejects(() => readBodyCapped(res, 10, "test body"), /too large/);
-    assert.equal(bodyRead, false, "body must not be read when content-length already exceeds the cap");
+    assert.equal(res.bodyUsed, false, "early-reject must not consume the body");
   });
 
   test("aborts mid-stream when the running total exceeds the cap (lying/absent content-length)", async () => {
