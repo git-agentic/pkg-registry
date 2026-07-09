@@ -63,7 +63,7 @@ Create `packages/core/src/rules/<id>.ts` exporting a `Rule` (a pure
 `(AuditInput) => Finding[]`), register it in `packages/core/src/rules/index.ts`,
 and use `mkFinding()` from `rules/util.ts` so the diff multiplier and policy
 weights apply consistently — don't compute weights by hand. Policy weights and
-verdict thresholds live in `POLICY` in `packages/core/src/score.ts`, nowhere
+verdict thresholds live in `DEFAULT_POLICY` in `packages/core/src/policy.ts`, nowhere
 else. Every rule change needs a test proving the new behavior, and the
 malicious fixtures must still be **blocked**.
 

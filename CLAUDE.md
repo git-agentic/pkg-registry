@@ -347,7 +347,7 @@ serve real packages transparently; only attach signal.
   `mkFinding()` from `rules/util.ts` so the diff multiplier and policy weights apply
   consistently. Don't compute weights by hand.
 - **Tune policy:** all weights, the diff multiplier, and verdict thresholds live in
-  `POLICY` in `packages/core/src/score.ts`. Change them there, nowhere else. Phase 2
+  `DEFAULT_POLICY` in `packages/core/src/policy.ts`. Change them there, nowhere else. Phase 2
   makes these per-enterprise — keep them data, not code.
 - **Add an upstream:** implement `Upstream` in `packages/proxy/src/upstream.ts`
   (`getPackument`, `getTarball`). Keep audit logic in the server, not the upstream.
