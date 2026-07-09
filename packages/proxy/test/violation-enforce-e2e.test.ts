@@ -97,6 +97,7 @@ describe("install --enforce (e2e): a propagating violation is reported and quara
     // Use async spawn (not spawnSync): the proxy runs on THIS process's event loop, and a blocking
     // spawnSync would freeze it — npm (a child) could never fetch packument/tarball/manifest from the
     // in-process proxy, deadlocking the install. Awaiting keeps the loop free to serve the request path.
+    let out = "";
     await new Promise<void>((resolve) => {
       const child = spawn("npm", ["install", `${pkg}@1.0.0`, "--registry", base, "--no-audit", "--no-fund"], {
         cwd: proj, env,
@@ -104,16 +105,18 @@ describe("install --enforce (e2e): a propagating violation is reported and quara
       // The fixture's postinstall exits non-zero (the propagating EPERM); npm may abort the install
       // or report a failed postinstall. We don't assert on npm's exit code — only that the
       // script-shell reported the violation before the non-zero code propagated (asserted below).
+      child.stdout?.on("data", (d: Buffer) => (out += d.toString()));
+      child.stderr?.on("data", (d: Buffer) => (out += d.toString()));
       child.on("close", () => resolve());
     });
-    return { dir: join(proj, "node_modules", pkg) };
+    return { dir: join(proj, "node_modules", pkg), out };
   }
 
   test("ENFORCED: the propagating ssh read is reported and quarantines the build", async () => {
     // npm may roll back the dependency's extracted files when its postinstall exits non-zero, so
     // we do NOT assert on `dir` (node_modules/<pkg>) still existing — only on the violation record
     // (below), which the script-shell reports to the proxy before the non-zero code ever reaches npm.
-    await enforcedInstall("violation-fs-probe", true);
+    const { out } = await enforcedInstall("violation-fs-probe", true);
 
     const rep = await (await fetch(`${base}/-/audit/violation-fs-probe/1.0.0`)).json() as AuditReport;
     const integrity = rep.meta.integrity!;
@@ -121,7 +124,7 @@ describe("install --enforce (e2e): a propagating violation is reported and quara
       violations: { integrity: string; kind: string; quarantined: boolean; evidence: { exitCode: number; stderrExcerpt: string } }[];
     };
     const rec = listed.violations.find((v) => v.integrity === integrity);
-    assert.ok(rec && rec.kind === "filesystem" && rec.quarantined, "a confirmed fs violation must be recorded + quarantined");
+    assert.ok(rec && rec.kind === "filesystem" && rec.quarantined, `a confirmed fs violation must be recorded + quarantined; npm+shim output:\n${out.slice(-1500)}`);
     // Positive control: the recorded evidence carries the real sandboxed process's stderr (a
     // non-zero exit + a permission-denial signature on the planted ssh path) — this rules out a
     // vacuous pass where the postinstall never actually ran under the sandbox and got denied.

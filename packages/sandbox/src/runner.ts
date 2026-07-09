@@ -8,6 +8,8 @@ export interface ScriptResult {
   hook: string;
   command: string;
   exitCode: number;
+  /** The sandboxed child's stderr — surfaces a sandbox setup error (e.g. bwrap abort) on failure. */
+  stderr: string;
 }
 
 const LIFECYCLE = ["preinstall", "install", "postinstall"] as const;
@@ -32,7 +34,7 @@ export function runLifecycleScripts(opts: {
     const command = scripts[hook];
     if (!command) continue;
     const r = opts.sandbox.run(command, { cwd: opts.packageDir, approved, homeDir: opts.homeDir, env });
-    results.push({ hook, command, exitCode: r.exitCode });
+    results.push({ hook, command, exitCode: r.exitCode, stderr: r.stderr });
   }
   return { results, failed: results.some((r) => r.exitCode !== 0) };
 }

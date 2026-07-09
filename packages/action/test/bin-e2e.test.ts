@@ -26,8 +26,17 @@ function lockDir(): string {
   return dir;
 }
 async function run(dir: string, extraEnv: Record<string, string>): Promise<{ code: number; stdout: string }> {
+  // Scrub inherited GitHub Actions env so the action's output mode is driven only
+  // by `extraEnv` — otherwise, when this suite itself runs inside GitHub Actions,
+  // GITHUB_OUTPUT/GITHUB_STEP_SUMMARY route the report to a file + emit `::error::`
+  // annotations instead of printing the plain report to stdout (the "no GitHub env"
+  // path this test asserts). A test whose behavior flips based on where it runs is
+  // the bug being fixed here.
+  const env: NodeJS.ProcessEnv = { ...process.env, SENTINEL_CI_FIXTURES: FIXTURES };
+  for (const k of Object.keys(env)) if (k.startsWith("GITHUB_")) delete env[k];
+  Object.assign(env, extraEnv);
   try {
-    const { stdout } = await execFileAsync("node", [BIN], { cwd: dir, env: { ...process.env, SENTINEL_CI_FIXTURES: FIXTURES, ...extraEnv } });
+    const { stdout } = await execFileAsync("node", [BIN], { cwd: dir, env });
     return { code: 0, stdout };
   } catch (e) {
     const err = e as { code?: number; stdout?: string };

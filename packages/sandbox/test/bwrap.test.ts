@@ -100,4 +100,17 @@ describe("generateBwrapArgs — write-deny (Phase 25)", () => {
     const rw = [...binds(args, "--bind"), ...binds(args, "--bind-try")];
     assert.ok(!rw.includes("/"), "bare root must not be granted rw");
   });
+  test("a SENSITIVE mask is skipped when pathExists reports the target absent (bwrap can't mkdir a mount point under a read-only parent)", () => {
+    const ssh = "/home/x/.ssh";
+    const withSsh = binds(generateBwrapArgs([], { ...OPTS2, pathExists: () => true }), "--tmpfs");
+    const withoutSsh = binds(generateBwrapArgs([], { ...OPTS2, pathExists: (p) => p !== ssh }), "--tmpfs");
+    assert.ok(withSsh.includes(ssh), "an existing sensitive path (subpath → --tmpfs) IS masked");
+    assert.ok(!withoutSsh.includes(ssh), "an absent sensitive path is NOT masked");
+    // Other sensitive paths that still 'exist' remain masked — only the absent one is dropped.
+    assert.ok(withoutSsh.includes("/home/x/.aws"), "unrelated existing masks are unaffected");
+  });
+  test("with no pathExists predicate, all SENSITIVE masks are emitted (pure/deterministic default)", () => {
+    const tmpfs = binds(generateBwrapArgs([], OPTS2), "--tmpfs");
+    assert.ok(tmpfs.includes("/home/x/.ssh") && tmpfs.includes("/home/x/.aws"), "default emits every subpath mask");
+  });
 });

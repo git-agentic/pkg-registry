@@ -10,10 +10,18 @@ import { writeAllowFloor } from "./write-floor.js";
  * read-write on top (`--bind-try`, tolerant of a not-yet-created cache dir).
  * Credential-read masks (unchanged from before) and `--unshare-net` follow.
  * Pure: same inputs ⇒ same argv. No firmlink canonicalization (Linux).
+ *
+ * `pathExists` gates which SENSITIVE_PATHS masks are emitted. Under the read-only
+ * root, bwrap must CREATE each mask's mount point, which it cannot do when the
+ * mask's parent dir is read-only (i.e. a real `$HOME` not under the writable
+ * floor) — bwrap aborts. A path that does not exist has nothing to mask (and,
+ * under write-deny, a read-denied location cannot be created during the run), so
+ * we skip it. The runner injects `existsSync`; the pure argv tests omit it (⇒
+ * all masks emitted, deterministic).
  */
 export function generateBwrapArgs(
   approved: Capability[],
-  opts: { homeDir: string; cwd: string; tmpDir: string },
+  opts: { homeDir: string; cwd: string; tmpDir: string; pathExists?: (p: string) => boolean },
 ): string[] {
   const approvedFs = approved.filter((c) => c.kind === "filesystem").map((c) => c.target);
   const hasNetwork = approved.some((c) => c.kind === "network");
@@ -37,10 +45,12 @@ export function generateBwrapArgs(
   // open otherwise) AND carves persistence write targets back out of the floor —
   // so `~/.zshrc` stays denied even when the test's fake $HOME sits under the
   // floor's temp dir. A Grant covering the path skips its mask.
+  const exists = opts.pathExists ?? (() => true);
   for (const sp of sensitivePathsFor("linux")) {
     for (const dp of sp.denyPaths) {
       if (approvedFs.some((t) => pathCovers(t, dp))) continue;
       const target = expandHome(dp, opts.homeDir);
+      if (!exists(target)) continue; // bwrap can't create a mask mount point under a read-only parent
       if (sp.denyKind === "subpath") args.push("--tmpfs", target);
       else args.push("--ro-bind", "/dev/null", target);
     }

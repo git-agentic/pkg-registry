@@ -131,7 +131,7 @@ describe("BubblewrapSandbox enforcement", { skip }, () => {
     const dir = realpathSync(mkdtempSync(join(tmpdir(), "bw-run-")));
     writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "p", version: "1.0.0", scripts: { postinstall: "echo built > built.txt" } }));
     const r = runLifecycleScripts({ packageDir: dir, sandbox: new BubblewrapSandbox(), homeDir: process.env.HOME ?? "/root" });
-    assert.equal(r.failed, false);
+    assert.equal(r.failed, false, `postinstall failed under bwrap; child stderr: ${r.results.map((x) => x.stderr).join(" | ")}`);
     assert.equal(readFileSync(join(dir, "built.txt"), "utf8").trim(), "built");
   });
 });
