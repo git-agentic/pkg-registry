@@ -1,0 +1,40 @@
+name: Detection gap
+description: A package that should have been flagged (or was wrongly flagged)
+labels: [needs-triage]
+body:
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind
+      options:
+        - Missed detection (should have been flagged, wasn't)
+        - False positive (benign package was flagged)
+    validations:
+      required: true
+  - type: input
+    id: coordinate
+    attributes:
+      label: Package name and version
+      placeholder: some-package@1.2.3
+    validations:
+      required: true
+  - type: input
+    id: integrity
+    attributes:
+      label: dist.integrity (if known)
+      placeholder: sha512-...
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs actual verdict
+      description: What did Sentinel say (score, verdict, findings) and what should it have said? Paste the audit output if you have it.
+    validations:
+      required: true
+  - type: textarea
+    id: pattern
+    attributes:
+      label: The pattern (for missed detections)
+      description: >
+        Describe the malicious *pattern* in prose. Do NOT paste live malware,
+        real C2 addresses, or working exploit code — we build synthetic, inert
+        fixtures from descriptions (see CONTRIBUTING.md, "Fixture safety rules").
