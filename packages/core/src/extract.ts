@@ -36,21 +36,27 @@ export async function extractTarball(
   const files: PackageFile[] = [];
   let unpackedSize = 0;
   let fileCount = 0;
+  let entryCount = 0;
   let truncated = false;
   let failure: Error | null = null;
 
   const parser = new tar.Parser();
   parser.on("entry", (entry: tar.ReadEntry) => {
-    if (truncated || entry.type !== "File") {
+    if (truncated) {
       entry.resume();
       return;
     }
-    fileCount += 1;
-    if (fileCount > maxFiles) {
+    entryCount += 1;
+    if (entryCount > maxFiles) {
       truncated = true;
       entry.resume();
       return;
     }
+    if (entry.type !== "File") {
+      entry.resume();
+      return;
+    }
+    fileCount += 1;
     const chunks: Buffer[] = [];
     let bytes = 0;
     entry.on("data", (c: Buffer) => {

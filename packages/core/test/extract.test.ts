@@ -25,6 +25,29 @@ async function makeTgz(files: Record<string, string>): Promise<Buffer> {
   }
 }
 
+// Build an in-memory .tgz containing only directory entries (no files) — a
+// header-only "bomb" shape (near-zero bytes per entry, huge compression ratio).
+async function makeDirTgz(dirCount: number): Promise<Buffer> {
+  const { mkdtempSync, mkdirSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = mkdtempSync(join(tmpdir(), "sentinel-extract-dirs-"));
+  try {
+    const names: string[] = [];
+    for (let i = 0; i < dirCount; i++) {
+      const p = `package/d${i}`;
+      mkdirSync(join(dir, p), { recursive: true });
+      names.push(p);
+    }
+    const chunks: Buffer[] = [];
+    const stream = create({ cwd: dir, gzip: true }, names);
+    for await (const ch of stream) chunks.push(Buffer.from(ch));
+    return Buffer.concat(chunks);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 describe("extractTarball caps", () => {
   test("a benign small tarball is not truncated and yields its text files", async () => {
     const tgz = await makeTgz({ "package/package.json": '{"name":"x","version":"1.0.0"}', "package/index.js": "module.exports=1;\n" });
@@ -64,5 +87,11 @@ describe("extractTarball caps", () => {
     const r = await extractTarball(tgz);
     assert.equal(r.truncated, false);
     assert.equal(r.files.length, 200, `expected all 200 files present, got ${r.files.length}`);
+  });
+
+  test("a tarball made entirely of directory entries is truncated against maxFileCount (header-bomb bypass)", async () => {
+    const tgz = await makeDirTgz(50);
+    const r = await extractTarball(tgz, undefined, { maxFileCount: 10 });
+    assert.equal(r.truncated, true);
   });
 });
