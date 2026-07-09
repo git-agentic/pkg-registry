@@ -17,7 +17,7 @@ export interface ViolationRecord extends ViolationInput {
   reportedAt: string; // ISO-8601
 }
 
-/** Runtime-violation telemetry, integrity-keyed. Confirmed violations quarantine the build. */
+/** Runtime-violation telemetry, integrity-keyed. Quarantine is a server-gated enforcement decision (ADR-0040), not derived from client confidence. */
 export class ViolationStore {
   private byIntegrity = new Map<string, ViolationRecord>();
   private order: string[] = [];
@@ -32,13 +32,17 @@ export class ViolationStore {
     }
   }
 
-  record(v: ViolationInput, now = new Date().toISOString()): ViolationRecord {
+  record(v: ViolationInput, opts: { autoQuarantine?: boolean } = {}, now = new Date().toISOString()): ViolationRecord {
     const existing = this.byIntegrity.get(v.integrity);
     // Quarantine is sticky: only clear() (operator override) may lift it. A later,
     // lower-confidence report must not evict a confirmed quarantine record.
     if (existing?.quarantined && v.confidence !== "confirmed") return existing;
     if (existing && existing.kind === v.kind && existing.target === v.target) return existing;
-    const rec: ViolationRecord = { ...v, quarantined: v.confidence === "confirmed", reportedAt: now };
+    // Sensing ≠ enforcement (ADR-0040): quarantine only when the SERVER opts in via
+    // autoQuarantine — never from the client's own `confidence`. Once quarantined,
+    // stays quarantined until clear().
+    const quarantined = Boolean(opts.autoQuarantine) || Boolean(existing?.quarantined);
+    const rec: ViolationRecord = { ...v, quarantined, reportedAt: now };
     this.index(rec);
     this.persist();
     try {
