@@ -21,7 +21,14 @@ export function generateBwrapArgs(
   // Read-only root + writable floor/grants on top.
   const args = ["--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc"];
   const floor = writeAllowFloor({ cwd: opts.cwd, tmpDir: opts.tmpDir });
-  const rw = [...floor, ...approvedFs].map((p) => expandHome(p, opts.homeDir));
+  // `--dev /dev` (above) already provides a writable, ISOLATED /dev. Binding host
+  // /dev here would overmount that isolated devtmpfs with the real host device
+  // tree read-write (bwrap: later mount wins) — re-exposing every host device
+  // node. So drop /dev from the rw binds; the floor keeps it only for Seatbelt,
+  // which has no --dev equivalent (ADR-0038).
+  const rw = [...floor, ...approvedFs]
+    .map((p) => expandHome(p, opts.homeDir))
+    .filter((p) => p !== "/dev");
   for (const p of rw) args.push("--bind-try", p, p);
 
   // SENSITIVE_PATHS masks, applied AFTER the floor binds so they win for any

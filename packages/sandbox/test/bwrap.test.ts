@@ -69,7 +69,7 @@ describe("generateBwrapArgs — write-deny (Phase 25)", () => {
   test("the write floor is re-bound read-write (bind-try tolerates missing cache dirs)", () => {
     const args = generateBwrapArgs([], OPTS2);
     const rw = [...binds(args, "--bind"), ...binds(args, "--bind-try")];
-    for (const p of ["/work/pkg", "/tmp/build", "/dev", "/home/x/.node-gyp", "/home/x/.npm/_logs"]) {
+    for (const p of ["/work/pkg", "/tmp/build", "/home/x/.node-gyp", "/home/x/.npm/_logs"]) {
       assert.ok(rw.includes(p), `floor path ${p} must be re-bound rw`);
     }
   });
@@ -81,5 +81,11 @@ describe("generateBwrapArgs — write-deny (Phase 25)", () => {
   });
   test("pure — same inputs, identical argv", () => {
     assert.deepEqual(generateBwrapArgs([], OPTS2), generateBwrapArgs([], OPTS2));
+  });
+  test("host /dev is NOT re-bound rw — bwrap's isolated --dev /dev provides /dev (no host device re-exposure)", () => {
+    const args = generateBwrapArgs([], OPTS2);
+    const rwSources = [...binds(args, "--bind"), ...binds(args, "--bind-try")];
+    assert.ok(!rwSources.includes("/dev"), "host /dev must not be rw-bound over the isolated devtmpfs");
+    assert.ok(args.includes("--dev"), "the isolated --dev /dev mount is still present");
   });
 });
