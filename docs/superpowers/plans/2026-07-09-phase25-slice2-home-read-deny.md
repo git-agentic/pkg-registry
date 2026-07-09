@@ -382,12 +382,14 @@ Add to `packages/sandbox/test/profile.test.ts` (extend `OPTS` with the new input
 const OPTS2 = { homeDir: "/Users/x", cwd: "/Users/x/app/node_modules/pkg", tmpDir: "/var/folders/z/T", nodePrefix: "/usr/local", projectRoot: "/Users/x/app" };
 
 describe("generateProfile — $HOME-read-deny (Phase 25 Slice 2)", () => {
-  test("denies reads of $HOME then re-allows the read-allow list, in that order", () => {
+  test("denies $HOME reads, allows metadata traversal, then re-allows the read-allow list, in that order", () => {
     const p = generateProfile([], OPTS2);
     const denyHome = p.indexOf(`(deny file-read* (subpath "/Users/x")`);
-    const allowList = p.indexOf(`(allow file-read*`);
+    const metaAllow = p.indexOf(`(allow file-read-metadata (subpath "/Users/x")`);
+    const allowList = p.indexOf(`(allow file-read* `);
     assert.ok(denyHome !== -1, "$HOME read-deny present");
-    assert.ok(allowList > denyHome, "read-allow list comes AFTER the $HOME read-deny (last-match-wins)");
+    assert.ok(metaAllow > denyHome, "metadata (lstat) traversal allow comes AFTER the $HOME read-deny (so require() can resolve)");
+    assert.ok(allowList > metaAllow, "read-allow list comes AFTER the metadata allow (SBPL last-match-wins)");
     for (const frag of [`(subpath "/usr/local")`, `(subpath "/Users/x/app")`, `(subpath "/Users/x/.node-gyp")`, `(subpath "/Users/x/.cache")`]) {
       assert.ok(p.includes(frag), `read-allow must include ${frag}`);
     }
@@ -431,11 +433,18 @@ export function generateProfile(
 
   const lines = ["(version 1)", "(allow default)"];
 
-  // Reads: deny $HOME by default (Slice 2), then re-allow the read-allow list —
-  // the node install prefix (node-under-$HOME still loads its stdlib), the project
-  // root (require() resolves the tree), and the build caches. System paths stay
-  // readable via (allow default).
+  // Reads: deny $HOME by default (Slice 2). Then allow METADATA (lstat/stat) across
+  // $HOME so node can TRAVERSE it to reach the read-allowed project tree underneath —
+  // a blanket `file-read*` deny also denies lstat, which breaks require()'s path
+  // resolution (probe-verified: without this line, `require()` fails EPERM lstat on
+  // $HOME itself). Data reads stay denied except the read-allow list — the node
+  // install prefix (node-under-$HOME loads its stdlib), the project root (require()
+  // resolves the tree), and the build caches. System paths stay readable via (allow
+  // default). The metadata allow is deliberately BELOW the deny and ABOVE the
+  // read-allow (SBPL last-match-wins: metadata everywhere in $HOME, data only in the
+  // allow-list).
   lines.push(`(deny file-read* (subpath "${canon(opts.homeDir)}"))`);
+  lines.push(`(allow file-read-metadata (subpath "${canon(opts.homeDir)}"))`);
   const readAllow = readAllowList({ nodePrefix: opts.nodePrefix, projectRoot: opts.projectRoot }).map(canon);
   lines.push(`(allow file-read* ${readAllow.map((p) => `(subpath "${p}")`).join(" ")})`);
 
