@@ -22,6 +22,7 @@ import {
   type ProvenanceTrustMaterial,
   type ReleaseContext,
   type Advisory,
+  type VulnAdvisory,
 } from "@sentinel/core";
 import { AuditStore } from "./store.js";
 import {
@@ -72,6 +73,8 @@ export interface ServerOptions {
   history?: HistoryDb;
   /** Operator-supplied known-malicious advisories, merged with the bundled corpus (Phase 21). */
   advisories?: Advisory[];
+  /** Operator-supplied known-vulnerability advisories, merged with the bundled corpus (Phase 22). */
+  vulnerabilities?: VulnAdvisory[];
 }
 
 const TARBALL_RE = /^(.+)\/-\/([^/]+\.tgz)$/;
@@ -113,6 +116,7 @@ export function createServer(opts: ServerOptions) {
   const publishTokens = opts.publishTokens ?? [];
   const signingKeys = opts.signingKeys ?? NPM_SIGNING_KEYS;
   const advisories = opts.advisories;
+  const vulnerabilities = opts.vulnerabilities;
   const authz = makeAuthz(opts.authPublicKey);
   const app = express();
   app.disable("x-powered-by");
@@ -167,7 +171,7 @@ export function createServer(opts: ServerOptions) {
       meta, tarball, baselineTarball,
       signatures: vmeta.signatures, hasProvenance: vmeta.hasProvenance,
       attestations, signingKeys, trustMaterial: opts.trustMaterial,
-      releaseContext, advisories,
+      releaseContext, advisories, vulnerabilities,
     });
     const report = score(audit, enterprisePolicy, policyHash);
     store.put(report);
@@ -396,6 +400,7 @@ export function createServer(opts: ServerOptions) {
               : (report.findings[0]?.message ?? null),
             topFindingRuleId: report.findings[0]?.ruleId ?? null,
             error: null, provenance: report.meta.provenance, integrityMismatch: mismatch,
+            vulnerabilities: report.findings.filter((f) => f.ruleId === "known-vulnerability").length,
           };
         } catch (err) {
           return {

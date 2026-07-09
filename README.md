@@ -87,6 +87,7 @@ node packages/cli/dist/index.js install lodash
 | `SENTINEL_AUTH_TOKEN` | _(unset)_ | signed role token attached as `Authorization: Bearer` by the MCP client and `sentinel-script-shell` on their POST calls |
 | `SENTINEL_HISTORY_DB` | _(unset ⇒ disabled)_ | path to a SQLite file (`node:sqlite`, built-in); enables durable audit/violation history, `/-/metrics`, `/-/history`, `/-/violations/timeline`, `sentinel stats`/`history`, and the dashboard's Observability section. Node 24 runs it unflagged; Node 22 needs `--experimental-sqlite` |
 | `SENTINEL_ADVISORIES` | _(unset ⇒ bundled corpus only)_ | path to a JSON `Advisory[]` file, loaded once at startup (fatal error on an unreadable path); merged with the bundled known-malicious corpus and checked on the public install audit path |
+| `SENTINEL_VULNERABILITIES` | _(unset ⇒ bundled corpus only)_ | path to a JSON `VulnAdvisory[]` file, loaded once at startup (fatal error on an unreadable path, or on a corrupt non-JSON/non-array file); merged with the bundled known-vulnerable-range corpus and checked on the public install audit path |
 
 ## CLI
 
@@ -625,6 +626,42 @@ history. Phase 21 adds the one signal none of them provide: a check against
 Exact-match only (no semver ranges yet); the one finding type Sentinel's own
 remediation guidance tells you not to waive — see
 [ADR-0034](./docs/adr/0034-known-advisory-detection.md).
+
+## Known-vulnerability (SCA) detection (Phase 22)
+
+`known-advisory` (above) catches confirmed-malicious releases by exact
+version. Phase 22 adds the far more common case: a legitimate package with a
+publicly-disclosed **CVE affecting a range of versions** — full software
+composition analysis (SCA), not just malware detection.
+
+- **Bundled corpus** — `packages/core/src/vuln-corpus.ts` ships a static,
+  offline snapshot of real npm CVEs (`lodash`, `minimist`, `axios`,
+  `node-fetch`, `ws`) with their affected semver ranges, CVSS-derived
+  severity, advisory id, and fixed version(s). Metadata only, never fetched
+  at audit time.
+- **`known-vulnerability` rule** — matches the audited version against any
+  range in the bundled corpus (or an operator-supplied vulnerability) via
+  `semver.satisfies`. Each match emits a finding at the advisory's own
+  **faithful** severity — a `critical` CVE **hard-blocks** under the default
+  policy exactly like any other critical finding, tunable via the same
+  `hardBlockSeverity`/`allow`/rule-disable/`treeGate` levers as everything
+  else (no new policy field).
+- **Bring your own vuln feed** — set `SENTINEL_VULNERABILITIES` to a path to
+  a JSON `VulnAdvisory[]` file (`{ name, ranges, severity, id, fixedIn?,
+  reference? }[]`) on the proxy; it's read once at startup and merged with
+  the bundled corpus — an unreadable *or* corrupt file fails the process
+  closed rather than silently running without your entries.
+- **Refreshing the bundled corpus** — the bundled snapshot goes stale as new
+  CVEs are disclosed. `npm run vulns -- --in <export.json>`
+  (`scripts/make-vulns.ts`) transforms a local OSV/GHSA export into a
+  ready-to-paste `KNOWN_VULNERABILITIES` array; it does not fetch anything
+  itself — see the script's header comment for the expected input shape and
+  source pointers.
+- `audit-tree` gains a `vulnerabilities` count of packages carrying a
+  known-vulnerability finding, alongside its existing verdict/provenance/
+  integrity-mismatch counts.
+
+See [ADR-0035](./docs/adr/0035-known-vulnerability-sca.md).
 
 ## Status
 

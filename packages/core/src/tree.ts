@@ -18,6 +18,9 @@ export interface TreePackageRow {
   /** True when a caller-claimed integrity (e.g. from a lockfile) differs from the
    *  registry-served hash. Only set when both sides are present and disagree. */
   integrityMismatch: boolean;
+  /** Count of `known-vulnerability` findings on this row (Phase 22). Optional — only the
+   *  audit-tree route sets it; omitted on the ~24 other construction sites (counts as 0). */
+  vulnerabilities?: number;
 }
 
 export interface TreeAggregate {
@@ -26,6 +29,8 @@ export interface TreeAggregate {
   counts: { allow: number; warn: number; block: number; error: number };
   provenance: { verified: number; invalid: number; absent: number; unknown: number };
   integrityMismatch: number;
+  /** Sum of every row's `vulnerabilities` (Phase 22). */
+  vulnerabilities: number;
 }
 
 export interface TreeAuditResult {
@@ -55,13 +60,15 @@ export function aggregateTree(
   const provenance = { verified: 0, invalid: 0, absent: 0, unknown: 0 };
   let worst = 0; // defaults to "allow" when there are no non-error rows
   let integrityMismatch = 0;
+  let vulnerabilities = 0;
   for (const r of rows) {
     counts[r.status]++;
     if (r.status !== "error") worst = Math.max(worst, VERDICT_RANK[r.status]);
     if (r.provenance) provenance[r.provenance]++;
     if (r.integrityMismatch) integrityMismatch++;
+    vulnerabilities += r.vulnerabilities ?? 0;
   }
   const verdict = RANK_VERDICT[worst]!;
   const gated = worst >= VERDICT_RANK[treeGate] || (Boolean(opts.failOnError) && counts.error > 0);
-  return { verdict, gated, counts, provenance, integrityMismatch };
+  return { verdict, gated, counts, provenance, integrityMismatch, vulnerabilities };
 }

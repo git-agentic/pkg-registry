@@ -26,14 +26,16 @@ const REMEDIATIONS: Record<string, Guide> = {
   "capability-novelty": { summary: "Adds a dangerous capability the prior version did not have.", action: "Review why this version newly needs network/process access; if unexpected, pin to the prior version." },
   "integrity-mismatch": { summary: "The lockfile's pinned hash differs from what the registry serves.", action: "Regenerate the lockfile from a trusted source, or investigate possible tampering/registry compromise." },
   "known-advisory": { summary: "Listed as known-malicious in a security advisory.", action: "This exact version is publicly documented as malicious — remove it and pin to a version published BEFORE the compromise (or a patched later release); do not waive." },
+  "known-vulnerability": { summary: "Has a known security vulnerability.", action: "Upgrade to a version that is not in the affected range (see the advisory's fixed version); if no fix exists, pin away from the affected range or remove the dependency." },
 };
 
 // NOTE: the project's `Category` union (packages/core/src/types.ts) is
-// obfuscation | network | secret-exfil | install-script | metadata | provenance
+// obfuscation | network | secret-exfil | install-script | metadata | provenance | vulnerability
 // — there is no "capability" category. Fallback keys below use the real values.
 const CATEGORY_FALLBACK: Partial<Record<Category, Guide>> = {
   "install-script": { summary: "Requests a sensitive install-time capability.", action: "Review the capability; approve it via the manifest if required, else avoid the package." },
   metadata: { summary: "A supply-chain metadata signal.", action: "Review the finding; confirm the package's identity and provenance before installing." },
+  vulnerability: { summary: "A dependency with a known security vulnerability.", action: "Review the advisory and upgrade to a fixed version." },
 };
 
 const GENERIC: Guide = { summary: "A security finding was flagged.", action: "Review the finding details; approve with a recorded rationale only if you understand and accept the risk." };

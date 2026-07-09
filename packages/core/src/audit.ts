@@ -18,6 +18,7 @@ import type {
   ReleaseContext,
 } from "./types.js";
 import type { Advisory } from "./advisory-corpus.js";
+import type { VulnAdvisory } from "./vuln-corpus.js";
 
 export const ENGINE_VERSION = "0.1.0";
 
@@ -43,9 +44,10 @@ export function buildAudit(
     baselineCapabilities?: Capability[];
     releaseContext?: ReleaseContext;
     advisories?: Advisory[];
+    vulnerabilities?: VulnAdvisory[];
   } = { mode: "full", durationMs: 0 },
 ): Audit {
-  const input: AuditInput = { meta, files, mode: opts.mode, releaseContext: opts.releaseContext, advisories: opts.advisories };
+  const input: AuditInput = { meta, files, mode: opts.mode, releaseContext: opts.releaseContext, advisories: opts.advisories, vulnerabilities: opts.vulnerabilities };
   const ruleFindings = runRules(input);
   const capabilities = extractCapabilities(input);
   const capabilityDelta = opts.baselineCapabilities
@@ -87,6 +89,8 @@ export interface AuditTarballInput {
   releaseContext?: ReleaseContext;
   /** Operator-supplied known-malicious advisories, merged with the bundled corpus (Phase 21). */
   advisories?: Advisory[];
+  /** Operator-supplied known vulnerabilities, merged with the bundled corpus (Phase 22). */
+  vulnerabilities?: VulnAdvisory[];
 }
 
 /** Extract + diff + run rules + capabilities → policy-independent {@link Audit}. */
@@ -135,7 +139,7 @@ export async function runAudit(input: AuditTarballInput): Promise<Audit> {
     provenanceIdentity: prov.identity,
   };
 
-  const audit = buildAudit(meta, extracted.files, { mode, durationMs: Date.now() - started, baselineCapabilities, releaseContext: input.releaseContext, advisories: input.advisories });
+  const audit = buildAudit(meta, extracted.files, { mode, durationMs: Date.now() - started, baselineCapabilities, releaseContext: input.releaseContext, advisories: input.advisories, vulnerabilities: input.vulnerabilities });
   if (integrityMismatch) {
     audit.findings.push({
       ruleId: "integrity-mismatch", category: "provenance", severity: "critical",

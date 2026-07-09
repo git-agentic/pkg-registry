@@ -9,9 +9,11 @@ import {
   policyHashOf,
   loadTrustMaterial,
   parseAdvisoriesStrict,
+  parseVulnAdvisoriesStrict,
   type EnterprisePolicy,
   type ProvenanceTrustMaterial,
   type Advisory,
+  type VulnAdvisory,
 } from "@sentinel/core";
 import { createServer, type ProxyPolicy } from "./server.js";
 import { AuditStore } from "./store.js";
@@ -106,6 +108,27 @@ function resolveAdvisories(): Advisory[] | undefined {
   return advisories;
 }
 
+function resolveVulnerabilities(): VulnAdvisory[] | undefined {
+  const path = process.env.SENTINEL_VULNERABILITIES;
+  if (!path) return undefined;
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch (err) {
+    console.error(`FATAL: cannot read SENTINEL_VULNERABILITIES: ${(err as Error).message}`);
+    process.exit(1);
+  }
+  let vulnerabilities: VulnAdvisory[];
+  try {
+    vulnerabilities = parseVulnAdvisoriesStrict(raw);
+  } catch (err) {
+    console.error(`FATAL: ${(err as Error).message} (${path})`);
+    process.exit(1);
+  }
+  console.log(`  vulnerabilities: ${vulnerabilities.length} operator-supplied (+ bundled)`);
+  return vulnerabilities;
+}
+
 function resolveTrustMaterial(): ProvenanceTrustMaterial | null | undefined {
   const rootPath = process.env.SENTINEL_TRUSTED_ROOT;
   if (!rootPath) return undefined; // bundled default
@@ -135,8 +158,9 @@ function main(): void {
   const approvalRequests = new ApprovalRequestStore(process.env.SENTINEL_APPROVAL_REQUESTS);
   const authPublicKey = resolveAuthPublicKey();
   const advisories = resolveAdvisories();
+  const vulnerabilities = resolveVulnerabilities();
 
-  const app = createServer({ upstream, store, approvals, enterprisePolicy, policyHash, policy, publicDir, privateStore, publishTokens, trustMaterial, violations, approvalRequests, authPublicKey, history, advisories });
+  const app = createServer({ upstream, store, approvals, enterprisePolicy, policyHash, policy, publicDir, privateStore, publishTokens, trustMaterial, violations, approvalRequests, authPublicKey, history, advisories, vulnerabilities });
   app.listen(port, () => {
     console.log(`Sentinel proxy listening on http://localhost:${port}`);
     console.log(`  upstream : ${upstream.name}`);
