@@ -21,7 +21,7 @@ import { writeAllowFloor } from "./write-floor.js";
  */
 export function generateBwrapArgs(
   approved: Capability[],
-  opts: { homeDir: string; cwd: string; tmpDir: string; pathExists?: (p: string) => boolean },
+  opts: { homeDir: string; cwd: string; tmpDir: string; pathExists?: (p: string) => boolean; nodePrefix: string; projectRoot: string },
 ): string[] {
   const approvedFs = approved.filter((c) => c.kind === "filesystem").map((c) => c.target);
   const hasNetwork = approved.some((c) => c.kind === "network");

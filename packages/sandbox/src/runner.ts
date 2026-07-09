@@ -20,6 +20,7 @@ export function runLifecycleScripts(opts: {
   sandbox: Sandbox;
   approved?: Capability[];
   homeDir: string;
+  projectRoot?: string;
 }): { results: ScriptResult[]; failed: boolean } {
   let scripts: Record<string, string> = {};
   try {
@@ -33,7 +34,7 @@ export function runLifecycleScripts(opts: {
   for (const hook of LIFECYCLE) {
     const command = scripts[hook];
     if (!command) continue;
-    const r = opts.sandbox.run(command, { cwd: opts.packageDir, approved, homeDir: opts.homeDir, env });
+    const r = opts.sandbox.run(command, { cwd: opts.packageDir, approved, homeDir: opts.homeDir, env, projectRoot: opts.projectRoot });
     results.push({ hook, command, exitCode: r.exitCode, stderr: r.stderr });
   }
   return { results, failed: results.some((r) => r.exitCode !== 0) };

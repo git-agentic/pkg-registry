@@ -13,7 +13,7 @@ import { writeAllowFloor } from "./write-floor.js";
  */
 export function generateProfile(
   approved: Capability[],
-  opts: { homeDir: string; cwd: string; tmpDir: string },
+  opts: { homeDir: string; cwd: string; tmpDir: string; nodePrefix: string; projectRoot: string },
 ): string {
   const approvedFs = approved.filter((c) => c.kind === "filesystem").map((c) => c.target);
   const hasNetwork = approved.some((c) => c.kind === "network");

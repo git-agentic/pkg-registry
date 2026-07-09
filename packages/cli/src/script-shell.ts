@@ -2,7 +2,7 @@
 import { homedir } from "node:os";
 import { realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import { createSandbox, scrubEnv } from "@sentinel/sandbox";
+import { createSandbox, scrubEnv, resolveProjectRoot } from "@sentinel/sandbox";
 import type { SandboxViolation } from "@sentinel/sandbox";
 import type { Capability } from "@sentinel/core";
 import { approvedCapsForManifest, isRootScript, commandFromArgv, EnforceError } from "./enforce.js";
@@ -70,7 +70,7 @@ async function main(): Promise<number> {
 
   const env = scrubEnv(process.env, approved);
   const sandbox = createSandbox();   // throws (fail closed) on unsupported platform / missing bwrap
-  const r = sandbox.run(cmd, { cwd, approved, homeDir: homedir(), env });
+  const r = sandbox.run(cmd, { cwd, approved, homeDir: homedir(), env, projectRoot: resolveProjectRoot(cwd, process.env.INIT_CWD) });
   if (r.violation && process.env.SENTINEL_PROXY && name && version && !isRootScript(cwd, process.env.INIT_CWD)) {
     await reportViolation(process.env.SENTINEL_PROXY, name, version, r.violation);
   }

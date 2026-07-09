@@ -14,6 +14,17 @@ function fakeSandbox(captured: NodeJS.ProcessEnv[]): Sandbox {
   } };
 }
 
+test("runLifecycleScripts forwards projectRoot to the sandbox", () => {
+  let seen: string | undefined = "UNSET";
+  const spy: Sandbox = {
+    run(_cmd, opts) { seen = opts.projectRoot; return { exitCode: 0, stdout: "", stderr: "" }; },
+  };
+  const dir = mkdtempSync(join(tmpdir(), "runner-pr-"));
+  writeFileSync(join(dir, "package.json"), JSON.stringify({ scripts: { postinstall: "echo hi" } }));
+  runLifecycleScripts({ packageDir: dir, sandbox: spy, homeDir: "/home/x", projectRoot: "/work/app" });
+  assert.equal(seen, "/work/app");
+});
+
 describe("runLifecycleScripts env scrubbing", () => {
   test("passes a scrubbed env to the sandbox (secret dropped, allowlisted kept, approval honored)", () => {
     const dir = mkdtempSync(join(tmpdir(), "run-env-"));
