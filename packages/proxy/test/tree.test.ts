@@ -92,15 +92,22 @@ describe("POST /-/audit-tree (local fixtures)", () => {
     assert.equal(r.aggregate.gated, false); // errors never gate
   });
 
-  test("output is deterministic and sorted by name@version", async () => {
+  test("output is deterministic per request and returned in request order (ADR-0037)", async () => {
+    // Phase 24 dedupes coordinates and re-expands rows in request order rather
+    // than sorting alphabetically, so the same coordinates in reverse order
+    // now legitimately produce reverse-ordered rows — only per-request
+    // determinism (same input twice ⇒ identical output) is guaranteed.
     const coords = [
       { name: "net-fetch-lite", version: "1.0.0" },
       { name: "leftpad-lite", version: "1.0.0" },
     ];
     const a = await auditTree(base, coords);
+    const aAgain = await auditTree(base, coords);
+    assert.deepEqual(a, aAgain);
+    assert.deepEqual(a.packages.map((p) => p.name), ["net-fetch-lite", "leftpad-lite"]);
+
     const b = await auditTree(base, [...coords].reverse());
-    assert.deepEqual(a, b);
-    assert.deepEqual(a.packages.map((p) => p.name), ["leftpad-lite", "net-fetch-lite"]);
+    assert.deepEqual(b.packages.map((p) => p.name), ["leftpad-lite", "net-fetch-lite"]);
   });
 
   test("a malformed body is a 400", async () => {

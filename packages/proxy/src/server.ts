@@ -78,6 +78,8 @@ export interface ServerOptions {
   vulnerabilities?: VulnAdvisory[];
   /** Public base URL for rewritten dist.tarball links (ADR-0036). Undefined ⇒ loopback-Host-derived only. */
   publicBaseUrl?: string;
+  /** Max distinct packages per audit-tree request (ADR-0037). Undefined ⇒ 5000. */
+  maxTreePackages?: number;
 }
 
 const TARBALL_RE = /^(.+)\/-\/([^/]+\.tgz)$/;
@@ -134,6 +136,7 @@ export function createServer(opts: ServerOptions) {
   const advisories = opts.advisories;
   const vulnerabilities = opts.vulnerabilities;
   const publicBaseUrl = opts.publicBaseUrl;
+  const maxTreePackages = opts.maxTreePackages ?? 5000;
   const authz = makeAuthz(opts.authPublicKey);
   const app = express();
   app.disable("x-powered-by");
@@ -391,8 +394,23 @@ export function createServer(opts: ServerOptions) {
       }
     }
     const failOnError = body.failOnError === true;
-    const rows: TreePackageRow[] = await mapPool(
-      coords as { name: string; version: string; integrity?: string }[],
+    // Dedupe by name@version before fanning out — auditVersion is deterministic,
+    // so auditing a distinct coordinate once and re-expanding to per-request rows
+    // is behavior-neutral (ADR-0037).
+    const validCoords = coords as { name: string; version: string; integrity?: string }[];
+    const distinctKeys: string[] = [];
+    const distinctByKey = new Map<string, { name: string; version: string; integrity?: string }>();
+    for (const co of validCoords) {
+      const key = `${co.name}@${co.version}`;
+      if (!distinctByKey.has(key)) { distinctByKey.set(key, co); distinctKeys.push(key); }
+    }
+    if (distinctKeys.length > maxTreePackages) {
+      return res.status(413).json({
+        error: `audit-tree request has ${distinctKeys.length} distinct packages, which exceeds the limit of ${maxTreePackages} (raise SENTINEL_MAX_TREE_PACKAGES)`,
+      });
+    }
+    const distinctRows: TreePackageRow[] = await mapPool(
+      distinctKeys.map((k) => distinctByKey.get(k)!),
       8,
       async (co) => {
         try {
@@ -428,10 +446,9 @@ export function createServer(opts: ServerOptions) {
         }
       },
     );
-    rows.sort((a, b) => {
-      const ka = `${a.name}@${a.version}`, kb = `${b.name}@${b.version}`;
-      return ka < kb ? -1 : ka > kb ? 1 : 0;
-    });
+    const rowByKey = new Map<string, TreePackageRow>();
+    for (const row of distinctRows) rowByKey.set(`${row.name}@${row.version}`, row);
+    const rows: TreePackageRow[] = validCoords.map((co) => rowByKey.get(`${co.name}@${co.version}`)!);
     const aggregate = aggregateTree(rows, treeGateOf(enterprisePolicy), { failOnError });
     const result: TreeAuditResult = { aggregate, packages: rows, policyHash };
     res.json(result);
