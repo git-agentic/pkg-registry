@@ -20,6 +20,9 @@ const MAX_TRACKED = 10_000; // sweep idle-full buckets once the map exceeds this
 
 export function createRateLimiter(opts: { rpm: number; now: () => number }): RateLimiter {
   const { rpm, now } = opts;
+  if (!Number.isFinite(rpm) || rpm <= 0) {
+    throw new Error(`rate limiter rpm must be a positive finite number, got ${rpm}`);
+  }
   const capacity = rpm;
   const refillPerMs = rpm / WINDOW_MS;
   const buckets = new Map<string, Bucket>();
@@ -41,7 +44,7 @@ export function createRateLimiter(opts: { rpm: number; now: () => number }): Rat
         b = { tokens: capacity, last: t };
         buckets.set(key, b);
       } else {
-        b.tokens = Math.min(capacity, b.tokens + (t - b.last) * refillPerMs);
+        b.tokens = Math.min(capacity, b.tokens + Math.max(0, t - b.last) * refillPerMs);
         b.last = t;
       }
       if (b.tokens >= 1) {

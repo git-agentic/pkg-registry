@@ -46,4 +46,19 @@ describe("createRateLimiter (token bucket)", () => {
     assert.equal(rl.check("a").allowed, false);
     assert.equal(rl.check("b").allowed, true, "key b is unaffected by key a");
   });
+
+  test("rejects a non-positive rpm at construction", () => {
+    const clock = fakeClock();
+    assert.throws(() => createRateLimiter({ rpm: 0, now: clock.now }), /positive finite/);
+    assert.throws(() => createRateLimiter({ rpm: -1, now: clock.now }), /positive finite/);
+  });
+
+  test("a backward clock never subtracts tokens (NTP safety)", () => {
+    const clock = fakeClock(10_000);
+    const rl = createRateLimiter({ rpm: 2, now: clock.now });
+    assert.equal(rl.check("a").allowed, true);
+    clock.advance(-5_000); // clock jumps backward
+    assert.equal(rl.check("a").allowed, true); // still has the 2nd token; no negative refill
+    assert.equal(rl.check("a").allowed, false); // bucket now empty, not over-refilled
+  });
 });
