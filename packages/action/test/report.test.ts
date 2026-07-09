@@ -53,6 +53,28 @@ describe("renderPrComment", () => {
     assert.match(evilMd, /evil\\\|name@1\.0\.0/);
     assert.equal(evilMd.includes("| evil|name@"), false);
   });
+  test("escapes backslashes before pipes so a `\\|` name can't break out of the cell", () => {
+    // A name containing a literal backslash immediately before a pipe. If pipes
+    // are escaped before backslashes, the input `\|` becomes `\\|` — an escaped
+    // backslash followed by a BARE pipe that breaks the markdown table cell.
+    const evilResult: TreeAuditResult = {
+      aggregate: {
+        verdict: "block", gated: true,
+        counts: { allow: 0, warn: 0, block: 1, error: 0 },
+        provenance: { verified: 0, invalid: 0, absent: 1, unknown: 0 },
+        integrityMismatch: 0,
+      },
+      packages: [
+        { name: "evil\\|name", version: "1.0.0", status: "block", score: 5, topFinding: "malicious", topFindingRuleId: null, error: null, provenance: "absent", integrityMismatch: false },
+      ],
+    };
+    const md = renderPrComment(evilResult, { now: "2026-07-08T00:00:00Z" });
+    // Correct: backslash escaped first (`\\`), then pipe (`\|`) → three backslashes + pipe.
+    assert.ok(md.includes("evil\\\\\\|name"), "expected backslash-first escaping");
+    // Buggy output would be exactly two backslashes then a bare pipe — must not appear.
+    assert.equal(md.includes("evil\\\\|name"), false);
+  });
+
   test("shows a remediation hint per offender and an explain pointer", () => {
     const withRule: TreeAuditResult = {
       aggregate: { verdict: "block", gated: true, counts: { allow: 0, warn: 0, block: 1, error: 0 }, provenance: { verified: 0, invalid: 0, absent: 1, unknown: 0 }, integrityMismatch: 0 },

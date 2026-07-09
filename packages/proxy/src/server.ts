@@ -507,7 +507,7 @@ export function createServer(opts: ServerOptions) {
     }
   });
 
-  app.post("/-/approvals", authz.requireRole(["operator"]), (req, res) => {
+  app.post("/-/approvals", rateGate, authz.requireRole(["operator"]), (req, res) => {
     const body = Array.isArray(req.body) ? req.body : [req.body];
     const recorded: Approval[] = [];
     try {
@@ -539,12 +539,12 @@ export function createServer(opts: ServerOptions) {
     res.json({ approvals: approvals.recent(50) });
   });
 
-  app.delete(/^\/-\/approvals\/(.+)$/, authz.requireRole(["operator"]), (req, res) => {
+  app.delete(/^\/-\/approvals\/(.+)$/, rateGate, authz.requireRole(["operator"]), (req, res) => {
     const integrity = decodeURIComponent(req.params[0] ?? "");
     res.json({ revoked: approvals.remove(integrity) });
   });
 
-  app.post("/-/approval-requests", authz.requireRole(["agent"]), (req, res) => {
+  app.post("/-/approval-requests", rateGate, authz.requireRole(["agent"]), (req, res) => {
     const b = req.body as { name?: unknown; version?: unknown; integrity?: unknown; reason?: unknown; requestedBy?: { type?: string; id?: string } };
     if (typeof b?.name !== "string" || typeof b.version !== "string" || typeof b.integrity !== "string" || typeof b.reason !== "string") {
       return res.status(400).json({ error: "need name, version, integrity, reason" });
@@ -567,7 +567,7 @@ export function createServer(opts: ServerOptions) {
     res.json({ requests: approvalRequests.recent(50) });
   });
 
-  app.post("/-/violations", authz.requireRole(["agent"]), (req, res) => {
+  app.post("/-/violations", rateGate, authz.requireRole(["agent"]), (req, res) => {
     const v = req.body as Partial<ViolationInput>;
     if (!v || typeof v.integrity !== "string" || typeof v.name !== "string" || typeof v.version !== "string" ||
         (v.confidence !== "confirmed" && v.confidence !== "suspected") ||
@@ -593,7 +593,7 @@ export function createServer(opts: ServerOptions) {
     res.json({ violations: violations.recent(50) });
   });
 
-  app.delete(/^\/-\/violations\/(.+)$/, authz.requireRole(["operator"]), (req, res) => {
+  app.delete(/^\/-\/violations\/(.+)$/, rateGate, authz.requireRole(["operator"]), (req, res) => {
     const integrity = decodeURIComponent(req.params[0] ?? "");
     res.json({ cleared: violations.clear(integrity) });
   });
@@ -615,7 +615,7 @@ export function createServer(opts: ServerOptions) {
   }
 
   const publishAuth = authz.enabled ? authz.requireRole(["publisher"]) : requirePublishAuth;
-  app.put(/^\/(.+)$/, publishAuth, jsonPublish, async (req, res) => {
+  app.put(/^\/(.+)$/, rateGate, publishAuth, jsonPublish, async (req, res) => {
     try {
       const name = decodeURIComponent(req.params[0] ?? "");
       if (!isClaimed(name, enterprisePolicy)) {
@@ -653,7 +653,7 @@ export function createServer(opts: ServerOptions) {
 
   // ---- dashboard ----
   if (opts.publicDir) {
-    app.get("/", (_req, res) => res.sendFile("index.html", { root: opts.publicDir }));
+    app.get("/", rateGate, (_req, res) => res.sendFile("index.html", { root: opts.publicDir }));
     app.use("/assets", express.static(opts.publicDir));
   }
 

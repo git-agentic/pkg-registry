@@ -264,7 +264,10 @@ the map is transient and clears on settle. A pure token-bucket
 `req.socket.remoteAddress` — not `X-Forwarded-For`) opt-in gates
 `POST /-/audit-tree`, `GET /-/explain/*`, and `POST /-/policy/preview` when
 `SENTINEL_RATE_LIMIT_RPM` is set; over-limit ⇒ 429 + `Retry-After`. The
-install-gate paths are never rate-limited. All four env vars parse
+install-gate paths are never rate-limited. (The same opt-in gate also fronts
+the auth-performing control-plane mutating routes — approvals, violations,
+approval-requests, publish — and the dashboard index, as brute-force defense;
+added when clearing CodeQL `js/missing-rate-limiting`.) All four env vars parse
 fail-closed at startup (malformed ⇒ FATAL). Scoring, caching, and the
 packument passthrough are untouched (invariants #1–#6, ADR-0037).
 Phase 25 Slice 1 flips the sandbox's write posture from allow-default to

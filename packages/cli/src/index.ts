@@ -612,7 +612,7 @@ async function postApproval(
 // ---------------------------------------------------------------------------
 
 async function resolveLatest(proxy: string, pkg: string): Promise<string> {
-  const res = await fetch(`${proxy}/${encodeURIComponent(pkg).replace("%40", "@")}`);
+  const res = await fetch(`${proxy}/${encodeURIComponent(pkg).replaceAll("%40", "@")}`);
   if (!res.ok) throw new Error(`could not resolve ${pkg}: ${res.status}`);
   const doc = (await res.json()) as { "dist-tags"?: Record<string, string> };
   const latest = doc["dist-tags"]?.latest;

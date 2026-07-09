@@ -2,13 +2,27 @@ import type { DenySet } from "./deny-set.js";
 import { pathCovers } from "./path-cover.js";
 import type { SandboxResult, SandboxViolation } from "./types.js";
 
-const FS_ERROR = /(?:EPERM|EACCES|ENOENT)[^\n]*?['"]([^'"\n]+)['"]/;
+// Split into two single-quantifier regexes (was one pattern with two unbounded
+// same-class runs, which CodeQL flags as polynomial-ReDoS-prone): a plain
+// error-code alternation, and a quoted-path extractor whose only unbounded run
+// sits between two literal quotes. Both are linear; a line is an fs-error line
+// iff it matches both. `QUOTED_PATH` carries the capture group.
+const FS_CODE = /EPERM|EACCES|ENOENT/;
+const QUOTED_PATH = /['"]([^'"\n]+)['"]/;
 const NET_ERROR = /connect (?:EPERM|EACCES) ([0-9.]+):(\d+)/;
 const NET_CLASS = /connect (?:EPERM|EACCES)/;
 const PERM_SIGNATURE = /EPERM|EACCES|operation not permitted|permission denied/i;
 
 function firstMatchingLine(stderr: string, re: RegExp): string | null {
   for (const line of stderr.split(/\r?\n/)) if (re.test(line)) return line.trim();
+  return null;
+}
+
+/** First stderr line carrying BOTH an fs error code and a quoted path. */
+function firstFsErrorLine(stderr: string): string | null {
+  for (const line of stderr.split(/\r?\n/)) {
+    if (FS_CODE.test(line) && QUOTED_PATH.test(line)) return line.trim();
+  }
   return null;
 }
 
@@ -43,9 +57,9 @@ export function classifyViolation(result: SandboxResult, denySet: DenySet): Sand
   }
 
   // Filesystem: attributable path that falls inside a denied path.
-  const fsLine = firstMatchingLine(stderr, FS_ERROR);
+  const fsLine = firstFsErrorLine(stderr);
   if (fsLine) {
-    const m = FS_ERROR.exec(fsLine);
+    const m = QUOTED_PATH.exec(fsLine);
     const target = m?.[1] ?? null;
     // pathCovers is segment-anchored: true iff denied path is an ancestor-or-equal of
     // the hit target. This IS the false-positive filter — an EPERM on a non-denied path
