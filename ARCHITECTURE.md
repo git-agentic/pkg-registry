@@ -838,6 +838,44 @@ is unchanged: the corpus is static and `semver.satisfies` is a pure, total
 function, so the rule fits the existing pipeline with no new branch in
 `score()` — see [ADR-0035](./docs/adr/0035-known-vulnerability-sca.md).
 
+### 3.22 Network trust boundary (Phase 23, ADR-0036)
+
+An external audit found two places the proxy trusted a network-boundary
+value an attacker can influence. Phase 23 closes both:
+
+- **Outbound origin pinning (`packages/proxy/src/net-config.ts`,
+  `assertAllowedTarballUrl`).** `NpmUpstream.getTarball` no longer fetches
+  whatever URL a packument's `dist.tarball` claims. Before any request is
+  issued, the URL's protocol must be http(s) and its origin must be either
+  the configured registry origin (`SENTINEL_REGISTRY`) or appear in the
+  optional, comma-separated `SENTINEL_TARBALL_ORIGINS` allowlist. A
+  disallowed origin never reaches `fetch` at all — it's rejected as
+  `HttpError(502)` — so there is no DNS-rebinding or private-IP-range
+  surface to defend separately. `parseTarballOrigins` validates the
+  allowlist (bare http(s) origins only, no path/query/hash); a set-but-
+  invalid value is FATAL at proxy startup, the same posture as
+  `SENTINEL_AUTH_PUBKEY`/`SENTINEL_ADVISORIES`/`SENTINEL_VULNERABILITIES`.
+- **Inbound base-URL trust (`packages/proxy/src/net-config.ts`,
+  `isLoopbackHost`; `server.ts`, `baseUrlFor`).** The packument rewrite
+  used to build `dist.tarball` links from `req.protocol` +
+  `req.get("host")` — spoofable behind a reverse proxy or by a client that
+  controls its own Host header. `createServer` now accepts an optional
+  `publicBaseUrl`; when set (from `SENTINEL_PUBLIC_BASE_URL`, validated at
+  startup by `parsePublicBaseUrl` — malformed ⇒ FATAL), every rewrite uses
+  it and the request's Host is ignored. When unset, the base is derived
+  from the request only when the Host is loopback (`localhost`,
+  `127.0.0.0/8`, `[::1]`) — the zero-config local-dev case; any other Host
+  is refused with **421** and an actionable error naming
+  `SENTINEL_PUBLIC_BASE_URL`.
+- Both env vars are parsed once at startup in `packages/proxy/src/index.ts`
+  and logged (`tarball-origins:` / `public-url:` lines) alongside the
+  existing startup summary.
+
+Both fixes are enforced entirely at the two network boundary sites; parsing
+and validation are pure and unit-tested in isolation from I/O. Scoring,
+caching, and the packument passthrough (rewriting only `dist.tarball`) are
+untouched — see [ADR-0036](./docs/adr/0036-network-trust-boundary.md).
+
 ---
 
 ## 4. The audit engine (`@sentinel/core`)

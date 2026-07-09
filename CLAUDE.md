@@ -222,6 +222,22 @@ audit path; `audit-tree` gains a `vulnerabilities` count. Adds `semver`
 (^7.x) as a `@sentinel/core` dependency. `scripts/make-vulns.ts` regenerates
 the corpus from a local OSV/GHSA export — never a live fetch (invariant #3,
 ADR-0035).
+Phase 23 closes a **network trust boundary** gap an external audit found: a
+pure `packages/proxy/src/net-config.ts` adds `assertAllowedTarballUrl`,
+`parseTarballOrigins`, `parsePublicBaseUrl`, and `isLoopbackHost`.
+Outbound, `NpmUpstream.getTarball` now pins every tarball fetch to the
+configured registry origin (`SENTINEL_REGISTRY`) or an entry in the optional
+`SENTINEL_TARBALL_ORIGINS` allowlist — a disallowed origin is never fetched
+at all, rejected up front as `HttpError(502)`, so a poisoned packument can't
+steer the proxy at internal services (SSRF). Inbound, `createServer` takes an
+optional `publicBaseUrl`; set via `SENTINEL_PUBLIC_BASE_URL` it drives every
+packument `dist.tarball` rewrite regardless of the request's Host, closing
+the Host-header-spoofing path — unset, the rewrite falls back to a
+loopback-derived base only for a loopback Host (`localhost`, `127.0.0.0/8`,
+`[::1]`), and refuses any other Host with **421**. Both env vars parse
+fail-closed at proxy startup (malformed ⇒ FATAL, same posture as
+`SENTINEL_AUTH_PUBKEY`). Scoring, caching, and the packument passthrough are
+untouched (invariants #1–#5, ADR-0036).
 
 We are the Socket/Chainguard wedge: **do not** try to replace npm. Resolve and
 serve real packages transparently; only attach signal.
@@ -290,21 +306,24 @@ built-in, not a dependency; it's opt-in via `SENTINEL_HISTORY_DB` and runs
 unflagged on Node 24, but Node 22 needs `--experimental-sqlite` if you turn
 it on. `SENTINEL_VULNERABILITIES` (Phase 22, like `SENTINEL_ADVISORIES`) is
 an optional, fail-closed, load-once-at-startup operator vuln feed for the
-public install audit path.
+public install audit path. `SENTINEL_TARBALL_ORIGINS`/`SENTINEL_PUBLIC_BASE_URL`
+(Phase 23) are the same fail-closed, load-once-at-startup posture for the
+outbound tarball-origin allowlist and the inbound public base URL,
+respectively.
 
 ## Build / test / run
 
 ```bash
 npm run build            # tsc --build (project references: core → proxy/cli)
-npm test                 # engine + end-to-end proxy: 546 tests on this host (544 pass, 2 skipped on darwin).
+npm test                 # engine + end-to-end proxy: 580 tests on this host (578 pass, 2 skipped on darwin).
                          # Skips are platform-gated enforcement: "non-darwin throws" skips on darwin
                          # (it verifies darwin-only behaviour), and the "no silent skip" CI guard skips
                          # off-CI. The BubblewrapSandbox enforcement suite and the Linux enforce-e2e tests
-                         # skip as describe-level blocks on darwin ("requires Linux") and are not in the 546
+                         # skip as describe-level blocks on darwin ("requires Linux") and are not in the 580
                          # count. Phase 10's violation-enforce e2e and the darwin-gated runtime-violation
                          # effect test (SeatbeltSandbox: "a denied credential read surfaces a confirmed
                          # runtime violation") RUN on darwin via Seatbelt, the same way the rest of the
-                         # Seatbelt effect suite does, and ARE in the 546 count.
+                         # Seatbelt effect suite does, and ARE in the 580 count.
                          # Phase 7's audit-tree, Phase 8/9's signature/provenance, Phase 10's
                          # classifyViolation/deny-set/violations-store, Phase 11's MCP/approval-request,
                          # Phase 12's auth/authz-e2e, Phase 13's typosquat/dependency-confusion,
@@ -315,13 +334,17 @@ npm test                 # engine + end-to-end proxy: 546 tests on this host (54
                          # CLI-explain/PR-comment-hint/MCP-explain, Phase 19's attest-core/
                          # policyHash-plumbing/CLI-attest-keygen-attest-verify-attestation, Phase 20's
                          # policy-lint/allReports/preview-route/policy-init-validate-preview-CLI,
-                         # Phase 21's advisory-corpus/known-advisory-rule/SENTINEL_ADVISORIES-load, and
+                         # Phase 21's advisory-corpus/known-advisory-rule/SENTINEL_ADVISORIES-load,
                          # Phase 22's vuln-corpus/known-vulnerability-rule/semver-satisfies/
-                         # SENTINEL_VULNERABILITIES-load/tree-vulnerabilities-count tests are hermetic
+                         # SENTINEL_VULNERABILITIES-load/tree-vulnerabilities-count, and Phase 23's
+                         # net-config parsing/validation, tarball-origin-e2e (poisoned-packument
+                         # never-fetched canary + malformed-allowlist FATAL), public-base-url-e2e
+                         # (configured base + loopback fallback + non-loopback 421), and net-startup
+                         # (fail-closed FATAL parsing of both env vars) tests are hermetic
                          # and platform-neutral, so the darwin/Linux relationship from Phase 6 (Linux one
                          # test higher, one fewer skip) should hold, but hasn't been re-verified on Linux
-                         # CI since Phase 7/8/9/10/11/12/13/14/15/16/17/18/19/20/21/22 landed — confirm on
-                         # the next Linux CI run rather than trusting an extrapolated count here. Each
+                         # CI since Phase 7/8/9/10/11/12/13/14/15/16/17/18/19/20/21/22/23 landed — confirm
+                         # on the next Linux CI run rather than trusting an extrapolated count here. Each
                          # platform's enforcement is verified on that platform (macOS dev host /
                          # ubuntu-latest CI).
 npm run demo             # offline malware-detection walkthrough

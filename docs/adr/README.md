@@ -51,6 +51,12 @@ not yet built · `Superseded` / `Deprecated` — replaced; see the linked succes
 |-----|-------|----------------------|
 | [0019](./0019-enforced-install-script-shell.md) | Enforced install via script-shell interposition | `sentinel install --enforce` interposes via `npm_config_script_shell`; every lifecycle script runs under `createSandbox()` with credential-screened env |
 
+## Phase 23 — network trust boundary (Accepted, implemented)
+
+| ADR | Title | Decision in one line |
+|-----|-------|----------------------|
+| [0036](./0036-network-trust-boundary.md) | Network trust boundary | Pin outbound tarball fetches to the registry origin/allowlist; require a configured public base URL off loopback |
+
 ## Conventions
 
 - One decision per record; number sequentially; never renumber.
