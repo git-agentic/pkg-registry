@@ -9,9 +9,18 @@ export interface DenySet {
   networkDenied: boolean;
 }
 
-/** Expand a `~`-relative path against homeDir. */
+/**
+ * Expand a `~`-relative path against homeDir. An absolute path passes through
+ * unchanged; a bare-relative path (no leading `~` or `/`) — the convention
+ * approved-capability `filesystem` targets use, e.g. `.npmrc` or `.config/app`
+ * meaning `~/.npmrc` — is treated as home-relative too (Phase 25, ADR-0038:
+ * needed so a Grant can become a concrete absolute `allow` path, not just a
+ * segment-matched deny-canceller).
+ */
 export function expandHome(p: string, homeDir: string): string {
-  return p.startsWith("~") ? homeDir + p.slice(1) : p;
+  if (p.startsWith("~")) return homeDir + p.slice(1);
+  if (p.startsWith("/")) return p;
+  return homeDir + "/" + p;
 }
 
 /**
