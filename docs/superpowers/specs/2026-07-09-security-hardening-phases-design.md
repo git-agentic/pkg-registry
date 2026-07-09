@@ -181,63 +181,135 @@ backends). Today `(allow default)` / `--bind / /` plus a fixed
 `SENSITIVE_PATHS` deny list means install scripts can read/write anything not
 on the list — which conflicts with the "approved capability manifest" model.
 
-### New model
+> **Refined by a grilling session (2026-07-09).** The subsections below
+> supersede the original one-paragraph sketch; they close the open questions
+> that sketch left — most importantly the node-runtime-under-`$HOME` wrinkle,
+> the read/write risk asymmetry, and the cross-backend telemetry gap. Domain
+> vocabulary sharpened here (Install directory vs Project root, Grant, Carve-out)
+> is captured in the root `CONTEXT.md`.
 
-- **Writes: deny by default.** Allowed only in the package/install dir, the OS
-  temp dir, and the npm cache. Kills the persistence/tamper class wholesale;
-  `SENSITIVE_PATHS` write entries become defense-in-depth, not the whole
-  defense.
-- **Reads: system paths stay allowed; `$HOME` denied by default.** dyld/node
-  cannot start under full read-deny (the reason Phase 3's probe chose
-  allow-default), so `/usr`, `/lib`, `/System`, `/Library`, `/etc`, `/bin`, …
-  remain readable. The home directory — where credentials live (`~/.ssh`,
-  `~/.aws`, `~/.npmrc`, browser profiles, wallets) — is read-denied except the
-  project/package dir. Kills the credential-theft class beyond the enumerated
-  list.
-- **Approvals become positive grants.** An approved `filesystem:<path>`
-  capability emits an explicit SBPL allow / `bwrap` bind for that subtree,
-  instead of "skip a matching deny".
-- **Directional `pathCovers`.** An approval covers deny paths **at or below
-  it** (ancestor-or-equal). A descendant approval grants only its own subtree —
-  it no longer lifts the whole ancestor deny. The `.ssh/config`-cancels-`~/.ssh`
-  example in the `path-cover.ts` NOTE stops being true.
+### Sequencing — two ordered slices, one phase / one ADR
+
+Writes and reads are inverted as **two separately-landed slices** under a single
+ADR-0038, because their risk profiles differ sharply:
+
+- **Slice 1 — write-deny-by-default.** Low probe-risk (node barely writes
+  outside its own dirs), high value (kills persistence/tamper). Lands first,
+  fully probed and green.
+- **Slice 2 — `$HOME`-read-deny-by-default.** High probe-risk (node/npm read
+  config + caches scattered across `$HOME`), high value (kills credential theft
+  beyond the enumerated list). Lands second, gated on its own probes.
+
+A nasty read-probe surprise cannot sink the safe write-deny win: worst case,
+slice 1 ships and slice 2 becomes a follow-up.
+
+### Slice 1 — writes: deny by default
+
+- **Fixed write-allow floor (not operator-configurable — a widenable floor is a
+  footgun that silently reopens the persistence class):** the Install directory
+  (`cwd`) subtree, the OS temp dir, `~/.node-gyp` + `~/.cache/node-gyp` (native
+  build header cache), and `~/.npm/_logs`. Everything else denied.
+- **Approvals extend the floor per-package** — no new config knob; an approved
+  `filesystem:<path>` becomes a positive write Grant.
+- `SENSITIVE_PATHS` write entries (shell rc, LaunchAgents, systemd units) now
+  fall under the blanket write-deny — redundant for *enforcement*, retained for
+  *attribution* + `secret-exfil` detection.
+
+### Slice 2 — reads: full `$HOME`-read-deny + allow-list
+
+Chosen over a merely-expanded deny-list because only default-deny actually
+closes the audit finding (a bigger fixed list still leaks a novel credential
+path). The allow-list must handle the wrinkle the original sketch missed —
+**the node runtime often lives under `$HOME`** (nvm `~/.nvm/...`, fnm, volta,
+asdf), so a blanket `$HOME`-read-deny would stop node loading its own stdlib.
+
+Read-allow:
+
+- **system roots** — `/usr`, `/lib`, `/System`, `/Library`, `/opt`, `/etc`,
+  `/bin`, `/sbin`;
+- **the node install prefix**, derived from `process.execPath` at
+  sandbox-build time (a **new sandbox input**) — so node-under-`$HOME` works;
+- **the Project root** subtree (a **new sandbox input**, distinct from the
+  Install directory `cwd` — the script's `require()` resolves against the whole
+  project tree, not just its own dir);
+- `~/.node-gyp` + `~/.cache` (header/build caches are *read* too).
+
+Deny the rest of `$HOME` — SSH, cloud creds, browser profiles, wallets,
+keychains.
+
+### Approvals as Grants + directional coverage
+
+- An approved `filesystem:<path>` emits an explicit SBPL allow / `bwrap` bind
+  for that subtree (a positive **Grant**), instead of "skip a matching deny".
+- **Directional `pathCovers`:** a Grant covers targets **at or below** the
+  approved path (ancestor-or-equal, one direction only). A descendant approval
+  grants *exactly* its own subtree and never widens up to an ancestor — the
+  `.ssh/config`-cancels-`~/.ssh` example in the `path-cover.ts` NOTE stops being
+  true. (`computeDenySet` consumes `pathCovers`, so Phase 10's non-drift test
+  moves in lockstep.)
+
+### `SENSITIVE_PATHS` — data unchanged, two roles
+
+The table stays exactly as-is; under default-deny it plays two roles:
+
+1. **Required Carve-out enforcement** for entries inside a read-allowed region —
+   `/etc/passwd`, `/etc/shadow` sit in the read-allowed `/etc`, so home-read-deny
+   does *not* cover them. The profile read-allows `/etc` broadly, then punches an
+   explicit deny back (SBPL last-match-wins; bwrap `--ro-bind /dev/null`). These
+   are **not** redundant — miss them and `/etc/passwd` is readable again.
+2. **Defense-in-depth + attribution** for the `$HOME` entries, now also covered
+   by the blanket deny, retained because they still drive Phase 10 attribution
+   (`computeDenySet` names *which* path) and the `secret-exfil` `detectRe`.
 
 ### Platform mechanics
 
-- **Seatbelt:** keep `(allow default)` for non-file operations; add
-  `(deny file-write*)` with subpath allows, and
-  `(deny file-read* (subpath $HOME))` with subpath allows.
-- **bwrap:** replace `--bind / /` with ro-binds for system dirs, rw-binds for
-  the write allowlist, and a `--tmpfs` mask over `$HOME` with the package dir
-  (and grants) re-bound inside it.
+- **Seatbelt:** keep `(allow default)` for non-file ops; add `(deny file-write*)`
+  with subpath allows for the write floor, and `(deny file-read* (subpath $HOME))`
+  with subpath allows for the read allow-list + Carve-out denies for the in-`/etc`
+  sensitive files.
+- **bwrap:** replace `--bind / /` with `--ro-bind` for system dirs, `--bind`
+  (rw) for the write floor, and a `--tmpfs` mask over `$HOME` with the read
+  allow-list re-bound inside it.
 
-### Probe-first
+### Backend telemetry asymmetry (accepted)
 
-Before the SDD locks the design, throwaway probes on darwin (and CI for bwrap)
-must verify under the inverted profile: npm lifecycle scripts, a node-gyp
-build, and a benign probe package's postinstall. Known likely quirks to probe
-explicitly: `~/.npm/_logs`, `~/.node-gyp`, corepack. Expected outcome: a small
-built-in write allowlist (`~/.npm`, `~/.node-gyp`, temp) documented in
-ADR-0038.
+The two backends enforce read-deny with different primitives, producing a
+sensor-layer gap: **Seatbelt** yields **EPERM** (path present, read denied) →
+Phase 10 `classifyViolation` reports a **confirmed** credential-read violation;
+**bwrap** masks via tmpfs → **ENOENT** (path absent) → `classifyViolation`
+returns `null`, so the attempt is **contained but not reported**. bwrap has no
+present-but-unreadable primitive without owning the paths as another uid
+(privilege we deliberately lack). **Accepted and documented as a direct
+extension of ADR-0023's containment-≥-telemetry principle** — both backends
+*contain*; only the telemetry differs.
+
+### Probe strategy
+
+- **Probe gate before the SDD locks.** Must pass: a real `node-gyp` native
+  build (proves the write floor + header/node-prefix reads are complete), a
+  benign multi-package `postinstall` that `require()`s across `node_modules`
+  (proves the Project-root read Grant). Must deny: a credential read + a
+  persistence write. If the gyp/require probes can't go green without unsafely
+  widening the allow-list, that is the trigger to demote slice 2 to a follow-up.
+- **Exploratory (throwaway, dev machines, off-CI):** run the inverted profile
+  across nvm/fnm/volta/asdf/homebrew/system node layouts to discover the real
+  allow-list — the CI runners only have system/homebrew node.
+- **Committed effect-tests (CI):** a benign build-probe package (builds still
+  work), credential-read-denied + persistence-write-denied assertions
+  (containment), and a **pure generator test** for the `execPath`-derived
+  node-prefix logic (fake node path under a temp "home" → assert the emitted
+  profile read-allows it — verifies node-under-`$HOME` hermetically, no real
+  nvm needed).
 
 ### Unchanged contracts
 
 Profile/argv generation stays pure (same inputs ⇒ same output);
-`computeDenySet`/`classifyViolation` (Phase 10) are updated to the new deny
-semantics without drift (the non-drift test carries over); synthetic malware
-fixtures are never executed; enforcement is tested with benign probes only;
-fail-closed selection in `createSandbox()` unchanged.
-
-### Tests
-
-- Profile/argv snapshot tests for the new generators (pure, deterministic).
-- Seatbelt effect tests on darwin: write outside allowlist denied; read of a
-  non-enumerated `$HOME` path (not in `SENSITIVE_PATHS`) denied — the new
-  class-kill assertion; package-dir build still succeeds.
-- Directional `pathCovers` unit tests: descendant approval does not lift the
-  ancestor deny; ancestor approval still covers descendants.
-- bwrap equivalents gated to Linux CI, as today.
-- Phase 10 violation classification against the new deny set (non-drift).
+`computeDenySet`/`classifyViolation` (Phase 10) update to the new deny semantics
+without drift (the non-drift test carries over); synthetic malware fixtures are
+never executed; enforcement is tested with benign probes only; fail-closed
+selection in `createSandbox()` unchanged. The definition-of-done "malicious
+fixture still blocked" extends to "a credential read is denied under the new
+default-deny."
 
 ---
 
