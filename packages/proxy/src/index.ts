@@ -201,6 +201,11 @@ function main(): void {
   const maxTarballBytes = resolvePositiveInt("SENTINEL_MAX_TARBALL_BYTES");
   const maxPackumentBytes = resolvePositiveInt("SENTINEL_MAX_PACKUMENT_BYTES");
   const maxTreePackages = resolvePositiveInt("SENTINEL_MAX_TREE_PACKAGES");
+  const maxUnpackedBytes = resolvePositiveInt("SENTINEL_MAX_UNPACKED_BYTES");
+  const maxFileCount = resolvePositiveInt("SENTINEL_MAX_FILE_COUNT");
+  const extractLimits = (maxUnpackedBytes !== undefined || maxFileCount !== undefined)
+    ? { maxUnpackedBytes, maxFileCount }
+    : undefined;
   const rateLimiter = resolveRateLimiter();
   const upstream = buildUpstream(tarballOrigins, maxTarballBytes, maxPackumentBytes);
   const { policy: enterprisePolicy, hash: policyHash } = resolveEnterprisePolicy();
@@ -218,7 +223,7 @@ function main(): void {
   const advisories = resolveAdvisories();
   const vulnerabilities = resolveVulnerabilities();
 
-  const app = createServer({ upstream, store, approvals, enterprisePolicy, policyHash, policy, publicDir, privateStore, publishTokens, trustMaterial, violations, approvalRequests, authPublicKey, history, advisories, vulnerabilities, publicBaseUrl, maxTreePackages, rateLimiter });
+  const app = createServer({ upstream, store, approvals, enterprisePolicy, policyHash, policy, publicDir, privateStore, publishTokens, trustMaterial, violations, approvalRequests, authPublicKey, history, advisories, vulnerabilities, publicBaseUrl, maxTreePackages, rateLimiter, extractLimits });
   app.listen(port, () => {
     console.log(`Sentinel proxy listening on http://localhost:${port}`);
     console.log(`  upstream : ${upstream.name}`);
@@ -227,7 +232,7 @@ function main(): void {
     console.log(`  policy   : ${policy}  (observe = audit+serve, block = 403 on block verdict)`);
     console.log(`  trust    : ${trustMaterial === undefined ? "bundled Sigstore root" : "operator-supplied root"}`);
     console.log(`  auth     : ${authPublicKey ? "enabled (signed role tokens)" : "disabled (open control plane)"}`);
-    console.log(`  limits   : tree ${maxTreePackages ?? 5000} pkgs, tarball ${(maxTarballBytes ?? 256 * 1024 * 1024)} B, packument ${(maxPackumentBytes ?? 128 * 1024 * 1024)} B`);
+    console.log(`  limits   : tree ${maxTreePackages ?? 5000} pkgs, tarball ${(maxTarballBytes ?? 256 * 1024 * 1024)} B, packument ${(maxPackumentBytes ?? 128 * 1024 * 1024)} B, unpacked ${(maxUnpackedBytes ?? 1024 * 1024 * 1024)} B, files ${(maxFileCount ?? 100000)}`);
     console.log(`  rate-limit: ${rateLimiter ? `${process.env.SENTINEL_RATE_LIMIT_RPM} rpm/source` : "disabled"}`);
     console.log(`  violations: ${process.env.SENTINEL_VIOLATIONS ? "persisted" : "in-memory"}`);
     console.log(`  approval-requests: ${process.env.SENTINEL_APPROVAL_REQUESTS ? "persisted" : "in-memory"}`);

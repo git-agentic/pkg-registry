@@ -83,6 +83,8 @@ export interface ServerOptions {
   maxTreePackages?: number;
   /** Opt-in per-source rate limiter for expensive open endpoints (ADR-0037). Undefined ⇒ unlimited. */
   rateLimiter?: RateLimiter;
+  /** Decompression-bomb extraction caps (ADR-0039). Undefined ⇒ core defaults. */
+  extractLimits?: { maxUnpackedBytes?: number; maxFileCount?: number };
 }
 
 const TARBALL_RE = /^(.+)\/-\/([^/]+\.tgz)$/;
@@ -140,6 +142,7 @@ export function createServer(opts: ServerOptions) {
   const vulnerabilities = opts.vulnerabilities;
   const publicBaseUrl = opts.publicBaseUrl;
   const maxTreePackages = opts.maxTreePackages ?? 5000;
+  const extractLimits = opts.extractLimits;
   const authz = makeAuthz(opts.authPublicKey);
   const app = express();
   app.disable("x-powered-by");
@@ -226,7 +229,7 @@ export function createServer(opts: ServerOptions) {
       meta, tarball, baselineTarball,
       signatures: vmeta.signatures, hasProvenance: vmeta.hasProvenance,
       attestations, signingKeys, trustMaterial: opts.trustMaterial,
-      releaseContext, advisories, vulnerabilities,
+      releaseContext, advisories, vulnerabilities, extractLimits,
     });
     const report = score(audit, enterprisePolicy, policyHash);
     store.put(report);
@@ -634,7 +637,7 @@ export function createServer(opts: ServerOptions) {
         author: null, maintainers: [], license: null,
         hasInstallScripts: false, integrity,
       };
-      const audit = await runAudit({ meta, tarball: parsed.tarball, signatures: null, hasProvenance: false, attestations: null, signingKeys });
+      const audit = await runAudit({ meta, tarball: parsed.tarball, signatures: null, hasProvenance: false, attestations: null, signingKeys, extractLimits });
       const report = score(audit, enterprisePolicy, policyHash);
       if (report.verdict === "block") {
         return res.status(403).json({
