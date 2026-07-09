@@ -83,6 +83,8 @@ export interface ServerOptions {
   maxTreePackages?: number;
   /** Opt-in per-source rate limiter for expensive open endpoints (ADR-0037). Undefined ⇒ unlimited. */
   rateLimiter?: RateLimiter;
+  /** Opt-in auto-quarantine on confirmed violations (ADR-0040). Requires auth. Default off. */
+  autoQuarantine?: boolean;
 }
 
 const TARBALL_RE = /^(.+)\/-\/([^/]+\.tgz)$/;
@@ -141,6 +143,9 @@ export function createServer(opts: ServerOptions) {
   const publicBaseUrl = opts.publicBaseUrl;
   const maxTreePackages = opts.maxTreePackages ?? 5000;
   const authz = makeAuthz(opts.authPublicKey);
+  // Auto-quarantine only when the operator opted in AND auth is enabled (so every
+  // quarantine is attributable to a verified token). Open mode never quarantines.
+  const autoQuarantineEnabled = Boolean(opts.autoQuarantine) && authz.enabled;
   const app = express();
   app.disable("x-powered-by");
   const jsonSmall = express.json({ limit: "1mb" });
@@ -577,11 +582,14 @@ export function createServer(opts: ServerOptions) {
     if (!store.get(v.integrity)) {
       return res.status(400).json({ error: `no audited report for integrity ${v.integrity} — audit before reporting` });
     }
-    const rec = violations.record({
-      name: v.name, version: v.version, integrity: v.integrity, kind: v.kind,
-      target: v.target ?? null, confidence: v.confidence, deniedResource: v.deniedResource ?? null,
-      evidence: { exitCode: v.evidence?.exitCode ?? 0, stderrExcerpt: String(v.evidence?.stderrExcerpt ?? "").slice(0, 200) },
-    });
+    const rec = violations.record(
+      {
+        name: v.name, version: v.version, integrity: v.integrity, kind: v.kind,
+        target: v.target ?? null, confidence: v.confidence, deniedResource: v.deniedResource ?? null,
+        evidence: { exitCode: v.evidence?.exitCode ?? 0, stderrExcerpt: String(v.evidence?.stderrExcerpt ?? "").slice(0, 200) },
+      },
+      { autoQuarantine: autoQuarantineEnabled && v.confidence === "confirmed" },
+    );
     if (rec.quarantined) {
       approvals.remove(v.integrity); // revoke any standing approval for a quarantined build
       console.log(`[violation] quarantined ${v.name}@${v.version} (${rec.kind} → ${rec.target ?? rec.deniedResource})`);

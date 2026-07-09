@@ -7,7 +7,7 @@ import { execFileSync } from "node:child_process";
 import { after, before, describe, test } from "node:test";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
-import { DEFAULT_POLICY } from "@sentinel/core";
+import { DEFAULT_POLICY, generateKeypair, signToken } from "@sentinel/core";
 import { createServer } from "../../proxy/src/server.js";
 import { AuditStore } from "../../proxy/src/store.js";
 import { LocalFixtureUpstream } from "../../proxy/src/upstream.js";
@@ -28,6 +28,11 @@ function ensureFixtures(): void {
 
 const byName = (n: string) => TOOLS.find((t) => t.name === n)!;
 
+// Auto-quarantine is opt-in AND auth-gated (Task B2 / ADR-0040); mint a real agent token so the
+// "quarantined:true after a confirmed violation" test below can actually exercise quarantine.
+const { publicKey, privateKey } = generateKeypair();
+const agentToken = signToken({ role: "agent", sub: "test", ttlSeconds: 3600 }, privateKey);
+
 describe("MCP tools", () => {
   let server: Server; let client: ProxyClient; let base: string;
   before(async () => {
@@ -37,11 +42,12 @@ describe("MCP tools", () => {
       approvals: new ApprovalStore(), enterprisePolicy: DEFAULT_POLICY,
       privateStore: new PrivatePackageStore(), violations: new ViolationStore(),
       approvalRequests: new ApprovalRequestStore(),
+      authPublicKey: publicKey, autoQuarantine: true,
     });
     await new Promise<void>((r) => {
       server = app.listen(0, () => {
         base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-        client = new ProxyClient(base);
+        client = new ProxyClient(base, agentToken);
         r();
       });
     });
@@ -58,7 +64,7 @@ describe("MCP tools", () => {
 
   test("sentinel_audit reports quarantined:true after a confirmed violation is recorded", async () => {
     const rep = await client.audit("leftpad-lite", "1.0.0");
-    await fetch(`${base}/-/violations`, { method: "POST", headers: { "content-type": "application/json" },
+    await fetch(`${base}/-/violations`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${agentToken}` },
       body: JSON.stringify({ name: "leftpad-lite", version: "1.0.0", integrity: rep.meta.integrity,
         kind: "filesystem", target: "/x/.ssh/id_rsa", confidence: "confirmed", deniedResource: "/x/.ssh",
         evidence: { exitCode: 1, stderrExcerpt: "EPERM" } }) });

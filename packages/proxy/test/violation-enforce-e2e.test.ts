@@ -26,7 +26,7 @@ import { ApprovalStore } from "../src/approvals.js";
 import { LocalFixtureUpstream } from "../src/upstream.js";
 import { ViolationStore } from "../src/violations.js";
 import { ApprovalRequestStore } from "../src/approval-requests.js";
-import { DEFAULT_POLICY, type AuditReport } from "@sentinel/core";
+import { DEFAULT_POLICY, generateKeypair, signToken, type AuditReport } from "@sentinel/core";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURES = join(HERE, "..", "..", "..", "fixtures");
@@ -56,6 +56,10 @@ describe("install --enforce (e2e): a propagating violation is reported and quara
   skip: sandboxWorks ? false : "requires a working sandbox (Seatbelt on darwin / bwrap on Linux)",
 }, () => {
   let server: Server; let base: string;
+  // Auto-quarantine is opt-in AND auth-gated (Task B2 / ADR-0040): boot with auth enabled so the
+  // script-shell's reported violation (carrying an agent token below) can actually quarantine.
+  const { publicKey, privateKey } = generateKeypair();
+  const agentToken = signToken({ role: "agent", sub: "e2e", ttlSeconds: 3600 }, privateKey);
 
   before(async () => {
     ensureFixtures();
@@ -66,6 +70,7 @@ describe("install --enforce (e2e): a propagating violation is reported and quara
       enterprisePolicy: DEFAULT_POLICY, policy: "block",
       violations: new ViolationStore(),
       approvalRequests: new ApprovalRequestStore(),
+      authPublicKey: publicKey, autoQuarantine: true,
     });
     await new Promise<void>((r) => { server = app.listen(0, () => { base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`; r(); }); });
   });
@@ -80,8 +85,9 @@ describe("install --enforce (e2e): a propagating violation is reported and quara
     writeFileSync(join(home, ".ssh", "id_rsa"), "TOPSECRET-VIOLATION-KEY");
 
     const m = await (await fetch(`${base}/-/manifest/${pkg}/1.0.0`)).json() as any;
+    const operatorToken = signToken({ role: "operator", sub: "e2e", ttlSeconds: 3600 }, privateKey);
     await fetch(`${base}/-/approvals`, {
-      method: "POST", headers: { "content-type": "application/json" },
+      method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${operatorToken}` },
       body: JSON.stringify([{ name: pkg, version: "1.0.0", integrity: m.meta.integrity, decision: "approved", actor: { type: "test", id: "e2e" } }]),
     });
     const proj = realpathSync(mkdtempSync(join(home, "proj-")));
@@ -93,7 +99,7 @@ describe("install --enforce (e2e): a propagating violation is reported and quara
     const env: NodeJS.ProcessEnv = {
       ...process.env, HOME: home, npm_config_cache: join(home, ".npmcache"), npm_config_audit: "false", npm_config_fund: "false",
     };
-    if (enforce) Object.assign(env, { npm_config_script_shell: shim, SENTINEL_ENFORCE: "1", SENTINEL_PROXY: base });
+    if (enforce) Object.assign(env, { npm_config_script_shell: shim, SENTINEL_ENFORCE: "1", SENTINEL_PROXY: base, SENTINEL_AUTH_TOKEN: agentToken });
     // Use async spawn (not spawnSync): the proxy runs on THIS process's event loop, and a blocking
     // spawnSync would freeze it — npm (a child) could never fetch packument/tarball/manifest from the
     // in-process proxy, deadlocking the install. Awaiting keeps the loop free to serve the request path.
