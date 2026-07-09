@@ -319,6 +319,23 @@ path ENOENT, which is not classified — the read is **contained** on both
 backends regardless, only the *report* differs. Scoring and the
 approval/manifest model are untouched (invariants #1–#6, ADR-0038).
 
+Phase 26 Part A closes a **decompression-bomb** gap ADR-0037 didn't cover:
+ADR-0037 bounded compressed fetch bytes, not what happens after — a small
+`.tgz` within the fetch cap can still gzip-bomb into unbounded unpacked bytes
+or entry count. `extractTarball` (`packages/core/src/extract.ts`) now takes
+`maxUnpackedBytes`/`maxFileCount` caps (defaults 1 GiB / 100k), feeding the
+tarball into the `tar.Parser` in fixed-size slices and halting mid-stream the
+moment either cap is exceeded — never a throw, just a `truncated: true`
+result. `runAudit` synthesizes a critical `resource-abuse` finding
+(category `resource`) on a truncated **current** tarball, hard-blocking under
+the default policy; a truncated baseline (diff mode) degrades the diff
+without itself blocking. Two new fail-closed, load-once-at-startup env vars,
+`SENTINEL_MAX_UNPACKED_BYTES`/`SENTINEL_MAX_FILE_COUNT`, follow the exact
+`resolvePositiveInt` posture of ADR-0037's four. No wall-time cap — the
+byte/count caps are sufficient and a wall-clock cutoff would break
+determinism (invariant #1). Extends, does not supersede, ADR-0037
+(ADR-0039).
+
 We are the Socket/Chainguard wedge: **do not** try to replace npm. Resolve and
 serve real packages transparently; only attach signal.
 
@@ -393,6 +410,9 @@ respectively. `SENTINEL_MAX_TARBALL_BYTES`/`SENTINEL_MAX_PACKUMENT_BYTES`/
 `SENTINEL_MAX_TREE_PACKAGES`/`SENTINEL_RATE_LIMIT_RPM` (Phase 24) round out
 the same fail-closed, load-once-at-startup posture for the fetch byte caps,
 the audit-tree package cap, and the opt-in token-bucket rate limiter.
+`SENTINEL_MAX_UNPACKED_BYTES`/`SENTINEL_MAX_FILE_COUNT` (Phase 26 Part A) are
+the same fail-closed, load-once-at-startup posture for `extractTarball`'s
+decompression-bomb caps (unpacked bytes / file count; defaults 1 GiB / 100k).
 
 ## Build / test / run
 
