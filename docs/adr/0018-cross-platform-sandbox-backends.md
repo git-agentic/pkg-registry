@@ -1,6 +1,6 @@
 # ADR-0018: Cross-platform sandbox backends (bubblewrap on Linux)
 
-**Status:** Accepted (Phase 5)
+**Status:** Accepted (Phase 5) (allow-default write posture partially superseded by ADR-0038 — writes are now deny-by-default on both backends; the backend-selection/model-sharing decision is unchanged)
 **Date:** 2026-06-30
 
 ## Context

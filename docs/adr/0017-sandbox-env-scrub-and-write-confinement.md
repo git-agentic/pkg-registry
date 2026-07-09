@@ -1,6 +1,6 @@
 # ADR-0017: Sandbox env-var scrubbing and write-confinement (Phase 4)
 
-**Status:** Accepted
+**Status:** Accepted (write-confinement's allow-default-plus-deny-list stance partially superseded by ADR-0038 — writes are now deny-by-default; the env-scrub decision is unchanged)
 **Date:** 2026-06-30
 **Phase:** 4 (closes the two enforcement gaps ADR-0016 explicitly deferred)
 

@@ -14,7 +14,7 @@ export class SeatbeltSandbox implements Sandbox {
     if (process.platform !== "darwin") {
       throw new Error(`sandbox enforcement unavailable on ${process.platform} (macOS Seatbelt required)`);
     }
-    const profile = generateProfile(opts.approved, { homeDir: opts.homeDir });
+    const profile = generateProfile(opts.approved, { homeDir: opts.homeDir, cwd: opts.cwd, tmpDir: tmpdir() });
     const dir = mkdtempSync(join(tmpdir(), "sentinel-sb-"));
     const profileFile = join(dir, "profile.sb");
     writeFileSync(profileFile, profile);

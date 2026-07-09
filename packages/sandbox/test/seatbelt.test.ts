@@ -87,6 +87,36 @@ describe("SeatbeltSandbox enforcement", { skip: darwin ? false : "requires macOS
     assert.equal(r.violation?.confidence, "confirmed");
     assert.ok(r.violation?.target?.includes(".ssh"), "target must name the ssh path");
   });
+
+  test("a write to the Install directory (cwd, the floor) succeeds — positive control", () => {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "sb-floor-")));
+    const work = realpathSync(mkdtempSync(join(tmpdir(), "sb-work-")));
+    const inside = join(work, "build-output.txt");
+    const r = new SeatbeltSandbox().run(`echo OK > "${inside}"`, { cwd: work, approved: [], homeDir: home });
+    assert.equal(r.exitCode, 0);
+    assert.equal(readFileSync(inside, "utf8").trim(), "OK", "a write inside the floor (cwd) must succeed");
+  });
+
+  test("a persistence write is denied by the carve-out even though the fake $HOME is under the floor's temp dir", () => {
+    // NOTE: os.tmpdir() is in the write floor, and this fake $HOME lives under it,
+    // so ~/.zshrc sits inside an allowed ancestor. It is still denied — the
+    // SENSITIVE_PATHS write carve-out (emitted after the floor allow) re-denies it.
+    // This is why the carve-out is load-bearing, not just attribution.
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "sb-carve-")));
+    const work = realpathSync(mkdtempSync(join(tmpdir(), "sb-cwork-")));
+    const rc = join(home, ".zshrc");
+    writeFileSync(rc, "ORIGINAL");
+    new SeatbeltSandbox().run(`echo PWNED >> "${rc}" 2>/dev/null || true`, { cwd: work, approved: [], homeDir: home });
+    assert.equal(readFileSync(rc, "utf8"), "ORIGINAL", "the persistence write must be denied by the carve-out");
+  });
+
+  test("a real /dev/null redirect still works under write-deny", () => {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "sb-dev-")));
+    const work = realpathSync(mkdtempSync(join(tmpdir(), "sb-devwork-")));
+    const r = new SeatbeltSandbox().run(`echo hi > /dev/null && echo DEVOK`, { cwd: work, approved: [], homeDir: home });
+    assert.equal(r.exitCode, 0);
+    assert.ok(r.stdout.includes("DEVOK"), "device writes must still work");
+  });
 });
 
 describe("runLifecycleScripts", { skip: darwin ? false : "requires macOS sandbox-exec" }, () => {

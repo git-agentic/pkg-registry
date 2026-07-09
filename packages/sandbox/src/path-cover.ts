@@ -4,25 +4,17 @@ export function segments(p: string): string[] {
 }
 
 /**
- * Path-segment-anchored coverage: true iff an approved filesystem target and a deny
- * path share a full segment prefix up to the shorter (one is an ancestor-or-equal of
- * the other). Deliberately NOT a substring match — `ssh` does not cover `.ssh`, and
- * the dynamic `*` capability target covers nothing — so an over-broad/loose approval
- * can't silently cancel an unrelated credential deny.
- *
- * NOTE — descendant-covers-ancestor side-effect: an approval for a path INSIDE a
- * `subpath` deny (e.g. `--approve filesystem:.ssh/config`) currently cancels the
- * ENTIRE `~/.ssh` deny, not just the single file. This is operator-gated (an attacker
- * cannot supply `--approve`), so it is not an immediate security issue. It is a
- * candidate for future tightening: a descendant approval should not be allowed to lift
- * an ancestor `subpath` deny — only an approval for the ancestor itself (or a wider
- * path) should do so.
+ * Directional segment-anchored coverage: true iff `approvedTarget` is an
+ * ancestor-or-equal of `target` — i.e. an approval grants exactly its own
+ * subtree and never widens up to an ancestor (Phase 25, ADR-0038). Segment-
+ * anchored, so `ssh` does not cover `.ssh`; the dynamic `*` target covers
+ * nothing.
  */
-export function pathCovers(approvedTarget: string, denyPath: string): boolean {
+export function pathCovers(approvedTarget: string, target: string): boolean {
   const a = segments(approvedTarget);
-  const d = segments(denyPath);
-  if (a.length === 0) return false;
-  const n = Math.min(a.length, d.length);
-  for (let i = 0; i < n; i++) if (a[i] !== d[i]) return false;
+  const d = segments(target);
+  if (a.length === 0) return false;      // "*" / empty grants nothing
+  if (a.length > d.length) return false; // a deeper approval can't cover a shallower path
+  for (let i = 0; i < a.length; i++) if (a[i] !== d[i]) return false;
   return true;
 }

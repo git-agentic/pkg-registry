@@ -1,4 +1,6 @@
 import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { existsSync } from "node:fs";
 import { generateBwrapArgs } from "./bwrap.js";
 import type { Sandbox, SandboxResult } from "./types.js";
 import type { Capability } from "@sentinel/core";
@@ -14,7 +16,12 @@ export class BubblewrapSandbox implements Sandbox {
     if (process.platform !== "linux") {
       throw new Error(`bubblewrap enforcement unavailable on ${process.platform} (Linux required)`);
     }
-    const args = [...generateBwrapArgs(opts.approved, { homeDir: opts.homeDir }), "/bin/sh", "-c", cmd];
+    const args = [
+      ...generateBwrapArgs(opts.approved, { homeDir: opts.homeDir, cwd: opts.cwd, tmpDir: tmpdir(), pathExists: existsSync }),
+      "/bin/sh",
+      "-c",
+      cmd,
+    ];
     const res = spawnSync("bwrap", args, {
       cwd: opts.cwd,
       env: opts.env ?? process.env,

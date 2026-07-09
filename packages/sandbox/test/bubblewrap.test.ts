@@ -97,11 +97,41 @@ describe("BubblewrapSandbox enforcement", { skip }, () => {
     assert.equal(readFileSync(out, "utf8").trim(), "HELLO", "non-denied read/write must work");
   });
 
+  test("a write to the Install directory (cwd, the floor) succeeds — positive control", () => {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "bw-floor-")));
+    const work = realpathSync(mkdtempSync(join(tmpdir(), "bw-work-")));
+    const inside = join(work, "build-output.txt");
+    const r = new BubblewrapSandbox().run(`echo OK > "${inside}"`, { cwd: work, approved: [], homeDir: home });
+    assert.equal(r.exitCode, 0);
+    assert.equal(readFileSync(inside, "utf8").trim(), "OK", "a write inside the floor (cwd) must succeed");
+  });
+
+  test("a persistence write is denied by the carve-out even though the fake $HOME is under the floor's temp dir", () => {
+    // NOTE: os.tmpdir() is in the write floor, and this fake $HOME lives under it,
+    // so ~/.bashrc sits inside an allowed ancestor. It is still denied — the
+    // SENSITIVE_PATHS write carve-out (emitted after the floor allow) re-denies it.
+    // This is why the carve-out is load-bearing, not just attribution.
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "bw-carve-")));
+    const work = realpathSync(mkdtempSync(join(tmpdir(), "bw-cwork-")));
+    const rc = join(home, ".bashrc");
+    writeFileSync(rc, "ORIGINAL");
+    new BubblewrapSandbox().run(`echo PWNED >> "${rc}" 2>/dev/null || true`, { cwd: work, approved: [], homeDir: home });
+    assert.equal(readFileSync(rc, "utf8"), "ORIGINAL", "the persistence write must be denied by the carve-out");
+  });
+
+  test("a real /dev/null redirect still works under write-deny", () => {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "bw-dev-")));
+    const work = realpathSync(mkdtempSync(join(tmpdir(), "bw-devwork-")));
+    const r = new BubblewrapSandbox().run(`echo hi > /dev/null && echo DEVOK`, { cwd: work, approved: [], homeDir: home });
+    assert.equal(r.exitCode, 0);
+    assert.ok(r.stdout.includes("DEVOK"), "device writes must still work");
+  });
+
   test("runLifecycleScripts runs a benign postinstall under bwrap", () => {
     const dir = realpathSync(mkdtempSync(join(tmpdir(), "bw-run-")));
     writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "p", version: "1.0.0", scripts: { postinstall: "echo built > built.txt" } }));
     const r = runLifecycleScripts({ packageDir: dir, sandbox: new BubblewrapSandbox(), homeDir: process.env.HOME ?? "/root" });
-    assert.equal(r.failed, false);
+    assert.equal(r.failed, false, `postinstall failed under bwrap; child stderr: ${r.results.map((x) => x.stderr).join(" | ")}`);
     assert.equal(readFileSync(join(dir, "built.txt"), "utf8").trim(), "built");
   });
 });

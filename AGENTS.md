@@ -222,6 +222,27 @@ audit path; `audit-tree` gains a `vulnerabilities` count. Adds `semver`
 (^7.x) as a `@sentinel/core` dependency. `scripts/make-vulns.ts` regenerates
 the corpus from a local OSV/GHSA export — never a live fetch (invariant #3,
 ADR-0035).
+Phase 25 Slice 1 flips the sandbox's write posture from allow-default to
+**deny-by-default**: a directional `pathCovers` (`packages/sandbox/src/
+path-cover.ts` — an approval now covers exactly its own subtree, never an
+ancestor) plus a fixed, non-configurable `writeAllowFloor`
+(`packages/sandbox/src/write-floor.ts` — cwd, tmpDir, `/tmp`, `/dev`,
+`~/.node-gyp`, `~/.cache/node-gyp`, `~/.npm/_logs`) back a blanket write deny
+on both backends: Seatbelt's `generateProfile` emits `(deny file-write*)` +
+`(allow file-write* …floor…grants)` (SBPL last-match-wins), and bwrap's
+`generateBwrapArgs` mounts root read-only (`--ro-bind / /`) and re-binds the
+floor/Grants read-write via `--bind-try`. `SENSITIVE_PATHS` write entries
+re-emit as a carve-out *after* the floor/Grant allow on both backends, so a
+persistence path stays denied even under an allowed ancestor unless a Grant
+explicitly covers it. `/dev` is deliberately asymmetric: it's in the shared
+floor for Seatbelt (no isolated-device-tree primitive; not a regression from
+the prior allow-default posture) but bwrap's generator excludes it from the
+re-binds since `--dev /dev` already gives an isolated writable `/dev` and
+re-binding the host one would overmount that isolation. A bare-relative
+approved `filesystem:` target now resolves against `homeDir` (`expandHome`
+widened) when emitted as a positive write Grant. Reads are unchanged this
+slice — `$HOME`-read-deny is a separate, gated Slice 2 follow-up. Scoring
+and the approval/manifest model are untouched (invariants #1–#6, ADR-0038).
 
 We are the Socket/Chainguard wedge: **do not** try to replace npm. Resolve and
 serve real packages transparently; only attach signal.

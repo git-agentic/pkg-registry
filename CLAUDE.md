@@ -263,6 +263,27 @@ the map is transient and clears on settle. A pure token-bucket
 install-gate paths are never rate-limited. All four env vars parse
 fail-closed at startup (malformed ⇒ FATAL). Scoring, caching, and the
 packument passthrough are untouched (invariants #1–#6, ADR-0037).
+Phase 25 Slice 1 flips the sandbox's write posture from allow-default to
+**deny-by-default**: a directional `pathCovers` (`packages/sandbox/src/
+path-cover.ts` — an approval now covers exactly its own subtree, never an
+ancestor) plus a fixed, non-configurable `writeAllowFloor`
+(`packages/sandbox/src/write-floor.ts` — cwd, tmpDir, `/tmp`, `/dev`,
+`~/.node-gyp`, `~/.cache/node-gyp`, `~/.npm/_logs`) back a blanket write deny
+on both backends: Seatbelt's `generateProfile` emits `(deny file-write*)` +
+`(allow file-write* …floor…grants)` (SBPL last-match-wins), and bwrap's
+`generateBwrapArgs` mounts root read-only (`--ro-bind / /`) and re-binds the
+floor/Grants read-write via `--bind-try`. `SENSITIVE_PATHS` write entries
+re-emit as a carve-out *after* the floor/Grant allow on both backends, so a
+persistence path stays denied even under an allowed ancestor unless a Grant
+explicitly covers it. `/dev` is deliberately asymmetric: it's in the shared
+floor for Seatbelt (no isolated-device-tree primitive; not a regression from
+the prior allow-default posture) but bwrap's generator excludes it from the
+re-binds since `--dev /dev` already gives an isolated writable `/dev` and
+re-binding the host one would overmount that isolation. A bare-relative
+approved `filesystem:` target now resolves against `homeDir` (`expandHome`
+widened) when emitted as a positive write Grant. Reads are unchanged this
+slice — `$HOME`-read-deny is a separate, gated Slice 2 follow-up. Scoring
+and the approval/manifest model are untouched (invariants #1–#6, ADR-0038).
 
 We are the Socket/Chainguard wedge: **do not** try to replace npm. Resolve and
 serve real packages transparently; only attach signal.
@@ -343,15 +364,19 @@ the audit-tree package cap, and the opt-in token-bucket rate limiter.
 
 ```bash
 npm run build            # tsc --build (project references: core → proxy/cli)
-npm test                 # engine + end-to-end proxy: 613 tests on this host (611 pass, 2 skipped on darwin).
+npm test                 # engine + end-to-end proxy: 638 tests on this host (636 pass, 2 skipped on darwin).
                          # Skips are platform-gated enforcement: "non-darwin throws" skips on darwin
                          # (it verifies darwin-only behaviour), and the "no silent skip" CI guard skips
                          # off-CI. The BubblewrapSandbox enforcement suite and the Linux enforce-e2e tests
-                         # skip as describe-level blocks on darwin ("requires Linux") and are not in the 613
+                         # skip as describe-level blocks on darwin ("requires Linux") and are not in the 638
                          # count. Phase 10's violation-enforce e2e and the darwin-gated runtime-violation
                          # effect test (SeatbeltSandbox: "a denied credential read surfaces a confirmed
                          # runtime violation") RUN on darwin via Seatbelt, the same way the rest of the
-                         # Seatbelt effect suite does, and ARE in the 613 count.
+                         # Seatbelt effect suite does, and ARE in the 638 count. Phase 25's
+                         # write-floor SeatbeltSandbox enforcement effect tests (positive control on
+                         # the floor, persistence carve-out under a fake $HOME inside the floor's
+                         # temp dir, a real /dev/null redirect) are likewise darwin-gated and RUN on
+                         # darwin via Seatbelt.
                          # Phase 7's audit-tree, Phase 8/9's signature/provenance, Phase 10's
                          # classifyViolation/deny-set/violations-store, Phase 11's MCP/approval-request,
                          # Phase 12's auth/authz-e2e, Phase 13's typosquat/dependency-confusion,
@@ -374,10 +399,14 @@ npm test                 # engine + end-to-end proxy: 613 tests on this host (61
                          # 413-over-cap), coalesce (concurrent-uncached-audit stampede fix),
                          # rate-limit (token-bucket unit) + rate-limit-e2e (429 + Retry-After on
                          # audit-tree/explain/policy-preview), and limits-startup (fail-closed FATAL
-                         # parsing of all four env vars) tests are hermetic
+                         # parsing of all four env vars) tests, and Phase 25's directional pathCovers
+                         # unit tests, writeAllowFloor unit tests, and generateProfile/
+                         # generateBwrapArgs write-deny generator tests (blanket deny, floor re-allow,
+                         # Grant-as-positive-allow, SENSITIVE carve-out-after-floor, and the deny-set
+                         # non-drift check) are hermetic
                          # and platform-neutral, so the darwin/Linux relationship from Phase 6 (Linux one
                          # test higher, one fewer skip) should hold, but hasn't been re-verified on Linux
-                         # CI since Phase 7/8/9/10/11/12/13/14/15/16/17/18/19/20/21/22/23/24 landed —
+                         # CI since Phase 7/8/9/10/11/12/13/14/15/16/17/18/19/20/21/22/23/24/25 landed —
                          # confirm on the next Linux CI run rather than trusting an extrapolated count
                          # here. Each platform's enforcement is verified on that platform (macOS dev
                          # host / ubuntu-latest CI).
