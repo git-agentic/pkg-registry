@@ -447,12 +447,13 @@ npm test                 # engine + end-to-end proxy: 661 tests on this host (65
                          # $HOME-read-deny generator tests (blanket deny, file-read-metadata
                          # traversal layer, read-allow re-open, SENSITIVE read carve-out unchanged),
                          # and the runLifecycleScripts projectRoot-threading test are hermetic
-                         # and platform-neutral, so the darwin/Linux relationship from Phase 6 (Linux one
-                         # test higher, one fewer skip) should hold, but hasn't been re-verified on Linux
-                         # CI since Phase 7/8/9/10/11/12/13/14/15/16/17/18/19/20/21/22/23/24/25 landed —
-                         # confirm on the next Linux CI run rather than trusting an extrapolated count
-                         # here. Each platform's enforcement is verified on that platform (macOS dev
-                         # host / ubuntu-latest CI).
+                         # and platform-neutral. The Linux (bubblewrap) enforcement path — including
+                         # the Phase 25 write-deny and $HOME-read-deny — is verified GREEN on ubuntu CI
+                         # (Node 22 + 24) through Phase 25 via PRs #1 (write-deny) and #2 (read-deny) on
+                         # git-agentic/pkg-registry; the darwin count is one lower with one more skip (the
+                         # bubblewrap enforcement suite is a describe-level skip off Linux). Each
+                         # platform's enforcement is verified on that platform (macOS dev host /
+                         # ubuntu-latest CI).
 npm run demo             # offline malware-detection walkthrough
 node packages/proxy/dist/index.js   # run the proxy (see README for env vars)
 ```

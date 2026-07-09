@@ -8,8 +8,16 @@ so an AI agent or a human can see the risk *before install-time code runs*.
 
 > Why: agents now `npm install` and execute untrusted code with zero risk
 > signaling. npm can't retract bad releases, has no install-time permissions, and
-> lets attackers squat names. Sentinel is the wedge — start as a security/audit
-> proxy, then expand into policy and permissions (Phase 2).
+> lets attackers squat names. Sentinel started as that audit-proxy wedge and has
+> since grown the rest of the layer: signed per-enterprise policy and an
+> install-time permission manifest, a **deny-by-default** capability sandbox
+> (macOS Seatbelt / Linux bubblewrap) that enforces it, offline signature +
+> Sigstore-provenance verification, known-malicious/known-vulnerable (GHSA/CVE)
+> detection, supply-chain identity heuristics, whole-tree lockfile auditing with
+> CycloneDX SBOM + signed VSA attestations, a CI-native GitHub Action, an
+> agent-native MCP surface, durable history/observability, and a hardened network
+> trust boundary + resource limits. See the phase log in
+> [CLAUDE.md](./CLAUDE.md) and the decision log in [docs/adr/](./docs/adr/).
 
 See **[ARCHITECTURE.md](./ARCHITECTURE.md)** for the full design (proxy, sync-vs-async
 audit placement, data model, npm hooks, stack justification).
@@ -246,9 +254,16 @@ top-level commands (a commander-15 quirk with nested `requiredOption`s made
 a true subcommand impractical). See
 [ADR-0032](./docs/adr/0032-signed-audit-attestations.md).
 
-### Sandbox (Phase 3, macOS)
+### Sandbox — default-deny (Phases 3–5 + 25; macOS Seatbelt / Linux bubblewrap)
 
-On macOS, `sentinel run-scripts <package-dir> [--approve network:host …]` runs the package's lifecycle scripts under a Seatbelt sandbox generated from its approved capabilities; un-approved reads of sensitive **files** (credential paths such as `~/.npmrc`, `.aws/credentials`) and network egress are denied by the kernel. Note: **environment-variable**-borne secrets (e.g. `NPM_TOKEN`, `AWS_SECRET_ACCESS_KEY`) are NOT scrubbed — the process inherits `process.env`; the `secret-exfil` audit rule flags env reads at audit time.
+`sentinel run-scripts <package-dir> [--approve network:host …]` runs the package's lifecycle scripts under a kernel sandbox generated from its approved capabilities — `createSandbox()` selects **Seatbelt** on macOS and **bubblewrap** on Linux, same capability model and fail-closed contract. As of Phase 25 the sandbox is **deny-by-default** (ADR-0038):
+
+- **Writes** are denied outside a fixed floor (the install dir, the OS temp dir, `/dev`, and the node build caches `~/.node-gyp` / `~/.cache/node-gyp` / `~/.npm/_logs`) plus operator-approved `filesystem:` grants — killing the persistence/tamper class, not an enumerated list.
+- **`$HOME` reads** are denied by default, re-allowing only what a lifecycle script needs: system paths, the node install prefix (so a node-under-`$HOME` nvm/fnm/volta runtime still loads its stdlib), the project root (so `require()` resolves), and the build caches — closing credential theft as a whole class. `/etc/passwd`/`/etc/shadow` stay denied via the `SENSITIVE_PATHS` carve-out.
+- **Network egress** is denied unless a `network` capability is approved.
+- **Environment secrets** are fail-closed **scrubbed** (Phase 4): a credential-looking env var (`NPM_TOKEN`, `AWS_SECRET_ACCESS_KEY`, …) never reaches the script unless approved with an `env:NAME` capability. The `secret-exfil` audit rule additionally flags env reads at scoring time.
+
+A denied credential read surfaces as a confirmed runtime violation on Seatbelt (EPERM); on bubblewrap the read is *contained* (a `--tmpfs` mask yields `ENOENT`) but not classified — an accepted telemetry asymmetry (ADR-0023). Both backends contain; only the telemetry differs.
 
 ### Runtime violation telemetry (Phase 10)
 

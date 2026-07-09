@@ -29,13 +29,16 @@ not yet built · `Superseded` / `Deprecated` — replaced; see the linked succes
 | [0008](./0008-diff-audit-weighting.md) | Diff-audit weighting | Amplify findings in files changed by a release (the trojaned-update signal) |
 | [0009](./0009-synthetic-inert-fixtures.md) | Synthetic, inert malware fixtures | Prove detection with safe, reproducible fixtures, not live malware |
 
-## Phase 2 — policy & permissions (Proposed)
+## Phase 2 — policy & permissions (Accepted, implemented)
 
 | ADR | Title | Decision in one line |
 |-----|-------|----------------------|
 | [0010](./0010-private-namespace-override.md) | Private-namespace override | Private packages win public collisions — structurally kill dependency confusion |
 | [0011](./0011-install-time-permission-manifest.md) | Install-time permission manifest | Declare + approve (then sandbox-enforce) fs/network/process capability before execution |
 | [0012](./0012-per-enterprise-policy-as-signed-data.md) | Per-enterprise policy as signed data | Make `POLICY` a versioned, signed, per-customer document; verdicts carry a `policyHash` |
+| [0013](./0013-approval-gate-via-block-and-capability-delta-trigger.md) | Approval gate via the block path (Phase 2.1) | Trigger approval on a `block` verdict + a capability-delta-vs-prior-approved change; the gate reuses the block machinery |
+| [0014](./0014-score-time-policy-and-raw-bytes-signing.md) | Score-time policy + raw-bytes signing (Phase 2.2) | Apply the signed policy at score time; sign/verify over raw policy bytes (Ed25519), verdicts carry the `policyHash` |
+| [0015](./0015-private-registry-publish-protocol.md) | Private-registry publish protocol (Phase 2.3) | Publish auth + fail-closed routing: claimed namespaces are served only from the private store, never public npm |
 
 ## Phase 3–5 — sandbox enforcement (Accepted, implemented)
 
@@ -50,6 +53,27 @@ not yet built · `Superseded` / `Deprecated` — replaced; see the linked succes
 | ADR | Title | Decision in one line |
 |-----|-------|----------------------|
 | [0019](./0019-enforced-install-script-shell.md) | Enforced install via script-shell interposition | `sentinel install --enforce` interposes via `npm_config_script_shell`; every lifecycle script runs under `createSandbox()` with credential-screened env |
+
+## Phases 7–22 — the signal & agent-surface build-out (Accepted, implemented)
+
+| ADR | Title | Decision in one line |
+|-----|-------|----------------------|
+| [0020](./0020-whole-tree-lockfile-audit.md) | Whole-tree lockfile audit (Phase 7) | `sentinel audit-tree` fans a lockfile through the proxy and rolls a policy-gated server-side aggregate |
+| [0021](./0021-signature-provenance-verification.md) | Signature & provenance verification (Phase 8) | Offline ECDSA registry-signature check + a `provenance` rule; optional `requireSignature`/`requireProvenance` gates |
+| [0022](./0022-provenance-deep-verify.md) | Provenance deep-verify (Phase 9) | Verify Sigstore attestation bundles against pinned trust material, bound to the actual served bytes; `provenanceIdentities` gate |
+| [0023](./0023-runtime-violation-telemetry.md) | Runtime violation telemetry (Phase 10) | The enforcing sandbox becomes a sensor: infer a violation, report best-effort, quarantine via a serve-time overlay |
+| [0024](./0024-agent-native-mcp-surface.md) | Agent-native MCP surface (Phase 11) | A thin stdio client exposing read tools + a request-not-grant approval-request tool; no auto-approve |
+| [0025](./0025-control-plane-auth.md) | Control-plane auth (Phase 12) | Opt-in signed Ed25519 role tokens (operator/agent/publisher) gate the mutating routes; reads stay open |
+| [0026](./0026-supply-chain-identity-heuristics.md) | Supply-chain identity heuristics (Phase 13) | Pure `typosquat` rule + a score-time `dependencyConfusion` gate against claimed namespaces; weighted, never a hard block alone |
+| [0027](./0027-ecosystem-breadth-sbom.md) | Ecosystem breadth + SBOM (Phase 14) | Multi-format lockfile parsing (npm/yarn/pnpm), CycloneDX 1.6 export, and a lockfile-integrity cross-check |
+| [0028](./0028-durable-history-observability.md) | Durable history + observability (Phase 15) | Opt-in `node:sqlite` write-through beside the hot cache; `/-/metrics`, `/-/history`, `/-/violations/timeline` |
+| [0029](./0029-release-anomaly-signals.md) | Release-anomaly signals (Phase 16) | Maintainer-change / dormancy / new-package / capability-novelty findings from immutable packument data; weighted |
+| [0030](./0030-ci-native-github-action.md) | CI-native GitHub Action (Phase 17) | A self-booting proxy runs the tree audit in CI; SBOM artifact + idempotent PR comment; `fail-on` gating |
+| [0031](./0031-actionable-remediation.md) | Actionable remediation (Phase 18) | Pure `remediate()` per-finding fixes + waiver templates + a last-known-good `/-/explain` walk-back; advisory-only |
+| [0032](./0032-signed-audit-attestations.md) | Signed audit attestations / VSA (Phase 19) | Operator-side in-toto/DSSE Ed25519 attestation over an audited tree; pure, fail-closed offline `verifyAttestation` |
+| [0033](./0033-policy-authoring-impact-preview.md) | Policy authoring + impact preview (Phase 20) | Pure `lintPolicy` + a dry-run `/-/policy/preview` replay of stored audits under a candidate policy |
+| [0034](./0034-known-advisory-detection.md) | Known-advisory detection (Phase 21) | Bundled static GHSA corpus + a `known-advisory` rule that critical-hard-blocks an exact `(name, version)` match |
+| [0035](./0035-known-vulnerability-sca.md) | Known-vulnerability SCA (Phase 22) | Bundled static CVE corpus + a `known-vulnerability` rule matching semver ranges at the advisory's faithful severity |
 
 ## Phase 23 — network trust boundary (Accepted, implemented)
 
