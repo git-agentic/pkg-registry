@@ -10,5 +10,10 @@ jobs:
         uses: ./
         with:
           fail-on: block
+          # Signed self-audit policy: waives reviewed heuristic findings on our
+          # own dev deps (see policy/sentinel-policy.json `allow` reasons);
+          # anything new still blocks.
+          policy: policy/sentinel-policy.json
+          policy-pubkey: policy/sentinel-policy.pub.pem
       # Observe-only onboarding variant:
       # with: { fail-on: none }

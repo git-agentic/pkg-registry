@@ -1,0 +1,114 @@
+{
+  "schema": 1,
+  "version": "sentinel-repo-self-audit-1",
+  "scoring": {
+    "severityWeight": {
+      "info": 0,
+      "low": 4,
+      "medium": 12,
+      "high": 25,
+      "critical": 55
+    },
+    "diffMultiplier": 1.6,
+    "thresholds": {
+      "allow": 80,
+      "warn": 50
+    },
+    "hardBlockSeverity": "critical"
+  },
+  "rules": {
+    "disabled": []
+  },
+  "allow": [
+    {
+      "package": "@hono/node-server",
+      "rules": [
+        "network-egress",
+        "obfuscation"
+      ],
+      "reason": "known-benign dev tooling; reviewed 2026-07-09 (PR: self-audit policy)"
+    },
+    {
+      "package": "@modelcontextprotocol/sdk",
+      "rules": [
+        "obfuscation",
+        "network-egress",
+        "secret-exfil"
+      ],
+      "reason": "known-benign dev tooling; reviewed 2026-07-09 (PR: self-audit policy)"
+    },
+    {
+      "package": "@sigstore/protobuf-specs",
+      "rules": [
+        "obfuscation"
+      ],
+      "reason": "known-benign dev tooling; reviewed 2026-07-09 (PR: self-audit policy)"
+    },
+    {
+      "package": "@types/node",
+      "rules": [
+        "network-egress",
+        "obfuscation",
+        "secret-exfil"
+      ],
+      "reason": "known-benign dev tooling; reviewed 2026-07-09 (PR: self-audit policy)"
+    },
+    {
+      "package": "ajv",
+      "rules": [
+        "obfuscation"
+      ],
+      "reason": "known-benign dev tooling; reviewed 2026-07-09 (PR: self-audit policy)"
+    },
+    {
+      "package": "esbuild",
+      "rules": [
+        "install-scripts",
+        "network-egress",
+        "obfuscation"
+      ],
+      "reason": "known-benign dev tooling; reviewed 2026-07-09 (PR: self-audit policy)"
+    },
+    {
+      "package": "fast-uri",
+      "rules": [
+        "obfuscation",
+        "capability-novelty"
+      ],
+      "reason": "known-benign dev tooling; reviewed 2026-07-09 (PR: self-audit policy)"
+    },
+    {
+      "package": "hono",
+      "rules": [
+        "network-egress",
+        "obfuscation"
+      ],
+      "reason": "known-benign dev tooling; reviewed 2026-07-09 (PR: self-audit policy)"
+    },
+    {
+      "package": "tsx",
+      "rules": [
+        "obfuscation"
+      ],
+      "reason": "known-benign dev tooling; reviewed 2026-07-09 (PR: self-audit policy)"
+    },
+    {
+      "package": "typescript",
+      "rules": [
+        "obfuscation",
+        "network-egress"
+      ],
+      "reason": "known-benign dev tooling; reviewed 2026-07-09 (PR: self-audit policy)"
+    },
+    {
+      "package": "zod",
+      "rules": [
+        "obfuscation"
+      ],
+      "reason": "known-benign dev tooling; reviewed 2026-07-09 (PR: self-audit policy)"
+    }
+  ],
+  "deny": [],
+  "privateNamespaces": [],
+  "treeGate": "block"
+}

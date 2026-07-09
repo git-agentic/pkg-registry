@@ -9,3 +9,4 @@ fixtures/registry.json
 .env
 sentinel-sbom.json
 .superpowers/
+policy/keys/
