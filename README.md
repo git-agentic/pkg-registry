@@ -1,5 +1,9 @@
 # Sentinel
 
+[![ci](https://github.com/git-agentic/pkg-registry/actions/workflows/ci.yml/badge.svg)](https://github.com/git-agentic/pkg-registry/actions/workflows/ci.yml)
+[![codeql](https://github.com/git-agentic/pkg-registry/actions/workflows/codeql.yml/badge.svg)](https://github.com/git-agentic/pkg-registry/actions/workflows/codeql.yml)
+[![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
+
 **An agent-auditable security layer for the npm ecosystem.** Phase 1 is a
 transparent **auditing proxy** that sits in front of `registry.npmjs.org`: it
 resolves and serves real packages unchanged, but intercepts every tarball,
@@ -21,6 +25,17 @@ so an AI agent or a human can see the risk *before install-time code runs*.
 
 See **[ARCHITECTURE.md](./ARCHITECTURE.md)** for the full design (proxy, sync-vs-async
 audit placement, data model, npm hooks, stack justification).
+
+## Status
+
+**Pre-1.0; built through Phase 25 (deny-by-default install sandbox).** The
+proxy, policy gate, sandbox (macOS Seatbelt / Linux bubblewrap), CLI, MCP
+server, and GitHub Action work end-to-end and are covered by the full test
+suite on macOS and Linux CI — but this has not yet been hardened by
+production use, and APIs may change without notice. **No npm packages are
+published yet**: build from source (Quickstart below). Threat model:
+[sentinel-threat-model.md](./sentinel-threat-model.md) · Homepage:
+[git-agentic.com/sentinel](https://git-agentic.com/sentinel)
 
 ---
 
