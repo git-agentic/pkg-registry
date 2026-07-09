@@ -222,6 +222,43 @@ audit path; `audit-tree` gains a `vulnerabilities` count. Adds `semver`
 (^7.x) as a `@sentinel/core` dependency. `scripts/make-vulns.ts` regenerates
 the corpus from a local OSV/GHSA export — never a live fetch (invariant #3,
 ADR-0035).
+Phase 23 closes a **network trust boundary** gap an external audit found: a
+pure `packages/proxy/src/net-config.ts` adds `assertAllowedTarballUrl`,
+`parseTarballOrigins`, `parsePublicBaseUrl`, and `isLoopbackHost`.
+Outbound, `NpmUpstream.getTarball` now pins every tarball fetch to the
+configured registry origin (`SENTINEL_REGISTRY`) or an entry in the optional
+`SENTINEL_TARBALL_ORIGINS` allowlist — a disallowed origin is never fetched
+at all, rejected up front as `HttpError(502)`, so a poisoned packument can't
+steer the proxy at internal services (SSRF). Inbound, `createServer` takes an
+optional `publicBaseUrl`; set via `SENTINEL_PUBLIC_BASE_URL` it drives every
+packument `dist.tarball` rewrite regardless of the request's Host, closing
+the Host-header-spoofing path — unset, the rewrite falls back to a
+loopback-derived base only for a loopback Host (`localhost`, `127.0.0.0/8`,
+`[::1]`), and refuses any other Host with **421**. Both env vars parse
+fail-closed at proxy startup (malformed ⇒ FATAL, same posture as
+`SENTINEL_AUTH_PUBKEY`). Scoring, caching, and the packument passthrough are
+untouched (invariants #1–#5, ADR-0036).
+Phase 24 adds **resource robustness**: `/-/audit-tree` now dedupes
+coordinates by `name@version` before fan-out (auditing each distinct
+coordinate once, re-expanding to per-request rows in request order —
+behavior-neutral since `auditVersion` is deterministic) and returns **413**
+over `SENTINEL_MAX_TREE_PACKAGES` (default 5000) instead of silently
+truncating. A shared byte-counting reader, `readBodyCapped`
+(`packages/proxy/src/limits.ts`), replaces `NpmUpstream`'s unbounded
+`arrayBuffer()`/`json()` reads (reject-up-front on an over-cap
+`content-length`, abort mid-stream on an over-cap running total), bounding
+tarball fetches to `SENTINEL_MAX_TARBALL_BYTES` (default 256 MB) and
+packument/attestation fetches to `SENTINEL_MAX_PACKUMENT_BYTES` (default
+128 MB); over-cap is a 502 (attestations ⇒ null, fail-open). An in-flight
+`name@version` map in `server.ts` coalesces concurrent uncached public
+audits onto one pipeline (cache-stampede fix) — the integrity-keyed `store`
+stays the durable cache (invariant #4); the map is transient and clears on
+settle. A pure token-bucket `RateLimiter` (`packages/proxy/src/rate-limit.ts`,
+injectable clock, keyed by `req.socket.remoteAddress`, opt-in via
+`SENTINEL_RATE_LIMIT_RPM`) gates `POST /-/audit-tree`, `GET /-/explain/*`, and
+`POST /-/policy/preview`; over-limit ⇒ 429 + `Retry-After`; install-gate paths
+are never limited. All four env vars parse fail-closed at startup
+(invariants #1–#6, ADR-0037).
 Phase 25 Slice 1 flips the sandbox's write posture from allow-default to
 **deny-by-default**: a directional `pathCovers` (`packages/sandbox/src/
 path-cover.ts` — an approval now covers exactly its own subtree, never an
@@ -338,21 +375,25 @@ built-in, not a dependency; it's opt-in via `SENTINEL_HISTORY_DB` and runs
 unflagged on Node 24, but Node 22 needs `--experimental-sqlite` if you turn
 it on. `SENTINEL_VULNERABILITIES` (Phase 22, like `SENTINEL_ADVISORIES`) is
 an optional, fail-closed, load-once-at-startup operator vuln feed for the
-public install audit path.
+public install audit path. `SENTINEL_TARBALL_ORIGINS`/`SENTINEL_PUBLIC_BASE_URL`
+(Phase 23) and `SENTINEL_MAX_TARBALL_BYTES`/`SENTINEL_MAX_PACKUMENT_BYTES`/
+`SENTINEL_MAX_TREE_PACKAGES`/`SENTINEL_RATE_LIMIT_RPM` (Phase 24) share the same
+fail-closed, load-once-at-startup posture for the fetch trust boundary, the
+fetch/tree byte-and-count caps, and the opt-in token-bucket rate limiter.
 
 ## Build / test / run
 
 ```bash
 npm run build            # tsc --build (project references: core → proxy/cli)
-npm test                 # engine + end-to-end proxy: 546 tests on this host (544 pass, 2 skipped on darwin).
+npm test                 # engine + end-to-end proxy: 661 tests on this host (659 pass, 2 skipped on darwin).
                          # Skips are platform-gated enforcement: "non-darwin throws" skips on darwin
                          # (it verifies darwin-only behaviour), and the "no silent skip" CI guard skips
                          # off-CI. The BubblewrapSandbox enforcement suite and the Linux enforce-e2e tests
-                         # skip as describe-level blocks on darwin ("requires Linux") and are not in the 546
+                         # skip as describe-level blocks on darwin ("requires Linux") and are not in the 661
                          # count. Phase 10's violation-enforce e2e and the darwin-gated runtime-violation
                          # effect test (SeatbeltSandbox: "a denied credential read surfaces a confirmed
                          # runtime violation") RUN on darwin via Seatbelt, the same way the rest of the
-                         # Seatbelt effect suite does, and ARE in the 546 count.
+                         # Seatbelt effect suite does, and ARE in the 661 count.
                          # Phase 7's audit-tree, Phase 8/9's signature/provenance, Phase 10's
                          # classifyViolation/deny-set/violations-store, Phase 11's MCP/approval-request,
                          # Phase 12's auth/authz-e2e, Phase 13's typosquat/dependency-confusion,
@@ -364,14 +405,15 @@ npm test                 # engine + end-to-end proxy: 546 tests on this host (54
                          # policyHash-plumbing/CLI-attest-keygen-attest-verify-attestation, Phase 20's
                          # policy-lint/allReports/preview-route/policy-init-validate-preview-CLI,
                          # Phase 21's advisory-corpus/known-advisory-rule/SENTINEL_ADVISORIES-load, and
-                         # Phase 22's vuln-corpus/known-vulnerability-rule/semver-satisfies/
-                         # SENTINEL_VULNERABILITIES-load/tree-vulnerabilities-count tests are hermetic
-                         # and platform-neutral, so the darwin/Linux relationship from Phase 6 (Linux one
-                         # test higher, one fewer skip) should hold, but hasn't been re-verified on Linux
-                         # CI since Phase 7/8/9/10/11/12/13/14/15/16/17/18/19/20/21/22 landed — confirm on
-                         # the next Linux CI run rather than trusting an extrapolated count here. Each
-                         # platform's enforcement is verified on that platform (macOS dev host /
-                         # ubuntu-latest CI).
+                         # Phase 22's vuln-corpus/known-vulnerability, Phase 23's net-config/
+                         # tarball-origin/public-base-url/net-startup, Phase 24's limits/tarball-size/
+                         # audit-tree-limits/coalesce/rate-limit/limits-startup, and Phase 25's
+                         # read-allow/directional-pathCovers/write-floor + Seatbelt & bwrap generators +
+                         # $HOME-read-deny tests are hermetic and platform-neutral. The Linux
+                         # (bubblewrap) enforcement path is verified GREEN on ubuntu CI (Node 22 + 24)
+                         # through Phase 25 — see PRs #1 (write-deny) and #2 (read-deny) on
+                         # git-agentic/pkg-registry. Each platform's enforcement is verified on that
+                         # platform (macOS dev host / ubuntu-latest CI).
 npm run demo             # offline malware-detection walkthrough
 node packages/proxy/dist/index.js   # run the proxy (see README for env vars)
 ```
