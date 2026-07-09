@@ -18,19 +18,18 @@ export interface VulnAdvisory {
 
 const SEVERITIES = new Set<Severity>(["info", "low", "medium", "high", "critical"]);
 
-// Well-documented, publicly-confirmed npm CVEs. (name, range, id) triples were cross-checked
-// against the GitHub Advisory Database / osv.dev to the extent possible offline at authoring
-// time (see Task 1 report for per-entry verification notes — node-fetch's GHSA id carries the
-// lowest independent-recall confidence of the six but the (name, range, fixedIn) facts are
-// well-documented, and no id here was invented). Kept small, accurate, de-duplicated; no
-// entry's `name` collides with a fixture package name (verified against fixtures/registry.json).
+// Well-documented, publicly-confirmed npm CVEs. (name, range, id, severity) fields were
+// verified against the GitHub Advisory Database (github.com/advisories) as of the Task 1
+// fix wave (see Task 1 report for per-entry verification notes and sources). Kept small,
+// accurate, de-duplicated; no entry's `name` collides with a fixture package name (verified
+// against fixtures/registry.json).
 export const KNOWN_VULNERABILITIES: readonly VulnAdvisory[] = [
-  { name: "lodash", ranges: ["<4.17.12"], severity: "high", id: "GHSA-jf85-cpcp-j695", fixedIn: ["4.17.12"], reference: "https://github.com/advisories/GHSA-jf85-cpcp-j695" },
+  { name: "lodash", ranges: ["<4.17.12"], severity: "critical", id: "GHSA-jf85-cpcp-j695", fixedIn: ["4.17.12"], reference: "https://github.com/advisories/GHSA-jf85-cpcp-j695" },
   { name: "lodash", ranges: ["<4.17.21"], severity: "high", id: "GHSA-35jh-r3h4-6jhm", fixedIn: ["4.17.21"], reference: "https://github.com/advisories/GHSA-35jh-r3h4-6jhm" },
   { name: "minimist", ranges: ["<1.2.6"], severity: "critical", id: "GHSA-xvch-5gv4-984h", fixedIn: ["1.2.6"], reference: "https://github.com/advisories/GHSA-xvch-5gv4-984h" },
-  { name: "axios", ranges: ["<0.21.1"], severity: "high", id: "GHSA-4w2v-q235-vp99", fixedIn: ["0.21.1"], reference: "https://github.com/advisories/GHSA-4w2v-q235-vp99" },
+  { name: "axios", ranges: ["<0.21.1"], severity: "medium", id: "GHSA-4w2v-q235-vp99", fixedIn: ["0.21.1"], reference: "https://github.com/advisories/GHSA-4w2v-q235-vp99" },
   { name: "node-fetch", ranges: ["<2.6.7"], severity: "high", id: "GHSA-r683-j2x4-v87g", fixedIn: ["2.6.7"], reference: "https://github.com/advisories/GHSA-r683-j2x4-v87g" },
-  { name: "ws", ranges: [">=7.0.0 <7.4.6"], severity: "high", id: "GHSA-6fc8-4gx4-v693", fixedIn: ["7.4.6"], reference: "https://github.com/advisories/GHSA-6fc8-4gx4-v693" },
+  { name: "ws", ranges: [">=7.0.0 <7.4.6"], severity: "medium", id: "GHSA-6fc8-4gx4-v693", fixedIn: ["7.4.6"], reference: "https://github.com/advisories/GHSA-6fc8-4gx4-v693" },
 ];
 
 /** name → its known vulnerabilities. Built once over the bundled corpus. */
