@@ -26,11 +26,22 @@ describe("NpmUpstream tarball origin pinning (hermetic local registry)", () => {
     // Registry: packuments name a tarball URL per package.
     registry = createHttpServer((req, res) => {
       const pkg = (req.url ?? "").split("/")[1] ?? "";
-      if (pkg === "good-pkg" || pkg === "evil-pkg") {
+      if (pkg === "good-pkg" || pkg === "evil-pkg" || pkg === "redirect-pkg") {
         const tarball = pkg === "good-pkg"
           ? `${registryBase}/good-pkg/-/good-pkg-1.0.0.tgz`
-          : `${canaryBase}/evil.tgz`;
+          : pkg === "redirect-pkg"
+            ? `${registryBase}/redirect-pkg/-/redirect-pkg-1.0.0.tgz` // same-origin (allowed) URL...
+            : `${canaryBase}/evil.tgz`;
         if ((req.url ?? "").includes("/-/")) {
+          if (pkg === "redirect-pkg") {
+            // ...that itself 302s to the cross-origin canary. The fetch-follow
+            // bypass this test guards against: an allowed initial URL redirecting
+            // off-allowlist must be refused, not silently followed.
+            res.statusCode = 302;
+            res.setHeader("location", `${canaryBase}/evil.tgz`);
+            res.end();
+            return;
+          }
           res.end(TARBALL_BYTES); // same-origin tarball path
           return;
         }
@@ -70,5 +81,14 @@ describe("NpmUpstream tarball origin pinning (hermetic local registry)", () => {
     const buf = await up.getTarball("evil-pkg", "1.0.0");
     assert.equal(buf.toString(), TARBALL_BYTES);
     assert.equal(canaryHit, true);
+  });
+
+  test("a same-origin tarball URL that 302s to a cross-origin target is refused — and the redirect target is never contacted", async () => {
+    const up = new NpmUpstream(registryBase);
+    await assert.rejects(
+      () => up.getTarball("redirect-pkg", "1.0.0"),
+      (err: unknown) => err instanceof HttpError && err.status === 502,
+    );
+    assert.equal(canaryHit, false, "the redirect target must never receive a request — auto-follow must not bypass the allowlist");
   });
 });

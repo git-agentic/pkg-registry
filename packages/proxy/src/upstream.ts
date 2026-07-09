@@ -74,6 +74,12 @@ function normalizeVersion(m: VersionManifest): UpstreamVersion {
   };
 }
 
+/**
+ * Hop cap for `fetchPinned` — bounds both the redirect chain length and any
+ * pathological redirect loop (ADR-0036).
+ */
+const MAX_TARBALL_REDIRECTS = 5;
+
 /** Fetches from the real npm registry. */
 export class NpmUpstream implements Upstream {
   readonly name = "npm";
@@ -86,10 +92,41 @@ export class NpmUpstream implements Upstream {
     this.registryOrigin = new URL(registry).origin;
   }
 
+  /**
+   * Fetch `initialUrl`, re-validating the origin allowlist on every hop
+   * instead of letting `fetch` auto-follow redirects. undici's default
+   * `redirect: "follow"` would revalidate only the initial URL and then
+   * silently trust wherever a 3xx `Location` points — including an
+   * internal/metadata address — which reopens the SSRF surface this
+   * allowlist exists to close. `redirect: "manual"` plus a re-check per hop
+   * keeps legitimate redirecting mirrors (Artifactory/Nexus/Verdaccio)
+   * working while refusing to follow a hop off the allowlist (ADR-0036).
+   */
+  private async fetchPinned(initialUrl: string, what: string): Promise<Response> {
+    let url = initialUrl;
+    for (let hop = 0; hop <= MAX_TARBALL_REDIRECTS; hop++) {
+      try {
+        assertAllowedTarballUrl(url, this.registryOrigin, this.tarballOrigins);
+      } catch (err) {
+        throw new HttpError(502, `refusing ${what}: ${(err as Error).message}`);
+      }
+      const res = await fetch(url, { redirect: "manual" });
+      if (res.status >= 300 && res.status < 400) {
+        const loc = res.headers.get("location");
+        if (!loc) return res; // no Location — let the caller's !res.ok handle it
+        url = new URL(loc, url).href;
+        continue;
+      }
+      return res;
+    }
+    throw new HttpError(502, `refusing ${what}: too many redirects (> ${MAX_TARBALL_REDIRECTS})`);
+  }
+
   async getPackument(pkg: string): Promise<UpstreamPackument> {
-    const res = await fetch(`${this.registry}/${encodeURIComponent(pkg).replace("%40", "@")}`, {
-      headers: { accept: "application/json" },
-    });
+    const res = await this.fetchPinned(
+      `${this.registry}/${encodeURIComponent(pkg).replace("%40", "@")}`,
+      `packument fetch for ${pkg}`,
+    );
     if (!res.ok) throw new HttpError(res.status, `upstream packument ${pkg}: ${res.status}`);
     const doc = (await res.json()) as PackumentDoc;
     const versions: Record<string, UpstreamVersion> = {};
@@ -106,12 +143,7 @@ export class NpmUpstream implements Upstream {
     const pm = await this.getPackument(pkg);
     const url = pm.doc.versions[version]?.dist?.tarball;
     if (!url) throw new HttpError(404, `no tarball for ${pkg}@${version}`);
-    try {
-      assertAllowedTarballUrl(url, this.registryOrigin, this.tarballOrigins);
-    } catch (err) {
-      throw new HttpError(502, `refusing tarball fetch for ${pkg}@${version}: ${(err as Error).message}`);
-    }
-    const res = await fetch(url);
+    const res = await this.fetchPinned(url, `tarball fetch for ${pkg}@${version}`);
     if (!res.ok) throw new HttpError(res.status, `upstream tarball ${pkg}@${version}: ${res.status}`);
     return Buffer.from(await res.arrayBuffer());
   }
@@ -119,9 +151,10 @@ export class NpmUpstream implements Upstream {
   async getAttestations(pkg: string, version: string): Promise<unknown | null> {
     try {
       const name = encodeURIComponent(pkg).replace("%40", "@");
-      const res = await fetch(`${this.registry}/-/npm/v1/attestations/${name}@${version}`, {
-        headers: { accept: "application/json" },
-      });
+      const res = await this.fetchPinned(
+        `${this.registry}/-/npm/v1/attestations/${name}@${version}`,
+        `attestations fetch for ${pkg}@${version}`,
+      );
       if (!res.ok) return null;
       return await res.json();
     } catch {
