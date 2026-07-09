@@ -39,6 +39,7 @@ import { isClaimed, parsePublishBody, publishTokenValid } from "./private.js";
 import { ViolationStore, type ViolationInput } from "./violations.js";
 import { ApprovalRequestStore } from "./approval-requests.js";
 import { makeAuthz } from "./authz.js";
+import { isLoopbackHost } from "./net-config.js";
 import type { HistoryDb } from "./history-db.js";
 
 export type ProxyPolicy = "observe" | "block";
@@ -75,6 +76,8 @@ export interface ServerOptions {
   advisories?: Advisory[];
   /** Operator-supplied known-vulnerability advisories, merged with the bundled corpus (Phase 22). */
   vulnerabilities?: VulnAdvisory[];
+  /** Public base URL for rewritten dist.tarball links (ADR-0036). Undefined ⇒ loopback-Host-derived only. */
+  publicBaseUrl?: string;
 }
 
 const TARBALL_RE = /^(.+)\/-\/([^/]+\.tgz)$/;
@@ -106,6 +109,19 @@ async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise
   return results;
 }
 
+/**
+ * Base URL for rewritten dist.tarball links: the configured public base, or a
+ * loopback-Host-derived fallback for zero-config local dev. A non-loopback
+ * Host with no configured base is refused — the rewrite would otherwise point
+ * npm at whatever origin the Host header claims (ADR-0036).
+ */
+function baseUrlFor(req: Request, configured: string | undefined): string {
+  if (configured) return configured;
+  const host = req.get("host") ?? "";
+  if (isLoopbackHost(host)) return `${req.protocol}://${host}`;
+  throw new HttpError(421, `refusing to derive tarball URLs from non-loopback Host "${host}" — set SENTINEL_PUBLIC_BASE_URL`);
+}
+
 export function createServer(opts: ServerOptions) {
   const { upstream, store, approvals, violations, approvalRequests } = opts;
   const history = opts.history;
@@ -117,6 +133,7 @@ export function createServer(opts: ServerOptions) {
   const signingKeys = opts.signingKeys ?? NPM_SIGNING_KEYS;
   const advisories = opts.advisories;
   const vulnerabilities = opts.vulnerabilities;
+  const publicBaseUrl = opts.publicBaseUrl;
   const authz = makeAuthz(opts.authPublicKey);
   const app = express();
   app.disable("x-powered-by");
@@ -610,7 +627,7 @@ export function createServer(opts: ServerOptions) {
 
     // Packument
     try {
-      const base = `${req.protocol}://${req.get("host")}`;
+      const base = baseUrlFor(req, publicBaseUrl);
       if (isClaimed(path, enterprisePolicy)) {
         const pm = privateStore.packument(path);
         if (!pm) return res.status(404).json({ error: "private package not found", package: path });
