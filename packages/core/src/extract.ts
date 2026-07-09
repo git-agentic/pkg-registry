@@ -35,9 +35,11 @@ export interface ExtractResult {
  * halts decompression (zlib's streaming `maxOutputLength` does not enforce),
  * bounding CPU/memory. `unpackedSize` is now the total decompressed tar-stream
  * byte count (headers + padding + all entries), which is the correct cap metric;
- * `fileCount` remains File-entry count. Never throws on a bomb — throwing is
- * reserved for a genuinely malformed tar/gzip. `baseline` marks changed files
- * for the diff multiplier.
+ * `fileCount` remains File-entry count. Never throws on a bomb — a security
+ * review found node-tar silently tolerates a malformed *tar* body (partial or
+ * empty extraction, the byte cap already intact — fail-safe), so throwing is
+ * reserved for a malformed **gzip**, or a tar error node-tar itself chooses to
+ * surface. `baseline` marks changed files for the diff multiplier.
  */
 export async function extractTarball(
   tgz: Buffer,

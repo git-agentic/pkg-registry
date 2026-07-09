@@ -21,16 +21,28 @@ memory or wall-clock decompressing before a single rule ever runs.
 
 `extractTarball` (`packages/core/src/extract.ts`) takes two caps —
 `maxUnpackedBytes` (default `DEFAULT_MAX_UNPACKED_BYTES`, 1 GiB) and
-`maxFileCount` (default `DEFAULT_MAX_FILE_COUNT`, 100k) — and feeds the
-compressed tarball into the `tar.Parser` in fixed-size slices (256 KiB),
-yielding to the event loop between slices, rather than writing the whole
-buffer at once. Each entry's decompressed bytes accumulate into a running
-total and each file increments a running count; the moment either exceeds its
-cap, extraction sets a `truncated` flag and halts feeding further slices —
-decompression stops mid-stream rather than running the bomb to completion.
-`extractTarball` never throws on a breach (throwing stays reserved for a
-genuinely malformed tar); it returns `{ truncated: true, ... }` with whatever
-files were captured before the cap.
+`maxFileCount` (default `DEFAULT_MAX_FILE_COUNT`, 100k) — and counts at the
+**decompression boundary**, not per tar-entry. It owns the gunzip
+(`node:zlib`'s `createGunzip`) rather than letting `tar.Parser` auto-detect
+and decompress: every chunk the gunzip emits is added to a running
+`unpackedSize` *before* it is handed on to the parser for file extraction.
+The moment `unpackedSize` exceeds `maxUnpackedBytes`, extraction sets a
+`truncated` flag and calls `gunzip.destroy()` — the mechanism that actually
+halts decompression — rather than running the bomb to completion. Counting at
+the gunzip boundary means every decompressed byte is caught regardless of
+tar entry type, including bytes that node-tar decompresses but never
+surfaces as an `entry` event (pax/GNU meta headers, type-7 ContiguousFile
+bodies, directory headers) — a bypass class a per-tar-entry counter would
+miss. `maxFileCount` remains a secondary cap enforced by the `tar.Parser`
+(used for file extraction only), incrementing on each File-type entry.
+`extractTarball` never throws on a breach — a security review found
+node-tar silently tolerates a malformed *tar* body (partial/empty
+extraction, with the byte cap already intact — fail-safe), so throwing is
+reserved for a malformed **gzip**, or a tar error node-tar chooses to
+surface. On a breach it returns `{ truncated: true, ... }` with whatever
+files were captured before the cap; `unpackedSize` reflects the total
+decompressed tar-stream byte count (headers, padding, and all entries), not
+just File-entry payloads.
 
 `runAudit` (`packages/core/src/audit.ts`) checks `extracted.truncated` on the
 tarball being scored and, if set, pushes a synthesized critical finding

@@ -323,10 +323,11 @@ Phase 26 Part A closes a **decompression-bomb** gap ADR-0037 didn't cover:
 ADR-0037 bounded compressed fetch bytes, not what happens after — a small
 `.tgz` within the fetch cap can still gzip-bomb into unbounded unpacked bytes
 or entry count. `extractTarball` (`packages/core/src/extract.ts`) now takes
-`maxUnpackedBytes`/`maxFileCount` caps (defaults 1 GiB / 100k), feeding the
-tarball into the `tar.Parser` in fixed-size slices and halting mid-stream the
-moment either cap is exceeded — never a throw, just a `truncated: true`
-result. `runAudit` synthesizes a critical `resource-abuse` finding
+`maxUnpackedBytes`/`maxFileCount` caps (defaults 1 GiB / 100k) and counts
+decompressed bytes at the gunzip boundary (an owned `node:zlib` decompression,
+not per-tar-entry) — over-cap sets `truncated: true` and calls
+`gunzip.destroy()` to halt decompression, catching bytes that never surface
+as a tar `entry` event. `runAudit` synthesizes a critical `resource-abuse` finding
 (category `resource`) on a truncated **current** tarball, hard-blocking under
 the default policy; a truncated baseline (diff mode) degrades the diff
 without itself blocking. Two new fail-closed, load-once-at-startup env vars,
