@@ -160,11 +160,10 @@ describe("generateBwrapArgs — $HOME-read-deny (Phase 25 Slice 2)", () => {
     // dir NOT under the real $HOME. cwd is ro-bound (as projectRoot) then must be rw-bound after.
     const opts = { homeDir: "/home/runner", cwd: "/tmp/bw-run/pkg", tmpDir: "/tmp", nodePrefix: "/usr/local", projectRoot: "/tmp/bw-run/pkg" };
     const args = generateBwrapArgs([], opts);
-    const roCwd = args.lastIndexOf("/tmp/bw-run/pkg"); // appears as --ro-bind-try then --bind-try; last is the rw one
-    const firstCwd = args.indexOf("/tmp/bw-run/pkg");
-    assert.ok(firstCwd !== -1 && roCwd > firstCwd, "cwd is bound twice: ro (read-allow) then rw (floor) — rw must be last so cwd is writable");
-    // The rw (last) occurrence is preceded by --bind-try, the ro (first) by --ro-bind-try.
-    assert.equal(args[firstCwd - 1], "--ro-bind-try", "first cwd bind is the ro read-allow (projectRoot)");
-    assert.equal(args[roCwd - 1], "--bind-try", "last cwd bind is the rw floor bind (writable wins)");
+    const roIdx = args.findIndex((a, i) => a === "--ro-bind-try" && args[i + 1] === "/tmp/bw-run/pkg");
+    const rwIdx = args.findIndex((a, i) => a === "--bind-try" && args[i + 1] === "/tmp/bw-run/pkg");
+    assert.ok(roIdx !== -1, "cwd is ro-bound as the projectRoot read-allow");
+    assert.ok(rwIdx !== -1, "cwd is also rw-bound by the write floor");
+    assert.ok(rwIdx > roIdx, "the rw cwd bind must come AFTER the ro projectRoot bind, so cwd stays writable");
   });
 });
