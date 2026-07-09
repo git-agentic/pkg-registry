@@ -112,11 +112,20 @@ describe("install --enforce (e2e): a propagating violation is reported and quara
     return { dir: join(proj, "node_modules", pkg), out };
   }
 
-  test("ENFORCED: the propagating ssh read is reported and quarantines the build", async () => {
-    // npm may roll back the dependency's extracted files when its postinstall exits non-zero, so
-    // we do NOT assert on `dir` (node_modules/<pkg>) still existing — only on the violation record
-    // (below), which the script-shell reports to the proxy before the non-zero code ever reaches npm.
+  test("ENFORCED: the propagating ssh read is contained; on Seatbelt it is also reported and quarantines the build", async () => {
     const { out } = await enforcedInstall("violation-fs-probe", true);
+
+    // Containment (BOTH backends): the planted credential read is blocked — the probe hits a
+    // permission/absent error on the .ssh path and never obtains the secret. On Seatbelt the deny
+    // yields EPERM; on bwrap the tmpfs mask empties ~/.ssh so the read fails ENOENT.
+    assert.match(out, /(EPERM|EACCES|ENOENT)[\s\S]*\.ssh/, `the sandbox must have blocked the credential read; npm+shim output:\n${out.slice(-1500)}`);
+    assert.ok(!out.includes("TOPSECRET-VIOLATION-KEY"), "the planted secret must never be obtained under the sandbox");
+
+    // Reporting + quarantine is Seatbelt-only. bwrap masks ~/.ssh via tmpfs → the read fails with
+    // ENOENT, which classifyViolation does not classify (the accepted Seatbelt/bwrap telemetry
+    // asymmetry — bwrap CONTAINS but does not REPORT credential reads; ADR-0023, Phase 25 Q5).
+    // Seatbelt's read-deny yields EPERM, which IS classified, recorded, and quarantined.
+    if (process.platform !== "darwin") return;
 
     const rep = await (await fetch(`${base}/-/audit/violation-fs-probe/1.0.0`)).json() as AuditReport;
     const integrity = rep.meta.integrity!;
@@ -125,9 +134,6 @@ describe("install --enforce (e2e): a propagating violation is reported and quara
     };
     const rec = listed.violations.find((v) => v.integrity === integrity);
     assert.ok(rec && rec.kind === "filesystem" && rec.quarantined, `a confirmed fs violation must be recorded + quarantined; npm+shim output:\n${out.slice(-1500)}`);
-    // Positive control: the recorded evidence carries the real sandboxed process's stderr (a
-    // non-zero exit + a permission-denial signature on the planted ssh path) — this rules out a
-    // vacuous pass where the postinstall never actually ran under the sandbox and got denied.
     assert.notEqual(rec!.evidence.exitCode, 0, "positive control: the sandboxed probe must have actually exited non-zero");
     assert.match(rec!.evidence.stderrExcerpt, /EPERM|EACCES/, "positive control: the denial must carry a real permission-error signature");
 
