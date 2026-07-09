@@ -1,5 +1,9 @@
 # Sentinel
 
+[![ci](https://github.com/git-agentic/pkg-registry/actions/workflows/ci.yml/badge.svg)](https://github.com/git-agentic/pkg-registry/actions/workflows/ci.yml)
+[![codeql](https://github.com/git-agentic/pkg-registry/actions/workflows/codeql.yml/badge.svg)](https://github.com/git-agentic/pkg-registry/actions/workflows/codeql.yml)
+[![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
+
 **An agent-auditable security layer for the npm ecosystem.** Phase 1 is a
 transparent **auditing proxy** that sits in front of `registry.npmjs.org`: it
 resolves and serves real packages unchanged, but intercepts every tarball,
@@ -22,6 +26,18 @@ so an AI agent or a human can see the risk *before install-time code runs*.
 See **[ARCHITECTURE.md](./ARCHITECTURE.md)** for the full design (proxy, sync-vs-async
 audit placement, data model, npm hooks, stack justification).
 
+## Status
+
+**Pre-1.0; built through Phase 25 (deny-by-default install sandbox).** The
+proxy, policy gate, sandbox (macOS Seatbelt / Linux bubblewrap), CLI, MCP
+server, and GitHub Action work end-to-end and are covered by the full test
+suite (Linux CI on Node 22 and 24; macOS Seatbelt enforcement is exercised
+on maintainers' machines) — but this has not yet been hardened by
+production use, and APIs may change without notice. **No npm packages are
+published yet**: build from source (Quickstart below). Threat model:
+[sentinel-threat-model.md](./sentinel-threat-model.md) · Homepage:
+[git-agentic.com/sentinel](https://git-agentic.com/sentinel)
+
 ---
 
 ## Quickstart
@@ -30,7 +46,7 @@ audit placement, data model, npm hooks, stack justification).
 npm install          # install workspace deps
 npm run build        # compile all packages (tsc --build)
 npm run fixtures     # pack the test fixtures into real .tgz tarballs
-npm test             # 308 tests: engine + end-to-end proxy (see CLAUDE.md for the exact/skip breakdown)
+npm test             # engine + end-to-end proxy — see CLAUDE.md for the current count and skip breakdown
 npm run demo         # self-contained malware-detection demo (no network)
 ```
 
@@ -684,9 +700,9 @@ composition analysis (SCA), not just malware detection.
 
 See [ADR-0035](./docs/adr/0035-known-vulnerability-sca.md).
 
-## Status
+## Phase log
 
-Phases 1–14 are built. Phase 1 is the transparent auditing proxy. Phase 2 adds the
+Phases 1–25 are built; see [CLAUDE.md](./CLAUDE.md) for the complete log. Phase 1 is the transparent auditing proxy. Phase 2 adds the
 install-time permission manifest + approval gate, signed per-enterprise policy, and
 the private-namespace registry. Phases 3–6 add cross-platform sandbox enforcement
 (macOS Seatbelt, Linux bubblewrap) up through `sentinel install --enforce`, which
@@ -733,6 +749,13 @@ Phase 21 adds known-advisory detection: a bundled, static corpus of
 publicly-documented known-malicious npm releases hard-blocks an exact
 version match by default, with an operator-supplied `SENTINEL_ADVISORIES`
 file merged in at proxy startup.
+Phase 22 adds known-vulnerability (semver-range CVE) detection over a bundled offline
+corpus. Phase 23 hardens the network trust boundary: outbound tarball fetches are
+pinned to allowlisted origins and packument tarball rewrites use a configured public
+base URL instead of trusting the Host header. Phase 24 adds resource robustness —
+fetch byte caps, audit-tree dedupe + a package cap, request coalescing, and an opt-in
+rate limiter. Phase 25 flips the sandbox to deny-by-default: writes and `$HOME` reads
+are denied unless a fixed floor or an approved capability grant re-opens them.
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full design and [docs/adr/](./docs/adr/)
 for the decision log.
 

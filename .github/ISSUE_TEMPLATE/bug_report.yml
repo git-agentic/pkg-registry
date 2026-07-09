@@ -1,0 +1,32 @@
+name: Bug report
+description: Something is broken (crash, wrong behavior, docs mismatch)
+labels: [needs-triage]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: Exact commands / config. If it involves the proxy, include the relevant SENTINEL_* env vars (redact secrets).
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      placeholder: main @ <sha>, Node 24.x, macOS/Linux
+    validations:
+      required: true
+  - type: markdown
+    attributes:
+      value: >
+        **Security vulnerabilities** (sandbox escape, gate bypass, auth
+        bypass): do not file an issue — use private vulnerability reporting
+        via the Security tab. See SECURITY.md.
