@@ -117,6 +117,20 @@ describe("SeatbeltSandbox enforcement", { skip: darwin ? false : "requires macOS
     assert.equal(r.exitCode, 0);
     assert.ok(r.stdout.includes("DEVOK"), "device writes must still work");
   });
+
+  test("a $HOME read outside the read-allow list is denied; the project tree + a build stay readable", () => {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "sb-read-")));
+    const proj = join(home, "app"); mkdirSync(join(proj, "node_modules", "dep"), { recursive: true });
+    writeFileSync(join(proj, "node_modules", "dep", "index.js"), "module.exports=1");
+    writeFileSync(join(home, "secret.txt"), "TOPSECRET");           // in $HOME, NOT in the allow list
+    const cwd = join(proj, "node_modules", "pkg"); mkdirSync(cwd, { recursive: true });
+    const r = new SeatbeltSandbox().run(
+      `node -e "require('${join(proj, "node_modules", "dep", "index.js")}'); process.stdout.write('DEP_OK'); try{require('fs').readFileSync('${join(home, "secret.txt")}');process.stdout.write('LEAK')}catch(e){process.stdout.write('READ_DENIED')}"`,
+      { cwd, approved: [], homeDir: home, projectRoot: proj },
+    );
+    assert.ok(r.stdout.includes("DEP_OK"), "the project tree must be readable (require resolves)");
+    assert.ok(r.stdout.includes("READ_DENIED") && !r.stdout.includes("LEAK"), "a non-allow-listed $HOME read must be denied");
+  });
 });
 
 describe("runLifecycleScripts", { skip: darwin ? false : "requires macOS sandbox-exec" }, () => {
