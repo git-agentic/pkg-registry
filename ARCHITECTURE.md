@@ -157,8 +157,20 @@ least-privilege on macOS and Linux: `generateProfile(approved, {homeDir})` emits
 deny-sensitive Seatbelt (SBPL) profile, each deny relaxed by an approved capability; the
 `SeatbeltSandbox` runs each lifecycle script under it via `sandbox-exec` (failing closed
 off-darwin). `sentinel run-scripts <dir>` ties it together and, on a loud failure, reports
-the detected-but-unapproved capabilities (inferred, best-effort). Children/native inherit
-the sandbox. Full `npm install --enforce` orchestration is deferred.
+the detected-but-unapproved capabilities (inferred, best-effort). A child process inherits
+the *filesystem/network* confinement of the sandbox — but see the enforcement-scope note
+below: the **spawn itself is not gated**. Full `npm install --enforce` orchestration is
+deferred.
+
+**Enforcement scope — `process`/`native` are advisory-only (not enforced).** The
+capability model exposes `process` and `native` as approvable kinds and the
+`capability-novelty` rule scores a newly-added `process` capability, but neither backend
+restricts process execution: the Seatbelt profile opens `(allow default)` with no
+`process-exec*` deny, and the bwrap argv adds no `--unshare-pid`/seccomp exec restriction.
+So an unapproved `child_process` spawn or native/WASM exec is **permitted** — the
+enforced surface is filesystem + network + env only. Whether to implement a real exec
+policy or formally keep these as scoring-only signal is tracked in
+[#8](https://github.com/git-agentic/pkg-registry/issues/8).
 
 **Enforced surface (Phase 3):** sensitive file reads + network egress. `SENSITIVE_PATHS`
 are deny-listed for reads; network is all-or-nothing (Seatbelt can't host-filter; per-host

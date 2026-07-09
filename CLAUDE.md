@@ -15,8 +15,12 @@ the install-time permission manifest + approval gate, signed per-enterprise poli
 private-namespace registry (packages scoped to claimed namespaces are served only from
 the private store).
 Phase 3 adds **`@sentinel/sandbox`** — a macOS Seatbelt / Linux bubblewrap runner, selected
-by `createSandbox()`, that enforces a package's approved capability manifest at install time
-(`sentinel run-scripts`). Synthetic malware fixtures are still scored-as-text and
+by `createSandbox()`, that enforces the **filesystem, network, and env** portions of a
+package's approved capability manifest at install time (`sentinel run-scripts`). Note: the
+`process` and `native` capability kinds are **detected and scored (advisory-only), not
+enforced** — neither backend restricts process execution, so a child process inherits the
+filesystem/network confinement but the act of spawning it is ungated (tracked in #8).
+Synthetic malware fixtures are still scored-as-text and
 **never executed**; enforcement is tested with benign probe packages.
 Phase 4 hardened the sandbox: fail-closed env-var scrubbing via an `env` capability
 (`--approve env:NAME`) + `file-write*` denies on credential/persistence paths.
