@@ -147,4 +147,16 @@ describe("generateProfile — write-deny (Phase 25)", () => {
   test("pure — same inputs, identical profile", () => {
     assert.equal(generateProfile([], OPTS), generateProfile([], OPTS));
   });
+  test("a '..' filesystem target does NOT become a write Grant (fail-closed escape guard)", () => {
+    const approved: Capability[] = [{ kind: "filesystem", target: "..", evidence: [] }];
+    const p = generateProfile(approved, OPTS);
+    const allowLine = p.split("\n").find((l) => l.startsWith("(allow file-write*"))!;
+    assert.ok(!allowLine.includes(`"/Users/x/.."`), "the parent-of-home escape must not be granted");
+  });
+  test("a bare '/' filesystem target does NOT become a write Grant (fail-closed escape guard)", () => {
+    const approved: Capability[] = [{ kind: "filesystem", target: "/", evidence: [] }];
+    const p = generateProfile(approved, OPTS);
+    const allowLine = p.split("\n").find((l) => l.startsWith("(allow file-write*"))!;
+    assert.ok(!allowLine.includes(`(subpath "/")`), "bare root must not be granted");
+  });
 });

@@ -41,6 +41,15 @@ A bare-relative approved `filesystem:` target (e.g. `.config/app`, no leading
 emitted as a positive write Grant, the same as an explicit `~/`-prefixed
 target — an absolute target is left unchanged.
 
+Because a Grant now emits a *positive* write allow rather than merely
+cancelling a deny, a broad or pathological operator-supplied target is broadly
+writable — so grant targets are guarded (`isSafeGrantTarget` in
+`deny-set.ts`, applied only to the Grant emission in both generators, never to
+read-deny coverage): an empty/`*` target, a bare root `/`, or any target
+containing a `..` segment is fail-closed rejected (the grant is dropped, so
+the write stays denied) instead of becoming `(subpath "/")` or an
+escape-the-home writable bind.
+
 ## Consequences
 
 - Persistence/tamper writes (shell rc, LaunchAgents, systemd units, any

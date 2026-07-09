@@ -1,6 +1,6 @@
 import { sensitivePathsFor, type Capability } from "@sentinel/core";
 import { pathCovers } from "./path-cover.js";
-import { canonicalizeMacPath, expandHome } from "./deny-set.js";
+import { canonicalizeMacPath, expandHome, isSafeGrantTarget } from "./deny-set.js";
 import { writeAllowFloor } from "./write-floor.js";
 
 /**
@@ -39,7 +39,7 @@ export function generateProfile(
   // fake $HOME lives under os.tmpdir(), which is in the floor).
   lines.push("(deny file-write*)");
   const floor = writeAllowFloor({ cwd: opts.cwd, tmpDir: opts.tmpDir }).map(canon);
-  const grants = approvedFs.map(canon);
+  const grants = approvedFs.filter(isSafeGrantTarget).map(canon);
   const allowItems = [...floor, ...grants].map((p) => `(subpath "${p}")`).join(" ");
   lines.push(`(allow file-write* ${allowItems})`);
   for (const sp of sensitivePathsFor("darwin")) {

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import type { Capability } from "@sentinel/core";
-import { computeDenySet } from "../src/deny-set.js";
+import { computeDenySet, isSafeGrantTarget } from "../src/deny-set.js";
 import { generateProfile } from "../src/profile.js";
 
 const HOME = "/Users/test";
@@ -37,5 +37,25 @@ describe("computeDenySet", () => {
     for (const p of ds.deniedPaths) {
       assert.ok(profile.includes(p), `profile must deny ${p} (deny-set/profile drift)`);
     }
+  });
+});
+
+describe("isSafeGrantTarget", () => {
+  test("safe targets are allowed", () => {
+    assert.ok(isSafeGrantTarget(".zshrc"));
+    assert.ok(isSafeGrantTarget(".config/app"));
+    assert.ok(isSafeGrantTarget("/home/x/ok"));
+  });
+
+  test("empty, wildcard, and bare-root targets are rejected", () => {
+    assert.ok(!isSafeGrantTarget(""));
+    assert.ok(!isSafeGrantTarget("*"));
+    assert.ok(!isSafeGrantTarget("/"));
+  });
+
+  test("any '..' path-traversal segment is rejected", () => {
+    assert.ok(!isSafeGrantTarget(".."));
+    assert.ok(!isSafeGrantTarget("../escape"));
+    assert.ok(!isSafeGrantTarget("a/../b"));
   });
 });

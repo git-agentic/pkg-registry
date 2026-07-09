@@ -24,6 +24,18 @@ export function expandHome(p: string, homeDir: string): string {
 }
 
 /**
+ * Guard a positive write Grant target (Phase 25, ADR-0038). Under deny-by-default an
+ * approved `filesystem:` target becomes a positive allow, so a pathological target
+ * would widen the writable set far beyond intent. Reject the escape/everything cases
+ * fail-closed (drop the grant → the write stays denied): an empty/`*` target, a bare
+ * root `/`, or any target containing a `..` path-traversal segment.
+ */
+export function isSafeGrantTarget(target: string): boolean {
+  if (!target || target === "*" || target === "/") return false;
+  return !target.split("/").includes("..");
+}
+
+/**
  * macOS firmlinks: sandbox-exec matches the canonical /private path, not the alias.
  * /etc, /var, /tmp are firmlinks to /private/etc, /private/var, /private/tmp.
  * Pure mapping (no fs calls) — these roots are stable macOS facts.

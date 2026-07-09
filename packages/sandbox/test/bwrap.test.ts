@@ -88,4 +88,16 @@ describe("generateBwrapArgs — write-deny (Phase 25)", () => {
     assert.ok(!rwSources.includes("/dev"), "host /dev must not be rw-bound over the isolated devtmpfs");
     assert.ok(args.includes("--dev"), "the isolated --dev /dev mount is still present");
   });
+  test("a '..' filesystem target is NOT rw-bound (fail-closed escape guard)", () => {
+    const approved: Capability[] = [{ kind: "filesystem", target: "..", evidence: [] }];
+    const args = generateBwrapArgs(approved, OPTS2);
+    const rw = [...binds(args, "--bind"), ...binds(args, "--bind-try")];
+    assert.ok(!rw.includes("/home/x/.."), "the parent-of-home escape must not be rw-bound");
+  });
+  test("a bare '/' filesystem target is NOT rw-bound beyond the read-only root (fail-closed escape guard)", () => {
+    const approved: Capability[] = [{ kind: "filesystem", target: "/", evidence: [] }];
+    const args = generateBwrapArgs(approved, OPTS2);
+    const rw = [...binds(args, "--bind"), ...binds(args, "--bind-try")];
+    assert.ok(!rw.includes("/"), "bare root must not be granted rw");
+  });
 });
