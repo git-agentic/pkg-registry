@@ -789,6 +789,55 @@ rule is a pure function of `(name, version, advisories)`, so it fits the
 existing rule pipeline with no new branch in `score()` — see
 [ADR-0034](./docs/adr/0034-known-advisory-detection.md).
 
+### 3.21 Known-vulnerability (SCA) detection (Phase 22, ADR-0035)
+
+ADR-0034 deliberately scoped `known-advisory` to exact-match known-malicious
+releases, deferring version-range CVE matching. Phase 22 closes that gap:
+
+- **`packages/core/src/vuln-corpus.ts`** — a bundled, static, offline corpus
+  (`KNOWN_VULNERABILITIES: readonly VulnAdvisory[]`) of real, publicly
+  documented npm CVEs (`lodash` ×2, `minimist`, `axios`, `node-fetch`, `ws`),
+  each an affected semver `ranges` array plus CVSS-derived `severity`, an
+  advisory `id`, and optional `fixedIn`/`reference` — metadata only, never
+  fetched at audit time (invariant #3). `buildVulnIndex` builds a `name →
+  VulnAdvisory[]` lookup once; `parseVulnAdvisories`/
+  `parseVulnAdvisoriesStrict` mirror ADR-0034's coerce-then-total /
+  coerce-then-throw parser split for operator-supplied vulnerabilities.
+- **`known-vulnerability` — a pure rule** (`packages/core/src/rules/
+  known-vulnerability.ts`, registered in `RULES`; rule count is now **9**).
+  Checks the bundled corpus **union** any operator-supplied
+  `input.vulnerabilities` for any advisory whose `ranges` the audited
+  version satisfies (`semver.satisfies`, total — never throws on a
+  malformed range/version, simply matches nothing). Each match emits one
+  `vulnerability`-category finding at the advisory's own **faithful**
+  severity — a `critical` CVE hard-blocks under the default policy exactly
+  like any other critical finding, with no new field in `score.ts`.
+- **A new `vulnerability` category**, alongside `metadata`/`network`/
+  `secret-exfil`/`install-script`/`obfuscation`/`provenance`.
+- **`SENTINEL_VULNERABILITIES` (proxy)** — an optional path to a JSON
+  `VulnAdvisory[]` file, read **once at process startup**
+  (`resolveVulnerabilities` in `packages/proxy/src/index.ts`), fail-closed
+  like `SENTINEL_ADVISORIES` (FATAL exit on an unreadable path, and FATAL on
+  a corrupt non-JSON/non-array file via the strict parser — a legitimate
+  empty `[]` boots bundled-only). Threaded into the public install audit
+  path (`AuditInput.vulnerabilities`) alongside the bundled corpus; unset ⇒
+  bundled-only, unchanged behavior. Never re-read per audit.
+- **A tree `vulnerabilities` count** — `TreeAggregate.vulnerabilities` (and
+  per-row `TreePackageRow.vulnerabilities`) counts packages in an audited
+  lockfile carrying at least one `known-vulnerability` finding, surfacing
+  SCA exposure across `audit-tree`'s whole dependency graph.
+- A `known-vulnerability` entry in `REMEDIATIONS` (§3.17/ADR-0031) plus a
+  `vulnerability` `CATEGORY_FALLBACK` entry.
+- Adds `semver` (^7.x) as a `@sentinel/core` runtime dependency — the first
+  real semver-range parser in the corpus/rule family.
+
+Faithful severity is a deliberate gating stance (diverges from `npm audit`'s
+report-don't-block default): tunable via the existing `hardBlockSeverity`/
+`allow`/rule-disable/`treeGate` levers, not a new policy field. Determinism
+is unchanged: the corpus is static and `semver.satisfies` is a pure, total
+function, so the rule fits the existing pipeline with no new branch in
+`score()` — see [ADR-0035](./docs/adr/0035-known-vulnerability-sca.md).
+
 ---
 
 ## 4. The audit engine (`@sentinel/core`)
@@ -847,6 +896,14 @@ Phase 21 adds an eighth rule (§3.20, ADR-0034):
    publicly-documented known-malicious npm releases, unioned with any
    operator-supplied `SENTINEL_ADVISORIES`. `critical` by default —
    hard-blocks under the default policy.
+
+Phase 22 adds a ninth rule (§3.21, ADR-0035):
+
+9. **`known-vulnerability`** (`vulnerability` category) — flags a version
+   falling in a semver range from a bundled static CVE corpus, unioned with
+   any operator-supplied `SENTINEL_VULNERABILITIES`, at the advisory's
+   faithful severity (a `critical` CVE hard-blocks under the default
+   policy).
 
 Rules are registered in a list, so adding a rule (typosquat detection, license
 risk, provenance) is additive and never touches scoring or the proxy.
