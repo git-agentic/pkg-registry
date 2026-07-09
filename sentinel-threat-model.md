@@ -257,6 +257,17 @@ allowlist, so an escaped-detection script still does not see
 runtime violation revokes any standing approval and quarantines the integrity
 at serve time (ADR-0023).
 
+**Enforcement scope — process execution is NOT restricted.** The sandbox's
+deny-by-default posture covers filesystem, network, and env only. Process
+execution is not gated: a script may spawn arbitrary child processes and
+execute native/WASM code. The `process` and `native` capability kinds are
+detected and fed to scoring (advisory signal), but neither backend enforces
+them — a spawned child *inherits* the filesystem/network confinement, yet the
+spawn itself is unrestricted. Containment therefore rests on the
+filesystem/network/env boundary, not on preventing execution. See the
+accepted-limitations note below; the enforce-or-formally-downgrade decision is
+tracked in [issue #8](https://github.com/git-agentic/pkg-registry/issues/8).
+
 ## 4. Accepted limitations
 
 Stated plainly. Each is a deliberate, recorded trade-off, not an oversight.
@@ -267,6 +278,15 @@ Stated plainly. Each is a deliberate, recorded trade-off, not an oversight.
   build script trips `install-scripts`). Sentinel's stance is
   defense-in-depth — score, gate, sandbox — not a guarantee that a scored
   `allow` is safe (ADR-0001/0002/0008).
+- **The sandbox does not restrict process execution.** Deny-by-default covers
+  filesystem, network, and env — not exec. A lifecycle script may spawn child
+  processes and run native/WASM code; the `process`/`native` capability kinds
+  are advisory scoring signal, not an enforced gate (see §3.9). A child
+  inherits the filesystem/network confinement, so this widens the blast
+  *surface* within that boundary rather than breaching it — but a package that
+  needs no filesystem/network capability beyond the floor can still execute
+  arbitrary local computation. Enforce-or-formally-downgrade is tracked in
+  [issue #8](https://github.com/git-agentic/pkg-registry/issues/8).
 - **A swallowed denial evades telemetry, not containment.** The runtime
   violation sensor only sees denials that surface as process failure. A
   script that catches the sandbox's denial and exits 0 is invisible to
