@@ -41,6 +41,7 @@ import { ApprovalRequestStore } from "./approval-requests.js";
 import { makeAuthz } from "./authz.js";
 import { isLoopbackHost } from "./net-config.js";
 import type { HistoryDb } from "./history-db.js";
+import type { RateLimiter } from "./rate-limit.js";
 
 export type ProxyPolicy = "observe" | "block";
 
@@ -80,6 +81,8 @@ export interface ServerOptions {
   publicBaseUrl?: string;
   /** Max distinct packages per audit-tree request (ADR-0037). Undefined ⇒ 5000. */
   maxTreePackages?: number;
+  /** Opt-in per-source rate limiter for expensive open endpoints (ADR-0037). Undefined ⇒ unlimited. */
+  rateLimiter?: RateLimiter;
 }
 
 const TARBALL_RE = /^(.+)\/-\/([^/]+\.tgz)$/;
@@ -143,6 +146,17 @@ export function createServer(opts: ServerOptions) {
   const jsonSmall = express.json({ limit: "1mb" });
   app.use((req, res, next) => (req.method === "PUT" ? next() : jsonSmall(req, res, next)));
   const jsonPublish = express.json({ limit: "64mb" });
+
+  const rateLimiter = opts.rateLimiter;
+  const rateGate: express.RequestHandler = rateLimiter
+    ? (req, res, next) => {
+        const key = req.socket.remoteAddress ?? "unknown";
+        const { allowed, retryAfterSec } = rateLimiter.check(key);
+        if (allowed) return next();
+        res.setHeader("Retry-After", String(retryAfterSec));
+        return res.status(429).json({ error: "rate limit exceeded — retry later or raise SENTINEL_RATE_LIMIT_RPM" });
+      }
+    : (_req, _res, next) => next();
 
   // Transient concurrency dedupe: concurrent uncached public audits for the same
   // name@version share one pipeline. The integrity-keyed `store` stays the durable
@@ -313,7 +327,7 @@ export function createServer(opts: ServerOptions) {
 
   // Explain a verdict + suggest remediation + walk back to the last known-good release.
   // Off the inline gate (invariant #3) — this route is expected to be slower.
-  app.get(/^\/-\/explain\/(.+)\/([^/]+)$/, async (req, res) => {
+  app.get(/^\/-\/explain\/(.+)\/([^/]+)$/, rateGate, async (req, res) => {
     const pkg = decodeURIComponent(req.params[0] ?? "");
     const version = req.params[1] ?? "";
     try {
@@ -365,7 +379,7 @@ export function createServer(opts: ServerOptions) {
   // stored audit history via score()'s determinism (invariant #1) — never applied,
   // stored, or signed. Requires a HistoryDb; 501 otherwise (same contract as the rest
   // of this observability block).
-  app.post("/-/policy/preview", (req, res) => {
+  app.post("/-/policy/preview", rateGate, (req, res) => {
     if (!history) return disabled(res);
     let candidate: EnterprisePolicy;
     try {
@@ -403,7 +417,7 @@ export function createServer(opts: ServerOptions) {
 
   // Whole-tree audit: fan out over the integrity-cached auditVersion path and
   // roll up a policy-gated aggregate (ADR-0020). Batch endpoint, not the gate path.
-  app.post("/-/audit-tree", async (req, res) => {
+  app.post("/-/audit-tree", rateGate, async (req, res) => {
     const body = req.body as { packages?: unknown; failOnError?: unknown };
     if (!body || !Array.isArray(body.packages)) {
       return res.status(400).json({ error: "expected { packages: [{ name, version, integrity? }] }" });
