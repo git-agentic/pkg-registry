@@ -88,7 +88,7 @@ read-allow list (node prefix, project root, build caches); `SENSITIVE_PATHS`
 carve-outs re-deny credential and persistence paths even under an allowed
 ancestor (ADR-0038). The child's environment is scrubbed to a fail-closed
 allowlist plus explicitly approved `env` capabilities, dropping
-operator-shell secrets (ADR-0017).
+operator-shell secrets (ADR-0017/0019).
 
 **(d) control plane ↔ roles.** The six mutating routes — approvals
 (create/delete), violation report/delete, approval requests, and publish —
@@ -253,7 +253,7 @@ credential/persistence paths even under an allowed ancestor. Network is
 all-or-nothing per approval (Seatbelt cannot host-filter; per-host fidelity
 lives on the proxy) (ADR-0016/0018). The environment is scrubbed to an
 allowlist, so an escaped-detection script still does not see
-`SSH_AUTH_SOCK`, `AWS_*`, or `NODE_AUTH_TOKEN` (ADR-0017). A confirmed
+`SSH_AUTH_SOCK`, `AWS_*`, or `NODE_AUTH_TOKEN` (ADR-0017/0019). A confirmed
 runtime violation revokes any standing approval and quarantines the integrity
 at serve time (ADR-0023).
 

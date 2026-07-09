@@ -31,7 +31,8 @@ audit placement, data model, npm hooks, stack justification).
 **Pre-1.0; built through Phase 25 (deny-by-default install sandbox).** The
 proxy, policy gate, sandbox (macOS Seatbelt / Linux bubblewrap), CLI, MCP
 server, and GitHub Action work end-to-end and are covered by the full test
-suite on macOS and Linux CI — but this has not yet been hardened by
+suite (Linux CI on Node 22 and 24; macOS Seatbelt enforcement is exercised
+on maintainers' machines) — but this has not yet been hardened by
 production use, and APIs may change without notice. **No npm packages are
 published yet**: build from source (Quickstart below). Threat model:
 [sentinel-threat-model.md](./sentinel-threat-model.md) · Homepage:
