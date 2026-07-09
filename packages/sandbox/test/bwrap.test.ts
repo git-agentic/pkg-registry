@@ -143,4 +143,16 @@ describe("generateBwrapArgs — $HOME-read-deny (Phase 25 Slice 2)", () => {
     assert.ok(!ro.includes("/home/x"), "the guard must drop $HOME itself from the ro read-allow binds");
     assert.ok(binds(args, "--tmpfs").includes("/home/x"), "the --tmpfs $HOME mask is still present");
   });
+  test("$HOME under tmpDir: the tmpDir rw bind precedes the $HOME tmpfs so the tmpfs wins (containment preserved)", () => {
+    // A hermetic test's fake $HOME lives under os.tmpdir(), which the floor binds rw. If that
+    // tmpDir bind came AFTER `--tmpfs $HOME` it would overmount and re-expose $HOME's contents.
+    const opts = { homeDir: "/tmp/build/h", cwd: "/tmp/build/h/app/node_modules/pkg", tmpDir: "/tmp/build", nodePrefix: "/usr/local", projectRoot: "/tmp/build/h/app" };
+    const args = generateBwrapArgs([], opts);
+    const tmpDirBind = args.indexOf("/tmp/build");   // --bind-try <tmpDir> (non-home floor, before the tmpfs)
+    const tmpfsHome = args.indexOf("/tmp/build/h");  // --tmpfs <home>
+    assert.ok(tmpDirBind !== -1 && tmpfsHome !== -1, "both the tmpDir rw bind and the $HOME tmpfs are present");
+    assert.ok(tmpDirBind < tmpfsHome, "the tmpDir rw bind must come BEFORE --tmpfs $HOME so the tmpfs wins for the home subtree");
+    // cwd (under $HOME) is re-bound rw AFTER the tmpfs, so it stays writable.
+    assert.ok(args.indexOf("/tmp/build/h/app/node_modules/pkg") > tmpfsHome, "cwd is re-bound rw after the tmpfs");
+  });
 });

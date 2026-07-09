@@ -145,9 +145,10 @@ describe("BubblewrapSandbox enforcement", { skip }, () => {
       `node -e "require('${join(proj, "node_modules", "dep", "index.js")}'); process.stdout.write('DEP_OK'); try{require('fs').readFileSync('${join(home, "secret.txt")}');process.stdout.write('LEAK')}catch(e){process.stdout.write('READ_DENIED')}"`,
       { cwd, approved: [], homeDir: home, projectRoot: proj },
     );
-    assert.ok(r.stdout.includes("DEP_OK"), "the project tree must be readable");
+    const diag = ` [stdout=${JSON.stringify(r.stdout)} stderr=${JSON.stringify(r.stderr.slice(-400))}]`;
+    assert.ok(r.stdout.includes("DEP_OK"), "the project tree must be readable" + diag);
     // Containment only — bwrap tmpfs → ENOENT, which classifyViolation does not classify
     // (the accepted Seatbelt/bwrap telemetry asymmetry; report is Seatbelt-only, ADR-0023).
-    assert.ok(r.stdout.includes("READ_DENIED") && !r.stdout.includes("LEAK"), "the non-allow-listed $HOME read must be contained");
+    assert.ok(r.stdout.includes("READ_DENIED") && !r.stdout.includes("LEAK"), "the non-allow-listed $HOME read must be contained" + diag);
   });
 });

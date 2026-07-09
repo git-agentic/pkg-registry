@@ -23,26 +23,34 @@ export function generateBwrapArgs(
   const hasNetwork = approved.some((c) => c.kind === "network");
   const exists = opts.pathExists ?? (() => true);
 
+  const home = opts.homeDir;
+  const underHome = (p: string) => p === home || p.startsWith(home + "/");
+
   const args = ["--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc"];
 
-  // Slice 2 reads: empty $HOME (deny its reads), then re-expose the read-allow list ro.
-  args.push("--tmpfs", opts.homeDir);
-  for (const ro of readAllowList({ nodePrefix: opts.nodePrefix, projectRoot: opts.projectRoot })) {
-    const target = expandHome(ro, opts.homeDir);
-    // Guard: never re-open $HOME itself or an ancestor of $HOME (e.g. a projectRoot
-    // that resolved to $HOME) — that would nullify the Slice 2 `--tmpfs $HOME` above.
-    if (target === opts.homeDir || opts.homeDir.startsWith(target + "/")) continue;
-    args.push("--ro-bind-try", target, target); // -try: node-gyp/cache dirs may be absent
-  }
-
-  // Slice 1 writes: re-bind the write floor + Grants READ-WRITE on top (narrow wins over
-  // the broad ro project bind above; `--dev /dev` already provides an isolated writable /dev,
-  // so drop host /dev from the rw binds — re-binding it would re-expose the host device tree).
-  const floor = writeAllowFloor({ cwd: opts.cwd, tmpDir: opts.tmpDir });
-  const rw = [...floor, ...approvedFs.filter(isSafeGrantTarget)]
-    .map((p) => expandHome(p, opts.homeDir))
+  // Slice 1 rw set (write floor + guarded Grants), expanded; host /dev excluded (`--dev /dev`
+  // already provides an isolated writable /dev — re-binding host /dev re-exposes the device tree).
+  const rw = [...writeAllowFloor({ cwd: opts.cwd, tmpDir: opts.tmpDir }), ...approvedFs.filter(isSafeGrantTarget)]
+    .map((p) => expandHome(p, home))
     .filter((p) => p !== "/dev");
-  for (const p of rw) args.push("--bind-try", p, p);
+  // Slice 2 read-allow, expanded; guard against re-opening $HOME itself or an ancestor
+  // (e.g. a projectRoot that resolved to $HOME) — that would nullify the `--tmpfs $HOME`.
+  const ro = readAllowList({ nodePrefix: opts.nodePrefix, projectRoot: opts.projectRoot })
+    .map((p) => expandHome(p, home))
+    .filter((p) => p !== home && !home.startsWith(p + "/"));
+
+  // 1. rw floor entries NOT under $HOME (e.g. os.tmpdir() / `/tmp`) are bound BEFORE the $HOME
+  //    tmpfs. This is load-bearing: if $HOME happens to sit under tmpDir (a hermetic test's fake
+  //    home lives under os.tmpdir()), binding tmpDir AFTER the tmpfs would overmount it and
+  //    re-expose $HOME. Binding it first lets the tmpfs win for the home subtree.
+  for (const p of rw.filter((p) => !underHome(p))) args.push("--bind-try", p, p);
+  // 2. Slice 2: empty $HOME → deny its reads (wins over any broad bind above that contains it).
+  args.push("--tmpfs", home);
+  // 3. read-allow re-exposed READ-ONLY inside the fresh $HOME (project root, node prefix, caches).
+  for (const p of ro) args.push("--ro-bind-try", p, p);
+  // 4. rw floor entries UNDER $HOME (cwd, ~/.node-gyp, ~/.cache/node-gyp, ~/.npm/_logs, home Grants)
+  //    re-bound READ-WRITE on top — the narrow rw cwd bind wins over the broad ro project bind.
+  for (const p of rw.filter(underHome)) args.push("--bind-try", p, p);
 
   // SENSITIVE masks — carve-outs applied last (a bwrap tmpfs / ro-bind-devnull mask denies
   // read AND write). Skip an absent mount point (bwrap can't create it under a ro parent).
