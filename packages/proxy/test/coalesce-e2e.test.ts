@@ -60,4 +60,25 @@ describe("request coalescing (ADR-0037)", () => {
       assert.equal(new Set(reports.map((r) => r.verdict)).size, 1, "all requests see the same verdict");
     } finally { server.close(); }
   });
+
+  test("a failed coalesced audit clears its in-flight entry so a retry succeeds", async () => {
+    class FailOnceUpstream extends LocalFixtureUpstream {
+      calls = 0;
+      async getTarball(pkg: string, version: string) {
+        this.calls++;
+        if (this.calls === 1) throw new Error("transient upstream failure");
+        return super.getTarball(pkg, version);
+      }
+    }
+    const up = new FailOnceUpstream(FIXTURES);
+    const { server, base } = await boot(up);
+    try {
+      // First request fails (upstream threw) — must not poison the coalescing map.
+      const first = await fetch(`${base}/-/audit/leftpad-lite/1.0.0`);
+      assert.notEqual(first.status, 200);
+      // Second request for the same coordinate must succeed (entry was cleared on settle).
+      const second = await fetch(`${base}/-/audit/leftpad-lite/1.0.0`);
+      assert.equal(second.status, 200);
+    } finally { server.close(); }
+  });
 });
