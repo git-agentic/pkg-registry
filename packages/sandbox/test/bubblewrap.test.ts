@@ -182,6 +182,23 @@ describe("BubblewrapSandbox enforcement", { skip }, () => {
     assert.ok(readFileSync(out, "utf8").includes("curl"), "an approved process:curl must run");
   });
 
+  test("a PATH-form Grant (process:/usr/bin/curl) lifts the carve-out on merged-usr (issue #21)", () => {
+    // ubuntu-latest is merged-usr (/bin -> /usr/bin): before the #21 fix, the
+    // ungranted /bin/curl sibling resolved back to /usr/bin/curl and re-masked it.
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "bw-exec-pathgrant-")));
+    const proj = join(home, "proj"); mkdirSync(proj);
+    const out = join(proj, "curl-out.txt");
+    const approved: Capability[] = [{ kind: "process", target: "/usr/bin/curl", evidence: [] }];
+    new BubblewrapSandbox().run(`/usr/bin/curl --version > "${out}"`,
+      { cwd: proj, approved, homeDir: home, projectRoot: proj });
+    assert.ok(readFileSync(out, "utf8").includes("curl"), "a path-form process Grant must lift the merged-usr carve-out");
+
+    // The symlinked invocation form must work under the same grant too:
+    new BubblewrapSandbox().run(`/bin/curl --version > "${out}"`,
+      { cwd: proj, approved, homeDir: home, projectRoot: proj });
+    assert.ok(readFileSync(out, "utf8").includes("curl"), "the /bin symlink invocation form must run under the same grant");
+  });
+
   test("a denied curl exec surfaces a confirmed process violation", () => {
     const home = realpathSync(mkdtempSync(join(tmpdir(), "bw-exec-viol-")));
     const proj = join(home, "proj"); mkdirSync(proj);

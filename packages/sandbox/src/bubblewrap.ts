@@ -118,6 +118,7 @@ export class BubblewrapSandbox implements Sandbox {
       homeDir: opts.homeDir, platform: "linux",
       nodePrefix, projectRoot, cwd: opts.cwd, tmpDir: tmpdir(),
       landlockFloor: useLandlock,
+      realpath: safeRealpath,
     });
     const violation = classifyViolation(result, denySet);
     return violation ? { ...result, violation } : result;
