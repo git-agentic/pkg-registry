@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { existsSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { dirname, join, sep } from "node:path";
 import { generateBwrapArgs } from "./bwrap.js";
 import type { Sandbox, SandboxResult } from "./types.js";
 import type { Capability } from "@sentinel/core";
@@ -13,9 +14,22 @@ import { linuxExecFloor } from "./exec-floor.js";
 /** bwrap's own errors when the kernel refuses unprivileged user namespaces (Ubuntu 24.04 AppArmor, etc.). */
 const NS_FAILURE = /Creating new namespace failed|No permissions to create new namespace|setting up uid map/i;
 
-/** Path to the compiled Landlock helper, a sibling of this module in dist/. */
+/**
+ * Path to the compiled Landlock helper. `build-native.mjs` writes it ONLY to
+ * `packages/sandbox/dist/landlock-exec` — never beside `src/`. In production
+ * (`tsc --build`) this module itself runs from `dist/bubblewrap.js`, so the
+ * helper is a same-dir sibling. Under the test suite (`node --import tsx
+ * --test`) this module runs straight from `src/bubblewrap.ts` — `import.meta.url`
+ * points at `src/`, not `dist/` — so a naive `./landlock-exec` sibling lookup
+ * would silently miss the built helper and fall through to the (wrong, for a
+ * built-helper CI run) advisory path. Detect which directory we're executing
+ * from and always resolve into the package's `dist/`.
+ */
 function landlockHelperPath(): string {
-  return fileURLToPath(new URL("./landlock-exec", import.meta.url));
+  const here = fileURLToPath(import.meta.url);
+  const dir = dirname(here);
+  const distDir = dir.endsWith(`${sep}dist`) ? dir : join(dir, "..", "dist");
+  return join(distDir, "landlock-exec");
 }
 
 let landlockActiveCache: boolean | undefined;
