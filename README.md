@@ -28,12 +28,13 @@ audit placement, data model, npm hooks, stack justification).
 
 ## Status
 
-**Pre-1.0; built through Phase 25 (deny-by-default install sandbox).** The
-proxy, policy gate, sandbox (macOS Seatbelt / Linux bubblewrap), CLI, MCP
-server, and GitHub Action work end-to-end and are covered by the full test
-suite (Linux CI on Node 22 and 24; macOS Seatbelt enforcement is exercised
-on maintainers' machines) — but this has not yet been hardened by
-production use, and APIs may change without notice. **No npm packages are
+**Pre-1.0.** The auditing proxy, policy gate, deny-by-default install sandbox
+(macOS Seatbelt / Linux bubblewrap), CLI, MCP server, and GitHub Action work
+end-to-end and are covered by the full test suite (Linux CI on Node 22 and 24;
+macOS Seatbelt enforcement is exercised on maintainers' machines) — but this
+has not yet been hardened by production use, and APIs may change without
+notice. The complete phase-by-phase build log lives in
+[docs/adr/](./docs/adr/) (one ADR per phase). **No npm packages are
 published yet**: build from source (Quickstart below). Threat model:
 [sentinel-threat-model.md](./sentinel-threat-model.md) · Homepage:
 [git-agentic.com/sentinel](https://git-agentic.com/sentinel)
@@ -705,7 +706,7 @@ See [ADR-0035](./docs/adr/0035-known-vulnerability-sca.md).
 
 ## Phase log
 
-Phases 1–25 are built; see [CLAUDE.md](./CLAUDE.md) for the complete log. Phase 1 is the transparent auditing proxy. Phase 2 adds the
+The complete phase-by-phase log lives in [CLAUDE.md](./CLAUDE.md) and [docs/adr/](./docs/adr/); highlights: Phase 1 is the transparent auditing proxy. Phase 2 adds the
 install-time permission manifest + approval gate, signed per-enterprise policy, and
 the private-namespace registry. Phases 3–6 add cross-platform sandbox enforcement
 (macOS Seatbelt, Linux bubblewrap) up through `sentinel install --enforce`, which
