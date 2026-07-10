@@ -118,6 +118,8 @@ node packages/cli/dist/index.js install lodash
 | `SENTINEL_MAX_PACKUMENT_BYTES` | `128 MB` | byte cap on a single packument or attestation fetch; over-cap ⇒ 502 (attestations ⇒ null, fail-open) |
 | `SENTINEL_MAX_TREE_PACKAGES` | `5000` | cap on distinct `name@version` coordinates in a single `/-/audit-tree` request; over-cap ⇒ 413, no silent truncation |
 | `SENTINEL_RATE_LIMIT_RPM` | _(unset ⇒ disabled)_ | requests-per-minute token-bucket cap, keyed by socket remote address, applied to `POST /-/audit-tree`, `GET /-/explain/*`, and `POST /-/policy/preview`; over-limit ⇒ 429 + `Retry-After`. Install-gate paths are never limited |
+| `SENTINEL_MAX_UNPACKED_BYTES` | `1 GiB` | cap on total decompressed bytes when extracting a tarball's contents; over-cap aborts extraction mid-stream and the current tarball's audit gets a critical `resource-abuse` finding (BLOCK) |
+| `SENTINEL_MAX_FILE_COUNT` | `100000` | cap on the number of files unpacked from a tarball; over-cap aborts extraction mid-stream the same way as the byte cap |
 
 ## CLI
 

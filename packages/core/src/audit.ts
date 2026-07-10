@@ -91,6 +91,8 @@ export interface AuditTarballInput {
   advisories?: Advisory[];
   /** Operator-supplied known vulnerabilities, merged with the bundled corpus (Phase 22). */
   vulnerabilities?: VulnAdvisory[];
+  /** Decompression-bomb caps for extraction (ADR-0039). Undefined ⇒ core defaults. */
+  extractLimits?: { maxUnpackedBytes?: number; maxFileCount?: number };
 }
 
 /** Extract + diff + run rules + capabilities → policy-independent {@link Audit}. */
@@ -98,15 +100,16 @@ export async function runAudit(input: AuditTarballInput): Promise<Audit> {
   const started = Date.now();
   const mode: "full" | "diff" = input.baselineTarball ? "diff" : "full";
 
+  const limits = input.extractLimits;
   let baseline: Map<string, string> | undefined;
   let baselineCapabilities: Capability[] | undefined;
   if (input.baselineTarball) {
-    const prev = await extractTarball(input.baselineTarball);
+    const prev = await extractTarball(input.baselineTarball, undefined, limits);
     baseline = baselineFrom(prev.files);
     baselineCapabilities = extractCapabilities({ meta: input.meta as PackageMeta, files: prev.files, mode: "diff" });
   }
 
-  const extracted = await extractTarball(input.tarball, baseline);
+  const extracted = await extractTarball(input.tarball, baseline, limits);
   // Always recompute from the served bytes (ADR-0022): the claimed integrity is
   // an assertion to CHECK, not a value to trust. Mismatch ⇒ critical finding.
   const actualIntegrity = integrityOf(input.tarball);
@@ -144,6 +147,13 @@ export async function runAudit(input: AuditTarballInput): Promise<Audit> {
     audit.findings.push({
       ruleId: "integrity-mismatch", category: "provenance", severity: "critical",
       message: `served tarball bytes do not match the claimed dist.integrity (${claimedIntegrity!.slice(0, 24)}…) — possible mirror tampering`,
+      onChangedFile: false, evidence: [],
+    });
+  }
+  if (extracted.truncated) {
+    audit.findings.push({
+      ruleId: "resource-abuse", category: "resource", severity: "critical",
+      message: "tarball exceeded extraction limits (unpacked size or file count) — possible decompression bomb; audit truncated",
       onChangedFile: false, evidence: [],
     });
   }
