@@ -157,6 +157,20 @@ export async function runAudit(input: AuditTarballInput): Promise<Audit> {
       onChangedFile: false, evidence: [],
     });
   }
+  if (extracted.unscanned.length > 0) {
+    const nativeCount = extracted.unscanned.filter((u) => u.kind === "native").length;
+    const totalBytes = extracted.unscanned.reduce((s, u) => s + u.size, 0);
+    const mb = (totalBytes / (1024 * 1024)).toFixed(1);
+    const escalate = nativeCount > 0 && detectInstallScripts(extracted.files);
+    audit.findings.push({
+      ruleId: "unscanned-content", category: "metadata",
+      severity: escalate ? "medium" : "low",
+      message: escalate
+        ? `${extracted.unscanned.length} executable-looking file(s) (${mb} MB) were not scanned, including ${nativeCount} native/binary, and the package runs install scripts`
+        : `${extracted.unscanned.length} executable-looking file(s) (${mb} MB) were not scanned (${nativeCount} native, ${extracted.unscanned.length - nativeCount} large-code)`,
+      onChangedFile: false, evidence: [],
+    });
+  }
   if (prov.rootStale) {
     audit.findings.push({
       ruleId: "trust-root-stale", category: "provenance", severity: "info",

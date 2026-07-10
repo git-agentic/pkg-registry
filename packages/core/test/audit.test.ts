@@ -206,3 +206,29 @@ describe("task A2: resource-abuse (decompression-bomb) finding", () => {
     assert.ok(!report.findings.some((f) => f.ruleId === "resource-abuse"));
   });
 });
+
+describe("task 3: unscanned-content finding", () => {
+  test("a >2MB code file yields a LOW unscanned-content finding", async () => {
+    const big = "x".repeat(3 * 1024 * 1024);
+    const tgz = await makeTgz({ "package/package.json": '{"name":"a","version":"1.0.0"}', "package/bundle.js": big });
+    const report = await auditTarball({ meta: metaFor("a"), tarball: tgz });
+    const f = report.findings.find((x) => x.ruleId === "unscanned-content");
+    assert.ok(f && f.severity === "low", "unscanned large code should be a low finding");
+  });
+
+  test("a native binary + install script escalates unscanned-content to MEDIUM", async () => {
+    const tgz = await makeTgz({
+      "package/package.json": '{"name":"b","version":"1.0.0","scripts":{"postinstall":"node x"}}',
+      "package/addon.node": "\0\0binary",
+    });
+    const report = await auditTarball({ meta: metaFor("b"), tarball: tgz });
+    const f = report.findings.find((x) => x.ruleId === "unscanned-content");
+    assert.ok(f && f.severity === "medium", "native + install scripts should escalate to medium");
+  });
+
+  test("a benign package has no unscanned-content finding", async () => {
+    const tgz = await makeTgz({ "package/package.json": '{"name":"c","version":"1.0.0"}', "package/index.js": "module.exports=1\n" });
+    const report = await auditTarball({ meta: metaFor("c"), tarball: tgz });
+    assert.ok(!report.findings.some((x) => x.ruleId === "unscanned-content"));
+  });
+});
