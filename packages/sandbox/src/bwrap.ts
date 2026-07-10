@@ -14,6 +14,8 @@ import { SENSITIVE_EXECUTABLES, execCarveOutPaths, classifyProcessTarget } from 
  * and re-apply the write floor read-write ON TOP (a broad ro project bind must
  * precede the narrow rw `cwd` bind, or `cwd` becomes read-only). SENSITIVE masks
  * carve out last. `pathExists` gates masks whose mount point may be absent.
+ * Approved process: path grants strictly under $HOME re-bind read-only beside the
+ * read-allow (issue #28).
  * Pure: same inputs ⇒ same argv.
  */
 export function generateBwrapArgs(
@@ -47,11 +49,28 @@ export function generateBwrapArgs(
   const rw = [...writeAllowFloor({ cwd: opts.cwd, tmpDir: opts.tmpDir }), ...approvedFs.filter(isSafeGrantTarget)]
     .map((p) => expandHome(p, home))
     .filter((p) => p !== "/dev");
+
+  // process: targets — computed BEFORE the mounts because path grants under $HOME
+  // feed the ro re-binds below (issue #28), not just the Phase 29 mask loop.
+  const procTargets = approved.filter((c) => c.kind === "process").map((c) => c.target);
+  const grantedCmds = new Set(procTargets.filter((t) => classifyProcessTarget(t) === "command"));
+  const execWildcard = procTargets.some((t) => classifyProcessTarget(t) === "wildcard");
+  const execPathGrants = procTargets
+    .filter((t) => classifyProcessTarget(t) === "path" && isSafeGrantTarget(t))
+    .map((p) => expandHome(p, home));
+
   // Slice 2 read-allow, expanded; guard against re-opening $HOME itself or an ancestor
   // (e.g. a projectRoot that resolved to $HOME) — that would nullify the `--tmpfs $HOME`.
   const ro = [...readAllowList({ nodePrefix: opts.nodePrefix, projectRoot: opts.projectRoot }), ...(opts.extraReadAllow ?? [])]
     .map((p) => expandHome(p, home))
     .filter((p) => p !== home && !home.startsWith(p + "/"));
+
+  // issue #28: a process: path grant STRICTLY UNDER $HOME must be re-exposed inside
+  // the tmpfs (read-only — exec permission is Landlock's job, and bwrap has no noexec)
+  // or its exec fails ENOENT before Landlock is consulted. Outside-home grants are
+  // already visible via the ro root bind; $HOME itself or an ancestor is excluded by
+  // the strictly-under filter (re-binding it would nullify the tmpfs).
+  const roGrants = execPathGrants.filter((p) => p.startsWith(home + "/"));
 
   // 1. rw floor entries that CONTAIN $HOME (an ancestor like tmpDir when $HOME ⊂ tmpDir) are
   //    bound BEFORE the $HOME tmpfs, so the tmpfs wins for the home subtree. Load-bearing: a
@@ -62,7 +81,7 @@ export function generateBwrapArgs(
   // 2. Slice 2: empty $HOME → deny its reads (wins over any ancestor bind above).
   args.push("--tmpfs", home);
   // 3. read-allow re-exposed READ-ONLY inside the fresh $HOME (project root, node prefix, caches).
-  for (const p of ro) args.push("--ro-bind-try", p, p);
+  for (const p of [...ro, ...roGrants]) args.push("--ro-bind-try", p, p);
   // 4. every OTHER rw entry (cwd, caches, home Grants, and tmpDir when it isn't an ancestor of
   //    $HOME) re-bound READ-WRITE AFTER the read-allow — so the narrow rw cwd bind wins over the
   //    broad ro project bind (projectRoot ⊇ cwd) and cwd stays writable.
@@ -85,12 +104,6 @@ export function generateBwrapArgs(
   // approved `process:` Grant covers it. Reuses the SENSITIVE-read mask pattern above.
   // There is NO exec FLOOR on Linux — bwrap can't path-gate exec (advisory by decision,
   // ADR-0043); only these known literals are exec-denied.
-  const procTargets = approved.filter((c) => c.kind === "process").map((c) => c.target);
-  const grantedCmds = new Set(procTargets.filter((t) => classifyProcessTarget(t) === "command"));
-  const execWildcard = procTargets.some((t) => classifyProcessTarget(t) === "wildcard");
-  const execPathGrants = procTargets
-    .filter((t) => classifyProcessTarget(t) === "path" && isSafeGrantTarget(t))
-    .map((p) => expandHome(p, home));
   if (!execWildcard) {
     // Distro-merged-usr dirs (e.g. Debian/Ubuntu's `/bin` → `/usr/bin` symlink) mean a
     // literal like `/bin/nc` isn't itself a creatable bind-mount destination — bwrap
