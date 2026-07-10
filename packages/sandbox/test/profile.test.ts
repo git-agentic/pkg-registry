@@ -99,6 +99,21 @@ describe("generateProfile", () => {
     assert.doesNotMatch(p, /spool\/cron/);                   // linux-only entry absent
     assert.doesNotMatch(p, /\.config\/autostart/);           // XDG autostart is linux-only (moved off darwin in Phase 5)
   });
+
+  test("a bare '~' grant does not open $HOME for write, read, or exec (#28 guard)", () => {
+    const p = generateProfile(
+      [fs("~"), { kind: "process", target: "~", evidence: [] }],
+      withOpts({ homeDir: HOME }),
+    );
+    // The exact closing quote makes this precise: read-allow entries like
+    // "/Users/test/.node-gyp" do not match '(subpath "/Users/test")'.
+    // Check data-read and write/exec ALLOW lines (not metadata-allow which is required for Slice 2).
+    const dataAllowLines = p.split("\n")
+      .filter((l) => (l.startsWith("(allow file-read*") || l.startsWith("(allow file-write*") || l.startsWith("(allow process-exec*")))
+      .join(" ");
+    assert.ok(!dataAllowLines.includes('(subpath "/Users/test")'), "no allow form may target $HOME itself");
+    assert.match(p, /\(deny file-read\* \(subpath "\/Users\/test"\)\)/); // Slice 2 deny still present
+  });
 });
 
 const OPTS = { homeDir: "/Users/x", cwd: "/work/pkg", tmpDir: "/var/folders/z/T", nodePrefix: "/usr/local", projectRoot: "/work/pkg" };

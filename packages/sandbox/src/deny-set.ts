@@ -42,10 +42,21 @@ export function expandHome(p: string, homeDir: string): string {
  * would widen the writable set far beyond intent. Reject the escape/everything cases
  * fail-closed (drop the grant → the write stays denied): an empty/`*` target, a bare
  * root `/`, or any target containing a `..` path-traversal segment.
+ * Bare `~` (and `~/`) is rejected too (#28): it expands to all of `$HOME` —
+ * including the writable write-floor entries under home — re-opening nearly
+ * as much as the rejected `/`.
+ * A `.` or non-leading empty segment (trailing slash, `//`) is rejected for the same
+ * reason as `..`: it normalizes to an ancestor and defeats the strictly-under checks.
  */
 export function isSafeGrantTarget(target: string): boolean {
   if (!target || target === "*" || target === "/") return false;
-  return !target.split("/").includes("..");
+  if (target === "~" || target === "~/") return false; // expands to all of $HOME (#28)
+  // A `.` or empty (non-leading) segment lets the path normalize back to an
+  // ancestor at mount/rule time (e.g. `~//`, `~/.`, `/home/x/` → $HOME itself),
+  // defeating every strictly-under check downstream (#28) — reject fail-closed,
+  // same class as `..`.
+  const segs = target.split("/");
+  return !segs.some((s, i) => s === ".." || s === "." || (s === "" && i > 0));
 }
 
 /**

@@ -261,3 +261,60 @@ describe("generateBwrapArgs — exfil-tool carve-out (Phase 29)", () => {
     assert.ok(masks.includes("/usr/bin/wget"), "wget stays masked");
   });
 });
+
+/** Index of the (flag, value) pair in the flat argv, or -1. */
+function pairIdx(args: string[], flag: string, value: string): number {
+  for (let i = 0; i < args.length; i++) if (args[i] === flag && args[i + 1] === value) return i;
+  return -1;
+}
+
+describe("generateBwrapArgs — under-$HOME process: path-grant visibility (issue #28)", () => {
+  test("a process: path grant under $HOME is --ro-bind-try'd back inside the tmpfs, AFTER it", () => {
+    const args = generateBwrapArgs([proc("~/tools/bin/x")], OPTS2);
+    const grantIdx = pairIdx(args, "--ro-bind-try", "/home/x/tools/bin/x");
+    const tmpfsIdx = pairIdx(args, "--tmpfs", "/home/x");
+    assert.ok(grantIdx >= 0, "the grant target must be re-exposed read-only");
+    assert.ok(tmpfsIdx >= 0, "the $HOME tmpfs mask must remain");
+    assert.ok(grantIdx > tmpfsIdx, "the re-expose must come AFTER the tmpfs (mount order: later wins)");
+  });
+
+  test("a process: path grant outside $HOME gets no re-bind (already visible via the ro root)", () => {
+    const args = generateBwrapArgs([proc("/opt/vendor/bin/tool")], OPTS2);
+    assert.ok(!binds(args, "--ro-bind-try").includes("/opt/vendor/bin/tool"));
+    assert.ok(!binds(args, "--bind-try").includes("/opt/vendor/bin/tool"), "and it is not rw-bound either");
+  });
+
+  test("a bare '~' grant (process or filesystem) re-binds nothing; the tmpfs stays (#28 guard)", () => {
+    const args = generateBwrapArgs([proc("~"), fs("~")], OPTS2);
+    for (const flag of ["--ro-bind-try", "--bind-try", "--bind"]) {
+      assert.ok(!binds(args, flag).includes("/home/x"), `${flag} must not re-expose $HOME itself`);
+    }
+    assert.ok(binds(args, "--tmpfs").includes("/home/x"), "the $HOME tmpfs mask stays");
+  });
+
+  test("an absolute process: grant equal to homeDir does not re-bind $HOME (strictly-under filter)", () => {
+    // The syntactic ~-guard cannot see this form; the strictly-under filter must catch it.
+    const args = generateBwrapArgs([proc("/home/x")], OPTS2);
+    assert.ok(!binds(args, "--ro-bind-try").includes("/home/x"));
+    assert.ok(binds(args, "--tmpfs").includes("/home/x"), "the $HOME tmpfs mask stays");
+  });
+
+  test("command and wildcard process grants produce no re-binds (paths only)", () => {
+    const withCmd = generateBwrapArgs([proc("curl"), proc("*")], OPTS2);
+    const baseline = generateBwrapArgs([], OPTS2);
+    assert.deepEqual(binds(withCmd, "--ro-bind-try"), binds(baseline, "--ro-bind-try"));
+  });
+
+  test("a path grant re-binds even when a wildcard grant is co-present (wildcard lifts masks, opens no paths)", () => {
+    const args = generateBwrapArgs([proc("*"), proc("~/tools/bin/x")], OPTS2);
+    assert.ok(binds(args, "--ro-bind-try").includes("/home/x/tools/bin/x"));
+  });
+
+  test("grant shapes that normalize to $HOME ('~//', '~/.', trailing '/') are dropped — argv identical to no-grant baseline (#28)", () => {
+    const baseline = generateBwrapArgs([], OPTS2);
+    for (const shape of ["~//", "~/.", "/home/x/", "/home/x/."]) {
+      assert.deepEqual(generateBwrapArgs([proc(shape)], OPTS2), baseline, `process:${shape} must be inert`);
+      assert.deepEqual(generateBwrapArgs([fs(shape)], OPTS2), baseline, `filesystem:${shape} must be inert`);
+    }
+  });
+});
