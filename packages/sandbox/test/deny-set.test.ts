@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import type { Capability } from "@sentinel/core";
-import { computeDenySet, isSafeGrantTarget } from "../src/deny-set.js";
+import { computeDenySet, isSafeGrantTarget, landlockAllowPaths } from "../src/deny-set.js";
 import { generateProfile } from "../src/profile.js";
 import { generateBwrapArgs } from "../src/bwrap.js";
 import { SENSITIVE_EXECUTABLES } from "../src/sensitive-executables.js";
+import { linuxExecFloor } from "../src/exec-floor.js";
 
 const HOME = "/Users/test";
 const fsCap = (target: string): Capability => ({ kind: "filesystem", target, evidence: [] });
@@ -231,6 +232,42 @@ describe("computeDenySet — Linux Landlock floor mode (Phase 2)", () => {
     const ds = computeDenySet([procCap("/usr/bin/curl")], { ...L, landlockFloor: true, realpath: mergedUsrResolve });
     assert.equal(ds.execFloorMode, "linux-landlock");
     assert.ok(!ds.execDeniedPaths!.includes("/bin/curl"), "the sibling literal is lifted in floor mode too");
+  });
+
+  // Issue #25: approved process: PATH grants join the floor in execAllowedPaths —
+  // the Linux mirror of the darwin floor+grants pattern.
+  test("a safe process: path grant outside the floor lands in execAllowedPaths (issue #25)", () => {
+    const ds = computeDenySet([procCap("/opt/vendor/bin/tool")], { ...L, landlockFloor: true });
+    assert.ok(ds.execAllowedPaths!.includes("/opt/vendor/bin/tool"));
+    assert.ok(ds.execAllowedPaths!.includes("/bin"), "floor entries still present");
+  });
+  test("a ~-form path grant expands against homeDir", () => {
+    const ds = computeDenySet([procCap("~/tools/bin/x")], { ...L, landlockFloor: true });
+    assert.ok(ds.execAllowedPaths!.includes("/home/test/tools/bin/x"));
+  });
+  test("unsafe path-grant targets never widen the floor", () => {
+    const floorOnly = computeDenySet([], { ...L, landlockFloor: true }).execAllowedPaths;
+    const ds = computeDenySet([procCap("/"), procCap("/opt/a/../b")], { ...L, landlockFloor: true });
+    assert.deepEqual(ds.execAllowedPaths, floorOnly);
+  });
+  test("command and wildcard grants open no paths (carve-out lift only)", () => {
+    const floorOnly = computeDenySet([], { ...L, landlockFloor: true }).execAllowedPaths;
+    const ds = computeDenySet([procCap("curl"), procCap("*")], { ...L, landlockFloor: true });
+    assert.deepEqual(ds.execAllowedPaths, floorOnly);
+  });
+  test("non-drift: Landlock execAllowedPaths equals landlockAllowPaths for the same inputs", () => {
+    const caps = [procCap("/opt/vendor/bin/tool"), procCap("curl"), procCap("~/tools/bin/x")];
+    const ds = computeDenySet(caps, { ...L, landlockFloor: true });
+    assert.deepEqual(
+      ds.execAllowedPaths,
+      landlockAllowPaths(caps, { homeDir: L.homeDir, nodePrefix: L.nodePrefix, projectRoot: L.projectRoot }),
+    );
+  });
+  test("landlockAllowPaths: floor-only with no grants", () => {
+    assert.deepEqual(
+      landlockAllowPaths([], { homeDir: "/home/test", nodePrefix: "/usr", projectRoot: "/work/pkg" }),
+      linuxExecFloor({ nodePrefix: "/usr", projectRoot: "/work/pkg" }),
+    );
   });
 });
 
