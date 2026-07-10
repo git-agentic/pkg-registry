@@ -1,5 +1,8 @@
 # Go-public checklist (operator)
 
+> **Archived 2026-07-10 — completed.** The repo is public with description,
+> homepage, and CodeQL in place. Kept for the record; nothing here is pending.
+
 Pre-flight is done on the `oss-launch-prep` branch: LICENSE, SECURITY.md,
 CODE_OF_CONDUCT.md, CONTRIBUTING.md, threat model, CodeQL workflow, issue
 templates, README status/badges, repo description/homepage/topics, and a

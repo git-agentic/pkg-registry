@@ -20,8 +20,8 @@ so an AI agent or a human can see the risk *before install-time code runs*.
 > detection, supply-chain identity heuristics, whole-tree lockfile auditing with
 > CycloneDX SBOM + signed VSA attestations, a CI-native GitHub Action, an
 > agent-native MCP surface, durable history/observability, and a hardened network
-> trust boundary + resource limits. See the phase log in
-> [CLAUDE.md](./CLAUDE.md) and the decision log in [docs/adr/](./docs/adr/).
+> trust boundary + resource limits. See the decision log in
+> [docs/adr/](./docs/adr/) (one ADR per phase).
 
 See **[ARCHITECTURE.md](./ARCHITECTURE.md)** for the full design (proxy, sync-vs-async
 audit placement, data model, npm hooks, stack justification).
@@ -730,62 +730,11 @@ See [ADR-0035](./docs/adr/0035-known-vulnerability-sca.md).
 
 ## Phase log
 
-The complete phase-by-phase log lives in [CLAUDE.md](./CLAUDE.md) and [docs/adr/](./docs/adr/); highlights: Phase 1 is the transparent auditing proxy. Phase 2 adds the
-install-time permission manifest + approval gate, signed per-enterprise policy, and
-the private-namespace registry. Phases 3–6 add cross-platform sandbox enforcement
-(macOS Seatbelt, Linux bubblewrap) up through `sentinel install --enforce`, which
-sandboxes every lifecycle script in the tree. Phase 7 adds `sentinel audit-tree`, a
-whole-tree lockfile gate: it audits every package in a `package-lock.json` through
-the proxy and exits non-zero if the aggregate verdict trips the policy's `treeGate`.
-Phase 8 verifies the npm registry signature offline (ECDSA P-256/SHA-256/DER against a
-configured key set) and surfaces `signature`/`provenance` status on every audit; a policy
-can require a verified signature or present provenance for matching package names.
-Phase 9 deep-verifies build provenance: real Sigstore attestation bundles are checked
-offline against pinned trust material, `provenance` becomes `verified|invalid|absent|unknown`
-with subject-digest binding to the actual served bytes, and a policy can require a verified
-attestation from a specific repository, workflow, or builder for matching package names.
-Phase 10 turns the enforcing sandbox into a sensor: a denied capability that surfaces as a
-process failure is classified and reported to the proxy, which quarantines that exact
-tarball fleet-wide (`sentinel violations`, `/-/violations`) as a serve-time overlay — the
-cached, deterministic score is never touched, and a denial the package silently swallows is
-still contained, just not visible to telemetry.
-Phase 11 adds `sentinel-mcp`, a stdio MCP server that is a thin client to the running
-proxy: five read tools plus `sentinel_request_approval`, which only ever records a pending
-request (`/-/approval-requests`) for a human to approve — the agent requests, never grants.
-Phase 14 broadens `audit-tree` beyond npm: `parseAnyLockfile` also reads `yarn.lock`
-(v1 and berry) and `pnpm-lock.yaml`, `--sbom <file>` writes a CycloneDX 1.6 BOM of the
-audited tree, a lockfile-vs-served integrity cross-check force-blocks a coordinate
-whose pinned integrity disagrees with what's actually served, and `--fail-on-error`
-opts the tree into gating on unresolvable packages.
-Phase 18 adds actionable remediation: `sentinel explain <package> <version>`
-(and the MCP `sentinel_explain` tool, and a "how to fix" column on the PR
-comment) turns a `warn`/`block` verdict into per-finding guidance, a
-suggested last-known-good version, and a ready waiver — advisory only, never
-auto-fixing a lockfile.
-Phase 19 adds signed audit attestations: `sentinel attest` signs a DSSE/
-in-toto envelope (Ed25519, VSA-style) over an audited tree's SBOM digest,
-and `sentinel verify-attestation` checks it offline against a pinned key —
-a portable, deploy-time gate that survives past the CI job that produced it.
-Signing is operator-side in the CLI; the proxy only exposes the
-scoring-time policy hash the attestation binds to.
-Phase 20 adds policy authoring + impact preview: a pure `lintPolicy` catches
-broken (errors) and suspicious (warnings) policy values before signing, and
-`sentinel policy preview` replays the proxy's audit history under a
-candidate policy through the same deterministic scorer to show the verdict
-deltas — a dry run, never applied or signed by the preview itself.
-Phase 21 adds known-advisory detection: a bundled, static corpus of
-publicly-documented known-malicious npm releases hard-blocks an exact
-version match by default, with an operator-supplied `SENTINEL_ADVISORIES`
-file merged in at proxy startup.
-Phase 22 adds known-vulnerability (semver-range CVE) detection over a bundled offline
-corpus. Phase 23 hardens the network trust boundary: outbound tarball fetches are
-pinned to allowlisted origins and packument tarball rewrites use a configured public
-base URL instead of trusting the Host header. Phase 24 adds resource robustness —
-fetch byte caps, audit-tree dedupe + a package cap, request coalescing, and an opt-in
-rate limiter. Phase 25 flips the sandbox to deny-by-default: writes and `$HOME` reads
-are denied unless a fixed floor or an approved capability grant re-opens them.
-See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full design and [docs/adr/](./docs/adr/)
-for the decision log.
+The build history lives in the [ADR index](./docs/adr/README.md) — one decision
+record per phase, from the auditing-proxy wedge (ADR-0001) through the Landlock
+Linux exec floor (ADR-0044). See [ARCHITECTURE.md](./ARCHITECTURE.md) for the
+current design as a whole; the old narrative phase log is archived in
+[docs/archive/](./docs/archive/).
 
 ## License
 

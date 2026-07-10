@@ -12,4 +12,4 @@ The skills speak in terms of five canonical triage roles. This file maps those r
 
 When a skill mentions a role (e.g. "apply the AFK-ready triage label"), use the corresponding label string from this table.
 
-Edit the right-hand column to match whatever vocabulary you actually use.
+All five labels exist in the `git-agentic/pkg-registry` tracker (created 2026-07-10). If you rename one, update this table and `CONTRIBUTING.md` in the same change.

@@ -79,7 +79,7 @@ checked — trust-the-claim, not trust-but-verify.
 > bundle and fails is `invalid`.
 
 This is also recorded as a spec amendment in
-`docs/superpowers/specs/2026-07-07-provenance-deep-verify-design.md` §2.
+`docs/archive/superpowers/specs/2026-07-07-provenance-deep-verify-design.md` §2.
 
 ## Consequences
 
