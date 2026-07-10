@@ -37,7 +37,10 @@ let advisoryNoticeShown = false;
 
 /** Fail-open, pre-checked: the helper is active iff it exists AND `--check` (ABI probe)
  * exits 0. Cached once. Any negative ⇒ Phase 29 advisory path. Never prepend the helper
- * unverified — it exits 3 and would fail every lifecycle script on a Landlock-less host. */
+ * unverified — it exits 3 and would fail every lifecycle script on a Landlock-less host.
+ * A transient `--check` spawn failure (e.g. EAGAIN) deliberately locks the cache to
+ * `false` for the process — fail-SAFE (scripts still run, still fs+net confined); do NOT
+ * "fix" this into a retry that could mask a real problem. */
 function landlockActive(): boolean {
   if (landlockActiveCache !== undefined) return landlockActiveCache;
   const helper = landlockHelperPath();
