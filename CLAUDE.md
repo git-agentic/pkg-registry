@@ -351,6 +351,31 @@ byte/count caps are sufficient and a wall-clock cutoff would break
 determinism (invariant #1). Extends, does not supersede, ADR-0037
 (ADR-0039).
 
+Phase 27 closes the remaining external-review gaps (#10/#11/#12) not covered
+by ADR-0040: every third-party GitHub Action `uses:` (`.github/workflows/*`,
+`action.yml`) is now pinned to a commit SHA with a `# vX.Y.Z` comment instead
+of a mutable tag (#10, CI hygiene — CONTRIBUTING.md documents the update
+path), `extractTarball` (`packages/core/src/extract.ts`) now tracks
+counted-but-unscanned executable-looking files in `ExtractResult.unscanned`
+— large code (>2 MB `.js`/`.ts`/etc, capped at 100 entries) and native/wasm
+binaries — and `runAudit` synthesizes a `metadata`-category `low`
+`unscanned-content` finding (`medium` when a native binary co-occurs with a
+detected install script), making the always-existing >2 MB/non-text scan
+blind spot non-silent without ever hard-blocking alone; it's synthesized
+inline in `runAudit`, the same as Phase 26 Part A's `resource-abuse`, **not**
+a registered `Rule` — the rule count is unchanged (#11). `verifyProvenance`
+(`packages/core/src/provenance.ts`) now requires at least one attestation to
+carry the SLSA v1 predicate for `status: "verified"`; a cryptographically
+valid attestation list with no SLSA v1 predicate (e.g. a publish-only
+attestation) maps to `"unknown"` — reusing the existing status, not a new
+value — with a reason string, since real npm-provenance-published packages
+already carry a SLSA v1 bundle and are unaffected. `requireProvenance` (still
+demands exactly `verified`) and the `invalid`-on-verification-error mapping
+are unchanged; a policy setting `provenanceIdentities` without
+`requireProvenance` now lets a non-SLSA package through the identity gate
+(which exempts `unknown` per ADR-0022 by design) — operators should pair the
+two gates (#12). ADR-0041 extends ADR-0039 and ADR-0022; supersedes neither.
+
 We are the Socket/Chainguard wedge: **do not** try to replace npm. Resolve and
 serve real packages transparently; only attach signal.
 
@@ -439,15 +464,15 @@ decompression-bomb caps (unpacked bytes / file count; defaults 1 GiB / 100k).
 
 ```bash
 npm run build            # tsc --build (project references: core → proxy/cli)
-npm test                 # engine + end-to-end proxy: 661 tests on this host (659 pass, 2 skipped on darwin).
+npm test                 # engine + end-to-end proxy: 690 tests on this host (688 pass, 2 skipped on darwin).
                          # Skips are platform-gated enforcement: "non-darwin throws" skips on darwin
                          # (it verifies darwin-only behaviour), and the "no silent skip" CI guard skips
                          # off-CI. The BubblewrapSandbox enforcement suite and the Linux enforce-e2e tests
-                         # skip as describe-level blocks on darwin ("requires Linux") and are not in the 661
+                         # skip as describe-level blocks on darwin ("requires Linux") and are not in the 690
                          # count. Phase 10's violation-enforce e2e and the darwin-gated runtime-violation
                          # effect test (SeatbeltSandbox: "a denied credential read surfaces a confirmed
                          # runtime violation") RUN on darwin via Seatbelt, the same way the rest of the
-                         # Seatbelt effect suite does, and ARE in the 661 count. Phase 25 Slice 1's
+                         # Seatbelt effect suite does, and ARE in the 690 count. Phase 25 Slice 1's
                          # write-floor SeatbeltSandbox enforcement effect tests (positive control on
                          # the floor, persistence carve-out under a fake $HOME inside the floor's
                          # temp dir, a real /dev/null redirect) are likewise darwin-gated and RUN on

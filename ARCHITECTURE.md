@@ -308,6 +308,20 @@ informational only — a zero-weight `trust-root-stale` finding via an injectabl
 clock, conservative by design (stale only when *every* pinned CA's `validFor.end`
 has passed; the real Fulcio CA is open-ended, so it never reports stale today).
 
+**Update (Phase 27, ADR-0041):** `verified` now additionally requires that at
+least one attestation in the list carry the SLSA v1 predicate. A bundle list
+that verifies and binds cleanly but never carries SLSA v1 (e.g. an npm
+publish-only attestation with no build-provenance claim) now returns
+`unknown` — the existing status, not a new one — since the evidence needed to
+call it verified *build provenance* is missing even though the crypto itself
+checked out. Real `npm publish --provenance` packages carry a SLSA v1 bundle
+alongside the publish attestation and are unaffected. The `invalid`-on-thrown-
+error mapping, `requireProvenance` (still demands exactly `verified`), and the
+`provenanceIdentities` gate's exemption of `unknown` are all unchanged; a
+policy setting `provenanceIdentities` without `requireProvenance` now lets a
+non-SLSA package through the identity gate (by the pre-existing `unknown`
+exemption) — pair the two gates to close that.
+
 ### 3.11 Runtime violation telemetry (Phase 10, ADR-0023)
 
 Phases 3–6 made the sandbox *contain* a denied capability; Phase 10 makes it a
@@ -977,13 +991,32 @@ throttle protects the expensive read endpoints. Phase 24 closes all four:
   baseline extraction (diff mode) degrades the diff without itself
   blocking. No wall-time cap — byte/count caps are sufficient and a
   wall-clock cutoff would break scoring determinism (invariant #1).
+- **Unscanned-content signal (Phase 27, ADR-0041).** `extractTarball` skips
+  text-scanning any file over `MAX_FILE_BYTES` (2 MiB) and never scans
+  native/binary extensions at all — both pre-existing boundaries, neither
+  previously surfaced anywhere in the report. `ExtractResult.unscanned` now
+  tracks each such file (capped at 100 entries) classified `"large-code"`
+  (an oversize `.js`/`.ts`/etc file that would otherwise have been text-
+  scanned) or `"native"` (`.node`/`.wasm`/`.so`/`.dll`/`.dylib`/`.exe`,
+  regardless of size). `runAudit` synthesizes a `metadata`-category
+  `unscanned-content` finding when the list is non-empty — `low` by
+  default, escalated to `medium` only when a `"native"` entry co-occurs
+  with a detected install script (the actually-suspicious pairing: a
+  binary blob plus a lifecycle hook that can run it). It's synthesized
+  inline in `runAudit` next to `resource-abuse`, **not** a registered
+  `Rule` — it needs `ExtractResult.unscanned`, which the pure per-file rule
+  pipeline doesn't see — so the registered-rule count is unchanged. It
+  never hard-blocks on its own; the point is making an always-present scan
+  boundary visible in the audit output, not treating unscanned content as
+  presumptively malicious.
 
 `limits.ts` and `rate-limit.ts` are pure — no env access, clock injected —
 so the caps and the limiter are unit-tested without wall-clock or network
 I/O. Scoring, the integrity cache key, and the packument passthrough are
 untouched (invariants #1–#6) — see
-[ADR-0037](./docs/adr/0037-resource-robustness.md) and
-[ADR-0039](./docs/adr/0039-bounded-tarball-extraction.md).
+[ADR-0037](./docs/adr/0037-resource-robustness.md),
+[ADR-0039](./docs/adr/0039-bounded-tarball-extraction.md), and
+[ADR-0041](./docs/adr/0041-review-hardening.md).
 
 ### 3.24 Sandbox default-deny — writes + reads (Phase 25, ADR-0038)
 
