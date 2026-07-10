@@ -22,7 +22,17 @@ echo "compiled OK: $HELPER"
 run_bwrap() { # args: extra-bwrap-args... -- helper-and-cmd...
   bwrap --ro-bind / / --dev /dev --proc /proc --unshare-net "$@"
 }
-FLOOR=(--allow /bin --allow /usr/bin --allow /usr/sbin --allow "$NODE_PREFIX")
+# Landlock's FS_EXECUTE right gates not just execve() but also mmap(PROT_EXEC) —
+# so loading a dynamically-linked binary's ELF interpreter (e.g.
+# /lib64/ld-linux-x86-64.so.2) and its shared libraries ALSO requires an execute
+# grant on the directory they live in. /bin/sh (dash) is dynamically linked, so
+# without the lib/linker dirs in the floor, execve succeeds past the initial check
+# but the interpreter mmap fails, surfacing as EACCES. This is a Linux-specific
+# floor requirement the macOS Seatbelt floor doesn't have (Seatbelt doesn't gate
+# library mmap the same way). Some of these are merged-usr symlinks (e.g. /lib ->
+# usr/lib); the helper opens each with O_PATH which follows symlinks, and a
+# missing one is silently skipped — harmless to list all four unconditionally.
+FLOOR=(--allow /bin --allow /usr/bin --allow /usr/sbin --allow /lib --allow /lib64 --allow /usr/lib --allow /usr/lib64 --allow "$NODE_PREFIX")
 
 echo "=== A: positive control (floor exec allowed) ==="
 A_OUT="$(run_bwrap "$HELPER" "${FLOOR[@]}" -- /bin/sh -c '/bin/echo FLOOR-OK; node -e "console.log(\"NODE-OK\")"' 2>&1)"
