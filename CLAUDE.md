@@ -533,15 +533,15 @@ decompression-bomb caps (unpacked bytes / file count; defaults 1 GiB / 100k).
 
 ```bash
 npm run build            # tsc --build (project references: core → proxy/cli)
-npm test                 # engine + end-to-end proxy: 769 tests on this host (767 pass, 2 skipped on darwin).
+npm test                 # engine + end-to-end proxy: 775 tests on this host (773 pass, 2 skipped on darwin).
                          # Skips are platform-gated enforcement: "non-darwin throws" skips on darwin
                          # (it verifies darwin-only behaviour), and the "no silent skip" CI guard skips
                          # off-CI. The BubblewrapSandbox enforcement suite and the Linux enforce-e2e tests
-                         # skip as describe-level blocks on darwin ("requires Linux") and are not in the 769
+                         # skip as describe-level blocks on darwin ("requires Linux") and are not in the 775
                          # count. Phase 10's violation-enforce e2e and the darwin-gated runtime-violation
                          # effect test (SeatbeltSandbox: "a denied credential read surfaces a confirmed
                          # runtime violation") RUN on darwin via Seatbelt, the same way the rest of the
-                         # Seatbelt effect suite does, and ARE in the 769 count. Phase 25 Slice 1's
+                         # Seatbelt effect suite does, and ARE in the 775 count. Phase 25 Slice 1's
                          # write-floor SeatbeltSandbox enforcement effect tests (positive control on
                          # the floor, persistence carve-out under a fake $HOME inside the floor's
                          # temp dir, a real /dev/null redirect) are likewise darwin-gated and RUN on
@@ -609,7 +609,9 @@ npm test                 # engine + end-to-end proxy: 769 tests on this host (76
                          # node_modules/.bin shim and node still run) are CI-only (Linux/bubblewrap)
                          # and do not run on darwin. Phase 2 (Landlock)'s linuxExecFloor unit tests
                          # (exec-floor.test.ts), computeDenySet's Landlock-floor-mode unit tests
-                         # (execFloorMode + populated floor, deny-set.test.ts), classifyViolation's
+                         # (execFloorMode + populated floor, deny-set.test.ts), plus the issue #25
+                         # path-grant execAllowedPaths lift + landlockAllowPaths non-drift tests
+                         # (deny-set.test.ts), classifyViolation's
                          # Landlock-floor-mode unit tests ("Linux Landlock floor mode (Phase 2)":
                          # floor-outside denial confirmed exec-floor-deny, masked carve-out literal
                          # still confirmed, under-floor denial null, inert without execFloorMode,
@@ -617,13 +619,16 @@ npm test                 # engine + end-to-end proxy: 769 tests on this host (76
                          # plus the unattributable spawnSync-line fall-through (no extractable path)
                          # pinning test — violation.test.ts), and build-native.mjs's no-op-off-Linux/no-cc unit
                          # tests (build-native.test.ts) are hermetic and platform-neutral, in the
-                         # 769 count. The two Landlock bwrap effect tests in bubblewrap.test.ts
+                         # 775 count. The four Landlock bwrap effect tests in bubblewrap.test.ts
                          # ("Landlock floor: a dropped /tmp binary is denied and surfaces a confirmed
-                         # process violation" and "Landlock floor: a floor binary (node) and a
-                         # node_modules/.bin shim still run") live inside the same
+                         # process violation", "Landlock floor: a floor binary (node) and a
+                         # node_modules/.bin shim still run", "Landlock floor: a process: path grant
+                         # outside the floor is --allow'ed and execs (issue #25)", and "Landlock floor:
+                         # the same outside-floor exec WITHOUT the grant stays denied (confirmed
+                         # exec-floor-deny)") live inside the same
                          # describe-level-skip-on-darwin `BubblewrapSandbox enforcement` block as the
                          # rest of the Linux effect suite — CI-only (Linux/bubblewrap with a built
-                         # `landlock-exec` helper), not in the darwin 769 count, same convention as
+                         # `landlock-exec` helper), not in the darwin 775 count, same convention as
                          # the Phase 28/29 effect tests above.
 npm run demo             # offline malware-detection walkthrough
 node packages/proxy/dist/index.js   # run the proxy (see README for env vars)

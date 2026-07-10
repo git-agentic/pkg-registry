@@ -49,6 +49,27 @@ export function isSafeGrantTarget(target: string): boolean {
 }
 
 /**
+ * The Landlock helper's full exec-allow set (Phase 2 + issue #25): the Linux
+ * exec floor PLUS every safe, expanded `process:` PATH grant — the Linux
+ * mirror of the darwin branch's floor+grants `execAllowedPaths`. Shared by
+ * `BubblewrapSandbox.run` (the helper's `--allow` argv) and `computeDenySet`'s
+ * Landlock branch, so the generator and the classifier cannot drift. Pure —
+ * no realpath: the helper open()s each entry, so a symlinked grant target
+ * already attaches to the resolved node (unlike #21's bind-destination masks).
+ */
+export function landlockAllowPaths(
+  approved: Capability[],
+  opts: { homeDir: string; nodePrefix: string; projectRoot: string },
+): string[] {
+  const grants = approved
+    .filter((c) => c.kind === "process")
+    .map((c) => c.target)
+    .filter((t) => classifyProcessTarget(t) === "path" && isSafeGrantTarget(t))
+    .map((t) => expandHome(t, opts.homeDir));
+  return [...linuxExecFloor({ nodePrefix: opts.nodePrefix, projectRoot: opts.projectRoot }), ...grants];
+}
+
+/**
  * macOS firmlinks: sandbox-exec matches the canonical /private path, not the alias.
  * /etc, /var, /tmp are firmlinks to /private/etc, /private/var, /private/tmp.
  * Pure mapping (no fs calls) — these roots are stable macOS facts.
@@ -119,7 +140,9 @@ export function computeDenySet(
         ...base,
         execDenied: true,
         execDeniedPaths: lDenied,
-        execAllowedPaths: linuxExecFloor({ nodePrefix: opts.nodePrefix, projectRoot: opts.projectRoot }),
+        execAllowedPaths: landlockAllowPaths(approved, {
+          homeDir: opts.homeDir, nodePrefix: opts.nodePrefix, projectRoot: opts.projectRoot,
+        }),
         execFloorMode: "linux-landlock",
       };
     }

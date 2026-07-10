@@ -6,10 +6,9 @@ import { dirname, join, sep } from "node:path";
 import { generateBwrapArgs } from "./bwrap.js";
 import type { Sandbox, SandboxResult } from "./types.js";
 import type { Capability } from "@sentinel/core";
-import { computeDenySet } from "./deny-set.js";
+import { computeDenySet, landlockAllowPaths } from "./deny-set.js";
 import { classifyViolation } from "./violation.js";
 import { nodeInstallPrefix } from "./read-allow.js";
-import { linuxExecFloor } from "./exec-floor.js";
 
 /** bwrap's own errors when the kernel refuses unprivileged user namespaces (Ubuntu 24.04 AppArmor, etc.). */
 const NS_FAILURE = /Creating new namespace failed|No permissions to create new namespace|setting up uid map/i;
@@ -79,7 +78,12 @@ export class BubblewrapSandbox implements Sandbox {
     }
 
     const inner = useLandlock
-      ? [landlockHelperPath(), ...linuxExecFloor({ nodePrefix, projectRoot }).flatMap((p) => ["--allow", p]), "--", "/bin/sh", "-c", cmd]
+      ? [
+          landlockHelperPath(),
+          ...landlockAllowPaths(opts.approved, { homeDir: opts.homeDir, nodePrefix, projectRoot })
+            .flatMap((p) => ["--allow", p]),
+          "--", "/bin/sh", "-c", cmd,
+        ]
       : ["/bin/sh", "-c", cmd];
 
     const args = [
