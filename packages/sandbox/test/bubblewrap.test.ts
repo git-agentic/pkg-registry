@@ -245,4 +245,32 @@ describe("BubblewrapSandbox enforcement", { skip }, () => {
     assert.match(res.stdout, /NODE-OK/);
     assert.match(res.stdout, /SHIM-OK/);
   });
+
+  test("Landlock floor: a process: path grant outside the floor is --allow'ed and execs (issue #25)", { skip: skipNoHelper }, () => {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "bw-ll-grant-")));
+    const proj = join(home, "proj"); mkdirSync(proj);
+    const stash = realpathSync(mkdtempSync(join(tmpdir(), "bw-ll-vendor-")));
+    const tool = join(stash, "tool");
+    writeFileSync(tool, "#!/bin/sh\necho TOOL-OK\n", { mode: 0o755 });
+    const res = new BubblewrapSandbox().run(`"${tool}"`, {
+      cwd: proj, approved: [{ kind: "process", target: tool, evidence: [] }], homeDir: home, projectRoot: proj,
+    });
+    assert.equal(res.exitCode, 0, res.stderr);
+    assert.match(res.stdout, /TOOL-OK/);
+    assert.equal(res.violation, undefined);
+  });
+
+  test("Landlock floor: the same outside-floor exec WITHOUT the grant stays denied (confirmed exec-floor-deny)", { skip: skipNoHelper }, () => {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "bw-ll-nogrant-")));
+    const proj = join(home, "proj"); mkdirSync(proj);
+    const stash = realpathSync(mkdtempSync(join(tmpdir(), "bw-ll-vendor2-")));
+    const tool = join(stash, "tool");
+    writeFileSync(tool, "#!/bin/sh\necho TOOL-OK\n", { mode: 0o755 });
+    const res = new BubblewrapSandbox().run(`"${tool}"`, { cwd: proj, approved: [], homeDir: home, projectRoot: proj });
+    assert.notEqual(res.exitCode, 0);
+    assert.doesNotMatch(res.stdout, /TOOL-OK/);
+    assert.equal(res.violation?.kind, "process");
+    assert.equal(res.violation?.confidence, "confirmed");
+    assert.equal(res.violation?.deniedResource, "exec-floor-deny");
+  });
 });
