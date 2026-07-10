@@ -42,7 +42,12 @@ export class SeatbeltSandbox implements Sandbox {
         stdout: res.stdout ?? "",
         stderr: res.stderr ?? "",
       };
-      const denySet = computeDenySet(opts.approved, { homeDir: opts.homeDir, platform: "darwin" });
+      const denySet = computeDenySet(opts.approved, {
+        homeDir: opts.homeDir, platform: "darwin",
+        nodePrefix: nodeInstallPrefix(process.execPath),
+        projectRoot: opts.projectRoot ?? opts.cwd,
+        cwd: opts.cwd, tmpDir: tmpdir(),
+      });
       const violation = classifyViolation(result, denySet);
       return violation ? { ...result, violation } : result;
     } finally {

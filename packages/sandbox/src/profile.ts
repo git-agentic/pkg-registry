@@ -3,6 +3,8 @@ import { pathCovers } from "./path-cover.js";
 import { canonicalizeMacPath, expandHome, isSafeGrantTarget } from "./deny-set.js";
 import { writeAllowFloor } from "./write-floor.js";
 import { readAllowList } from "./read-allow.js";
+import { execAllowFloor } from "./exec-floor.js";
+import { SENSITIVE_EXECUTABLES, execCarveOutPaths, classifyProcessTarget } from "./sensitive-executables.js";
 
 /**
  * Generate a macOS Seatbelt (SBPL) profile from a package's APPROVED capabilities.
@@ -75,6 +77,29 @@ export function generateProfile(
     if (uncovered.length === 0) continue;
     const items = uncovered.map((dp) => `(${sp.denyKind} "${canon(dp)}")`).join(" ");
     lines.push(`(deny file-write* ${items})`);
+  }
+
+  // Exec: deny by default (Phase 28, ADR-0042) — blanket deny, re-allow the fixed
+  // exec floor + approved process PATH-Grants, then re-deny the sensitive-executable
+  // carve-out (SBPL last-match-wins) unless a command/wildcard/covering-path Grant
+  // lifts it. process-fork stays allowed: only exec is gated. The initial
+  // sandbox-exec → /bin/sh exec is itself covered by /bin in the floor.
+  const procTargets = approved.filter((c) => c.kind === "process").map((c) => c.target);
+  const grantedCmds = new Set(procTargets.filter((t) => classifyProcessTarget(t) === "command"));
+  const execWildcard = procTargets.some((t) => classifyProcessTarget(t) === "wildcard");
+  const execPathGrants = procTargets
+    .filter((t) => classifyProcessTarget(t) === "path" && isSafeGrantTarget(t))
+    .map(canon);
+  lines.push("(deny process-exec*)");
+  const execFloor = execAllowFloor({ nodePrefix: opts.nodePrefix, projectRoot: opts.projectRoot }).map(canon);
+  lines.push(`(allow process-exec* ${[...execFloor, ...execPathGrants].map((p) => `(subpath "${p}")`).join(" ")})`);
+  const carveItems = execWildcard ? [] : SENSITIVE_EXECUTABLES
+    .filter((cmd) => !grantedCmds.has(cmd))
+    .flatMap((cmd) => execCarveOutPaths(cmd))
+    .map(canon)
+    .filter((p) => !execPathGrants.some((g) => pathCovers(g, p)));
+  if (carveItems.length > 0) {
+    lines.push(`(deny process-exec* ${carveItems.map((p) => `(literal "${p}")`).join(" ")})`);
   }
 
   if (!hasNetwork) lines.push("(deny network*)");

@@ -28,12 +28,13 @@ audit placement, data model, npm hooks, stack justification).
 
 ## Status
 
-**Pre-1.0; built through Phase 25 (deny-by-default install sandbox).** The
-proxy, policy gate, sandbox (macOS Seatbelt / Linux bubblewrap), CLI, MCP
-server, and GitHub Action work end-to-end and are covered by the full test
-suite (Linux CI on Node 22 and 24; macOS Seatbelt enforcement is exercised
-on maintainers' machines) — but this has not yet been hardened by
-production use, and APIs may change without notice. **No npm packages are
+**Pre-1.0.** The auditing proxy, policy gate, deny-by-default install sandbox
+(macOS Seatbelt / Linux bubblewrap), CLI, MCP server, and GitHub Action work
+end-to-end and are covered by the full test suite (Linux CI on Node 22 and 24;
+macOS Seatbelt enforcement is exercised on maintainers' machines) — but this
+has not yet been hardened by production use, and APIs may change without
+notice. The complete phase-by-phase build log lives in
+[docs/adr/](./docs/adr/) (one ADR per phase). **No npm packages are
 published yet**: build from source (Quickstart below). Threat model:
 [sentinel-threat-model.md](./sentinel-threat-model.md) · Homepage:
 [git-agentic.com/sentinel](https://git-agentic.com/sentinel)
@@ -273,7 +274,7 @@ top-level commands (a commander-15 quirk with nested `requiredOption`s made
 a true subcommand impractical). See
 [ADR-0032](./docs/adr/0032-signed-audit-attestations.md).
 
-### Sandbox — default-deny (Phases 3–5 + 25; macOS Seatbelt / Linux bubblewrap)
+### Sandbox — default-deny (Phases 3–5, 25, 28; macOS Seatbelt / Linux bubblewrap)
 
 `sentinel run-scripts <package-dir> [--approve network:host …]` runs the package's lifecycle scripts under a kernel sandbox generated from its approved capabilities — `createSandbox()` selects **Seatbelt** on macOS and **bubblewrap** on Linux, same capability model and fail-closed contract. As of Phase 25 the sandbox is **deny-by-default** (ADR-0038):
 
@@ -281,6 +282,16 @@ a true subcommand impractical). See
 - **`$HOME` reads** are denied by default, re-allowing only what a lifecycle script needs: system paths, the node install prefix (so a node-under-`$HOME` nvm/fnm/volta runtime still loads its stdlib), the project root (so `require()` resolves), and the build caches — closing credential theft as a whole class. `/etc/passwd`/`/etc/shadow` stay denied via the `SENSITIVE_PATHS` carve-out.
 - **Network egress** is denied unless a `network` capability is approved.
 - **Environment secrets** are fail-closed **scrubbed** (Phase 4): a credential-looking env var (`NPM_TOKEN`, `AWS_SECRET_ACCESS_KEY`, …) never reaches the script unless approved with an `env:NAME` capability. The `secret-exfil` audit rule additionally flags env reads at scoring time.
+- **Exec** (macOS, Phase 28) is denied outside a fixed floor — system dirs, the node
+  prefix, the project tree, Apple/Homebrew toolchains — plus approved `process:`
+  grants (`process:curl` lifts one tool's carve-out; `process:/path` opens a path;
+  `process:*` lifts the carve-out only), and exfil-capable tools (`curl`, `wget`,
+  `nc`, …) are re-denied inside the floor unless granted. A dropped binary in `/tmp`
+  or a cache is kernel-denied; a binary the package writes into its *own* project
+  tree can still exec there (the floor includes the project root), mitigated by the
+  `unscanned-content` finding and `process` capability scoring, not kernel denial.
+  Linux exec gating (Landlock) is Phase 29 — until it lands, exec on Linux remains
+  advisory (ADR-0042).
 
 A denied credential read surfaces as a confirmed runtime violation on Seatbelt (EPERM); on bubblewrap the read is *contained* (a `--tmpfs` mask yields `ENOENT`) but not classified — an accepted telemetry asymmetry (ADR-0023). Both backends contain; only the telemetry differs.
 
@@ -705,7 +716,7 @@ See [ADR-0035](./docs/adr/0035-known-vulnerability-sca.md).
 
 ## Phase log
 
-Phases 1–25 are built; see [CLAUDE.md](./CLAUDE.md) for the complete log. Phase 1 is the transparent auditing proxy. Phase 2 adds the
+The complete phase-by-phase log lives in [CLAUDE.md](./CLAUDE.md) and [docs/adr/](./docs/adr/); highlights: Phase 1 is the transparent auditing proxy. Phase 2 adds the
 install-time permission manifest + approval gate, signed per-enterprise policy, and
 the private-namespace registry. Phases 3–6 add cross-platform sandbox enforcement
 (macOS Seatbelt, Linux bubblewrap) up through `sentinel install --enforce`, which

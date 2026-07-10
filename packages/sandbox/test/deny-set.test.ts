@@ -40,6 +40,42 @@ describe("computeDenySet", () => {
   });
 });
 
+const procCap = (target: string): Capability => ({ kind: "process", target, evidence: [] });
+const EXEC_OPTS = { homeDir: HOME, platform: "darwin" as const, nodePrefix: "/usr/local", projectRoot: "/work/pkg", cwd: "/work/pkg", tmpDir: "/private/tmp/tmpdir-x" };
+
+describe("computeDenySet — exec (Phase 28)", () => {
+  test("darwin with exec opts: execDenied, floor in execAllowedPaths, carve-out in execDeniedPaths", () => {
+    const ds = computeDenySet([], EXEC_OPTS);
+    assert.equal(ds.execDenied, true);
+    assert.ok(ds.execAllowedPaths!.includes("/bin"));
+    assert.ok(ds.execAllowedPaths!.includes("/work/pkg"));
+    assert.ok(ds.execDeniedPaths!.includes("/usr/bin/curl"));
+    assert.ok(ds.writeAllowedPaths!.includes("/work/pkg"));
+    assert.ok(ds.writeAllowedPaths!.some((p) => p.startsWith("/private/tmp")));
+  });
+
+  test("without exec opts (legacy callers / linux): exec fields absent", () => {
+    const ds = computeDenySet([], { homeDir: HOME, platform: "linux" });
+    assert.equal(ds.execDenied, undefined);
+    assert.equal(ds.execDeniedPaths, undefined);
+  });
+
+  test("a command Grant removes its carve-out entries; a path Grant lands in execAllowedPaths", () => {
+    const ds = computeDenySet([procCap("curl"), procCap("~/tools")], EXEC_OPTS);
+    assert.ok(!ds.execDeniedPaths!.some((p) => p.endsWith("/curl")));
+    assert.ok(ds.execDeniedPaths!.some((p) => p.endsWith("/wget")));
+    assert.ok(ds.execAllowedPaths!.includes("/Users/test/tools"));
+  });
+
+  test("non-drift: every execDeniedPath and execAllowedPath appears in the generated profile", () => {
+    const approved: Capability[] = [procCap("curl"), procCap("~/tools")];
+    const ds = computeDenySet(approved, EXEC_OPTS);
+    const profile = generateProfile(approved, { homeDir: HOME, cwd: "/work/pkg", tmpDir: "/private/tmp/tmpdir-x", nodePrefix: "/usr/local", projectRoot: "/work/pkg" });
+    for (const p of ds.execDeniedPaths!) assert.ok(profile.includes(`(literal "${p}")`), `profile must carve out ${p}`);
+    for (const p of ds.execAllowedPaths!) assert.ok(profile.includes(`(subpath "${p}")`), `profile must exec-allow ${p}`);
+  });
+});
+
 describe("isSafeGrantTarget", () => {
   test("safe targets are allowed", () => {
     assert.ok(isSafeGrantTarget(".zshrc"));
