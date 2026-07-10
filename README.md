@@ -274,7 +274,7 @@ top-level commands (a commander-15 quirk with nested `requiredOption`s made
 a true subcommand impractical). See
 [ADR-0032](./docs/adr/0032-signed-audit-attestations.md).
 
-### Sandbox — default-deny (Phases 3–5, 25, 28; macOS Seatbelt / Linux bubblewrap)
+### Sandbox — default-deny (Phases 3–5, 25, 28, 29; macOS Seatbelt / Linux bubblewrap)
 
 `sentinel run-scripts <package-dir> [--approve network:host …]` runs the package's lifecycle scripts under a kernel sandbox generated from its approved capabilities — `createSandbox()` selects **Seatbelt** on macOS and **bubblewrap** on Linux, same capability model and fail-closed contract. As of Phase 25 the sandbox is **deny-by-default** (ADR-0038):
 

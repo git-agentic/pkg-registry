@@ -180,8 +180,8 @@ projectRoot-in-floor residual (a macOS package executing a binary written into
 its own tree) is a recorded ADR-0042 trade-off, mitigated by `unscanned-content`
 (ADR-0041) and `process` capability scoring. A true Linux exec floor needs
 Landlock (a native syscall piece), deferred as too large a commitment for
-pre-1.0 — #8 stays open until it lands:
-[#8](https://github.com/git-agentic/pkg-registry/issues/8).
+pre-1.0 — [#8](https://github.com/git-agentic/pkg-registry/issues/8) stays open
+until it lands.
 
 **Enforced surface (Phase 3):** sensitive file reads + network egress. `SENSITIVE_PATHS`
 are deny-listed for reads; network is all-or-nothing (Seatbelt can't host-filter; per-host
