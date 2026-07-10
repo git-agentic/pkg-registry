@@ -42,9 +42,13 @@ export function expandHome(p: string, homeDir: string): string {
  * would widen the writable set far beyond intent. Reject the escape/everything cases
  * fail-closed (drop the grant → the write stays denied): an empty/`*` target, a bare
  * root `/`, or any target containing a `..` path-traversal segment.
+ * Bare `~` (and `~/`) is rejected too (#28): it expands to all of `$HOME` —
+ * including the writable write-floor entries under home — re-opening nearly
+ * as much as the rejected `/`.
  */
 export function isSafeGrantTarget(target: string): boolean {
   if (!target || target === "*" || target === "/") return false;
+  if (target === "~" || target === "~/") return false; // expands to all of $HOME (#28)
   return !target.split("/").includes("..");
 }
 

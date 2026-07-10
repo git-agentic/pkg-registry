@@ -269,6 +269,13 @@ describe("computeDenySet — Linux Landlock floor mode (Phase 2)", () => {
       linuxExecFloor({ nodePrefix: "/usr", projectRoot: "/work/pkg" }),
     );
   });
+
+  test("landlockAllowPaths: a bare '~' grant is dropped (floor-only result, #28)", () => {
+    assert.deepEqual(
+      landlockAllowPaths([procCap("~")], { homeDir: "/home/test", nodePrefix: "/usr", projectRoot: "/work/pkg" }),
+      linuxExecFloor({ nodePrefix: "/usr", projectRoot: "/work/pkg" }),
+    );
+  });
 });
 
 describe("isSafeGrantTarget", () => {
@@ -288,5 +295,11 @@ describe("isSafeGrantTarget", () => {
     assert.ok(!isSafeGrantTarget(".."));
     assert.ok(!isSafeGrantTarget("../escape"));
     assert.ok(!isSafeGrantTarget("a/../b"));
+  });
+
+  test("bare '~' and '~/' are rejected — they expand to all of $HOME (#28)", () => {
+    assert.ok(!isSafeGrantTarget("~"));
+    assert.ok(!isSafeGrantTarget("~/"));
+    assert.ok(isSafeGrantTarget("~/tools/bin/x"), "a ~-prefixed real path stays allowed");
   });
 });
