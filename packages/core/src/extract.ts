@@ -6,10 +6,22 @@ import type { PackageFile } from "./types.js";
 
 const MAX_FILE_BYTES = 2 * 1024 * 1024; // skip very large files from text scanning
 const TEXT_EXT = /\.(c?js|mjs|cjs|ts|mts|cts|jsx|tsx|json|map|sh|txt|md|yml|yaml)$/i;
+/** Executable code extensions (subset of TEXT_EXT); flagged as unscanned when over MAX_FILE_BYTES. */
+const CODE_EXT = /\.(c?js|mjs|cjs|ts|mts|cts|jsx|tsx)$/i;
+/** Native / binary executable extensions; never scanned, flagged as unscanned when present. */
+const NATIVE_EXT = /\.(node|wasm|so|dll|dylib|exe)$/i;
+/** Cap on the unscanned list to bound memory on a pathological many-binary tarball. */
+const MAX_UNSCANNED = 100;
 
 /** Decompression-bomb guards (ADR-0039). Defaults never hit a legitimate package. */
 export const DEFAULT_MAX_UNPACKED_BYTES = 1024 * 1024 * 1024; // 1 GiB total decompressed
 export const DEFAULT_MAX_FILE_COUNT = 100_000;
+
+export interface UnscannedEntry {
+  path: string;
+  size: number;
+  kind: "large-code" | "native";
+}
 
 export interface ExtractResult {
   files: PackageFile[];
@@ -17,6 +29,8 @@ export interface ExtractResult {
   fileCount: number;
   /** True when a cap was hit and extraction was aborted early (ADR-0039). */
   truncated: boolean;
+  /** Counted-but-unscanned executable-looking files: large code + native binaries (#11). */
+  unscanned: UnscannedEntry[];
 }
 
 /**
@@ -49,6 +63,7 @@ export async function extractTarball(
   const maxUnpacked = opts.maxUnpackedBytes ?? DEFAULT_MAX_UNPACKED_BYTES;
   const maxFiles = opts.maxFileCount ?? DEFAULT_MAX_FILE_COUNT;
   const files: PackageFile[] = [];
+  const unscanned: UnscannedEntry[] = [];
   let unpackedSize = 0;
   let fileCount = 0;
   let entryCount = 0;
@@ -89,6 +104,12 @@ export async function extractTarball(
         const content = Buffer.concat(chunks).toString("utf8");
         const prev = baseline?.get(path);
         files.push({ path, content, size: bytes, changed: baseline ? prev !== content : false });
+        return;
+      }
+      // Not scanned — record executable-looking content so the blind spot isn't silent (#11).
+      if (unscanned.length < MAX_UNSCANNED) {
+        if (bytes > MAX_FILE_BYTES && CODE_EXT.test(path)) unscanned.push({ path, size: bytes, kind: "large-code" });
+        else if (NATIVE_EXT.test(path)) unscanned.push({ path, size: bytes, kind: "native" });
       }
     });
     entry.on("error", (e: unknown) => { failure = e instanceof Error ? e : new Error(String(e)); });
@@ -151,7 +172,7 @@ export async function extractTarball(
     await done;
   }
   if (failure) throw failure;
-  return { files, unpackedSize, fileCount, truncated };
+  return { files, unpackedSize, fileCount, truncated, unscanned };
 }
 
 /** Build a `path -> content` baseline map from a previously extracted set. */

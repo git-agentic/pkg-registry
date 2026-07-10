@@ -177,4 +177,34 @@ describe("extractTarball caps", () => {
     assert.equal(r.truncated, true);
     assert.ok(r.unpackedSize > 1024 * 1024, `expected unpackedSize to reflect the streamed body, got ${r.unpackedSize}`);
   });
+
+  test("a large code file (>2MB .js) is tracked as unscanned large-code", async () => {
+    const big = "x".repeat(3 * 1024 * 1024);
+    const tgz = await makeTgz({ "package/index.js": "ok\n", "package/bundle.js": big });
+    const r = await extractTarball(tgz);
+    assert.equal(r.truncated, false);
+    const u = r.unscanned.find((e) => e.path === "package/bundle.js");
+    assert.ok(u && u.kind === "large-code", "large .js should be tracked as large-code");
+    assert.ok(u.size >= 3 * 1024 * 1024);
+  });
+
+  test("a native binary is tracked as unscanned native", async () => {
+    const tgz = await makeTgz({ "package/index.js": "ok\n", "package/addon.node": "\0\0binary" });
+    const r = await extractTarball(tgz);
+    const u = r.unscanned.find((e) => e.path === "package/addon.node");
+    assert.ok(u && u.kind === "native", "*.node should be tracked as native");
+  });
+
+  test("a benign small package has no unscanned entries", async () => {
+    const tgz = await makeTgz({ "package/index.js": "module.exports=1\n", "package/readme.md": "hi" });
+    const r = await extractTarball(tgz);
+    assert.deepEqual(r.unscanned, []);
+  });
+
+  test("a large non-executable file (>2MB .json) is NOT tracked", async () => {
+    const bigJson = '{"a":"' + "x".repeat(3 * 1024 * 1024) + '"}';
+    const tgz = await makeTgz({ "package/data.json": bigJson });
+    const r = await extractTarball(tgz);
+    assert.equal(r.unscanned.length, 0, "large .json is skipped but not executable-looking");
+  });
 });
