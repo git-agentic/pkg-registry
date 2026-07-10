@@ -333,6 +333,23 @@ fleet-wide-DoS path an unauthenticated `confirmed` report previously had
 against any already-audited integrity, while leaving ADR-0023's sensing,
 classification, and serve-time-overlay mechanics untouched (ADR-0040,
 supersedes ADR-0023's auto-quarantine default only).
+Phase 26 Part A closes a **decompression-bomb** gap ADR-0037 didn't cover:
+ADR-0037 bounded compressed fetch bytes, not what happens after — a small
+`.tgz` within the fetch cap can still gzip-bomb into unbounded unpacked bytes
+or entry count. `extractTarball` (`packages/core/src/extract.ts`) now takes
+`maxUnpackedBytes`/`maxFileCount` caps (defaults 1 GiB / 100k) and counts
+decompressed bytes at the gunzip boundary (an owned `node:zlib` decompression,
+not per-tar-entry) — over-cap sets `truncated: true` and calls
+`gunzip.destroy()` to halt decompression, catching bytes that never surface
+as a tar `entry` event. `runAudit` synthesizes a critical `resource-abuse` finding
+(category `resource`) on a truncated **current** tarball, hard-blocking under
+the default policy; a truncated baseline (diff mode) degrades the diff
+without itself blocking. Two new fail-closed, load-once-at-startup env vars,
+`SENTINEL_MAX_UNPACKED_BYTES`/`SENTINEL_MAX_FILE_COUNT`, follow the exact
+`resolvePositiveInt` posture of ADR-0037's four. No wall-time cap — the
+byte/count caps are sufficient and a wall-clock cutoff would break
+determinism (invariant #1). Extends, does not supersede, ADR-0037
+(ADR-0039).
 
 We are the Socket/Chainguard wedge: **do not** try to replace npm. Resolve and
 serve real packages transparently; only attach signal.
@@ -414,6 +431,9 @@ e.g. `true`, is treated as off — matching the `SENTINEL_ENFORCE="1"`
 convention), and enabling it requires `SENTINEL_AUTH_PUBKEY` to
 also be set, or the proxy FATALs at startup — the same fail-closed posture as
 the rest of this list, applied to the auto-quarantine decision itself.
+`SENTINEL_MAX_UNPACKED_BYTES`/`SENTINEL_MAX_FILE_COUNT` (Phase 26 Part A) are
+the same fail-closed, load-once-at-startup posture for `extractTarball`'s
+decompression-bomb caps (unpacked bytes / file count; defaults 1 GiB / 100k).
 
 ## Build / test / run
 

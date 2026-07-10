@@ -42,7 +42,8 @@ export type Category =
   | "install-script"
   | "metadata"
   | "provenance"
-  | "vulnerability";
+  | "vulnerability"
+  | "resource";
 
 export interface Evidence {
   /** File path inside the package (npm convention: `package/<path>`). */

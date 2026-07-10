@@ -959,12 +959,31 @@ throttle protects the expensive read endpoints. Phase 24 closes all four:
   `packages/proxy/src/index.ts` (`resolvePositiveInt`/`resolveRateLimiter`)
   and logged (`limits:` / `rate-limit:` lines); a malformed value is FATAL,
   the same posture as `SENTINEL_AUTH_PUBKEY`/`SENTINEL_TARBALL_ORIGINS`.
+- **Bounded tarball extraction (Phase 26 Part A, `packages/core/src/
+  extract.ts`, ADR-0039).** ADR-0037's byte caps bound only *compressed*
+  fetch bytes; a small `.tgz` can still gzip-bomb into unbounded unpacked
+  bytes or entry count once extraction runs. `extractTarball` owns the
+  gunzip decompression and counts every decompressed byte at that boundary
+  (not per tar-entry) against `maxUnpackedBytes`/`maxFileCount` (defaults
+  1 GiB / 100k, `SENTINEL_MAX_UNPACKED_BYTES`/`SENTINEL_MAX_FILE_COUNT`,
+  same fail-closed startup parsing as the rest of this section), calling
+  `gunzip.destroy()` to halt decompression the moment `maxUnpackedBytes` is
+  exceeded — never a throw, just `truncated: true`. Counting at the
+  decompression boundary catches bytes a per-entry counter would miss (pax/
+  GNU meta headers, non-File entries) since not every decompressed byte
+  surfaces as a tar `entry` event. `runAudit` synthesizes a critical `resource-abuse`
+  finding (category `resource`) when the **current** tarball's extraction
+  was truncated, hard-blocking under the default policy; a truncated
+  baseline extraction (diff mode) degrades the diff without itself
+  blocking. No wall-time cap — byte/count caps are sufficient and a
+  wall-clock cutoff would break scoring determinism (invariant #1).
 
 `limits.ts` and `rate-limit.ts` are pure — no env access, clock injected —
 so the caps and the limiter are unit-tested without wall-clock or network
 I/O. Scoring, the integrity cache key, and the packument passthrough are
 untouched (invariants #1–#6) — see
-[ADR-0037](./docs/adr/0037-resource-robustness.md).
+[ADR-0037](./docs/adr/0037-resource-robustness.md) and
+[ADR-0039](./docs/adr/0039-bounded-tarball-extraction.md).
 
 ### 3.24 Sandbox default-deny — writes + reads (Phase 25, ADR-0038)
 

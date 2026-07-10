@@ -18,7 +18,7 @@ function ensureFixtures(): void {
 
 describe("proxy boot with Phase 24 limit env vars (child process)", () => {
   ensureFixtures();
-  const VARS = ["SENTINEL_MAX_TREE_PACKAGES", "SENTINEL_MAX_TARBALL_BYTES", "SENTINEL_MAX_PACKUMENT_BYTES", "SENTINEL_RATE_LIMIT_RPM"];
+  const VARS = ["SENTINEL_MAX_TREE_PACKAGES", "SENTINEL_MAX_TARBALL_BYTES", "SENTINEL_MAX_PACKUMENT_BYTES", "SENTINEL_RATE_LIMIT_RPM", "SENTINEL_MAX_UNPACKED_BYTES", "SENTINEL_MAX_FILE_COUNT"];
 
   function bootWith(extra: Record<string, string>): Promise<{ code: number; stderr: string }> {
     const env = { ...process.env, SENTINEL_UPSTREAM: "fixtures", SENTINEL_BOOT_EXIT: "1", SENTINEL_PORT: "0" };
@@ -43,6 +43,18 @@ describe("proxy boot with Phase 24 limit env vars (child process)", () => {
 
   test("negative rate limit → FATAL, non-zero exit", async () => {
     const { code, stderr } = await bootWith({ SENTINEL_RATE_LIMIT_RPM: "-5" });
+    assert.notEqual(code, 0);
+    assert.match(stderr, /FATAL/);
+  });
+
+  test("non-integer unpacked cap → FATAL, non-zero exit", async () => {
+    const { code, stderr } = await bootWith({ SENTINEL_MAX_UNPACKED_BYTES: "big" });
+    assert.notEqual(code, 0);
+    assert.match(stderr, /FATAL/);
+  });
+
+  test("zero file-count cap → FATAL, non-zero exit", async () => {
+    const { code, stderr } = await bootWith({ SENTINEL_MAX_FILE_COUNT: "0" });
     assert.notEqual(code, 0);
     assert.match(stderr, /FATAL/);
   });
