@@ -12,23 +12,28 @@ const src = join(here, "..", "native", "landlock-exec.c");
 const outDir = join(here, "..", "dist");
 const out = join(outDir, "landlock-exec");
 
-if (process.platform !== "linux") {
-  console.log(`[build-native] skip: not linux (${process.platform}) — advisory floor will be used`);
+try {
+  if (process.platform !== "linux") {
+    console.log(`[build-native] skip: not linux (${process.platform}) — advisory floor will be used`);
+    process.exit(0);
+  }
+  const cc = spawnSync("cc", ["--version"], { encoding: "utf8" });
+  if (cc.error || cc.status !== 0) {
+    console.log("[build-native] skip: no cc on PATH — advisory floor will be used");
+    process.exit(0);
+  }
+  if (!existsSync(src)) {
+    console.log(`[build-native] skip: source not found at ${src}`);
+    process.exit(0);
+  }
+  if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true });
+  const r = spawnSync("cc", ["-O2", "-o", out, src], { stdio: "inherit" });
+  if (r.status !== 0) {
+    console.log("[build-native] skip: compile failed — advisory floor will be used");
+    process.exit(0);
+  }
+  console.log(`[build-native] built ${out}`);
+} catch (e) {
+  console.log(`[build-native] skip: unexpected error (${e?.message ?? e}) — advisory floor will be used`);
   process.exit(0);
 }
-const cc = spawnSync("cc", ["--version"], { encoding: "utf8" });
-if (cc.error || cc.status !== 0) {
-  console.log("[build-native] skip: no cc on PATH — advisory floor will be used");
-  process.exit(0);
-}
-if (!existsSync(src)) {
-  console.log(`[build-native] skip: source not found at ${src}`);
-  process.exit(0);
-}
-if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true });
-const r = spawnSync("cc", ["-O2", "-o", out, src], { stdio: "inherit" });
-if (r.status !== 0) {
-  console.log("[build-native] skip: compile failed — advisory floor will be used");
-  process.exit(0);
-}
-console.log(`[build-native] built ${out}`);
