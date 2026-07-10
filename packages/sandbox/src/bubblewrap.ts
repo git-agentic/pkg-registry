@@ -83,6 +83,11 @@ export class BubblewrapSandbox implements Sandbox {
       ...generateBwrapArgs(opts.approved, {
         homeDir: opts.homeDir, cwd: opts.cwd, tmpDir: tmpdir(), pathExists: existsSync, realpath: safeRealpath,
         nodePrefix, projectRoot,
+        // The helper's own directory must stay visible inside the sandbox even when it
+        // lands under $HOME (e.g. a CI checkout at ~/work/...) and neither the node
+        // prefix nor the project root happen to cover it — bwrap execs it directly,
+        // before Landlock's own ruleset is active, so it needs plain fs visibility.
+        extraReadAllow: useLandlock ? [dirname(landlockHelperPath())] : undefined,
       }),
       ...inner,
     ];

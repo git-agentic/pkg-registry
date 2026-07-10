@@ -23,6 +23,11 @@ export function generateBwrapArgs(
     pathExists?: (p: string) => boolean;
     /** resolves symlinks; defaults to identity (kept pure for tests). Real callers pass realpathSync-ish. */
     realpath?: (p: string) => string;
+    /** Extra read-only paths re-opened alongside the Slice 2 read-allow list — e.g. the
+     * Landlock helper's own directory (Phase 2), which can land under $HOME on a CI
+     * checkout and would otherwise be hidden by the `--tmpfs $HOME` deny even though
+     * it's neither the node prefix nor the project root. */
+    extraReadAllow?: string[];
   },
 ): string[] {
   const approvedFs = approved.filter((c) => c.kind === "filesystem").map((c) => c.target);
@@ -44,7 +49,7 @@ export function generateBwrapArgs(
     .filter((p) => p !== "/dev");
   // Slice 2 read-allow, expanded; guard against re-opening $HOME itself or an ancestor
   // (e.g. a projectRoot that resolved to $HOME) — that would nullify the `--tmpfs $HOME`.
-  const ro = readAllowList({ nodePrefix: opts.nodePrefix, projectRoot: opts.projectRoot })
+  const ro = [...readAllowList({ nodePrefix: opts.nodePrefix, projectRoot: opts.projectRoot }), ...(opts.extraReadAllow ?? [])]
     .map((p) => expandHome(p, home))
     .filter((p) => p !== home && !home.startsWith(p + "/"));
 
