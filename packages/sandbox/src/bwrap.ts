@@ -3,6 +3,7 @@ import { pathCovers } from "./path-cover.js";
 import { expandHome, isSafeGrantTarget } from "./deny-set.js";
 import { writeAllowFloor } from "./write-floor.js";
 import { readAllowList } from "./read-allow.js";
+import { SENSITIVE_EXECUTABLES, execCarveOutPaths, classifyProcessTarget } from "./sensitive-executables.js";
 
 /**
  * Generate `bwrap` argv from a package's APPROVED capabilities (Phase 25).
@@ -65,6 +66,28 @@ export function generateBwrapArgs(
       if (!exists(target)) continue;
       if (sp.denyKind === "subpath") args.push("--tmpfs", target);
       else args.push("--ro-bind", "/dev/null", target);
+    }
+  }
+
+  // Exfil-tool carve-out (Phase 29): mask each SENSITIVE_EXECUTABLES literal with
+  // /dev/null so exec of it fails (execve on a non-regular file → EACCES), unless an
+  // approved `process:` Grant covers it. Reuses the SENSITIVE-read mask pattern above.
+  // There is NO exec FLOOR on Linux — bwrap can't path-gate exec (advisory by decision,
+  // ADR-0043); only these known literals are exec-denied.
+  const procTargets = approved.filter((c) => c.kind === "process").map((c) => c.target);
+  const grantedCmds = new Set(procTargets.filter((t) => classifyProcessTarget(t) === "command"));
+  const execWildcard = procTargets.some((t) => classifyProcessTarget(t) === "wildcard");
+  const execPathGrants = procTargets
+    .filter((t) => classifyProcessTarget(t) === "path" && isSafeGrantTarget(t))
+    .map((p) => expandHome(p, home));
+  if (!execWildcard) {
+    for (const cmd of SENSITIVE_EXECUTABLES) {
+      if (grantedCmds.has(cmd)) continue;
+      for (const lit of execCarveOutPaths(cmd)) {
+        if (execPathGrants.some((g) => pathCovers(g, lit))) continue;
+        if (!exists(lit)) continue;
+        args.push("--ro-bind", "/dev/null", lit);
+      }
     }
   }
 
