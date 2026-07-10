@@ -274,7 +274,7 @@ top-level commands (a commander-15 quirk with nested `requiredOption`s made
 a true subcommand impractical). See
 [ADR-0032](./docs/adr/0032-signed-audit-attestations.md).
 
-### Sandbox — default-deny (Phases 3–5, 25, 28, 29; macOS Seatbelt / Linux bubblewrap)
+### Sandbox — default-deny (Phases 3–5, 25, 28, 29, Phase 2/Landlock; macOS Seatbelt / Linux bubblewrap)
 
 `sentinel run-scripts <package-dir> [--approve network:host …]` runs the package's lifecycle scripts under a kernel sandbox generated from its approved capabilities — `createSandbox()` selects **Seatbelt** on macOS and **bubblewrap** on Linux, same capability model and fail-closed contract. As of Phase 25 the sandbox is **deny-by-default** (ADR-0038):
 
@@ -290,13 +290,22 @@ a true subcommand impractical). See
   or a cache is kernel-denied; a binary the package writes into its *own* project
   tree can still exec there (the floor includes the project root), mitigated by the
   `unscanned-content` finding and `process` capability scoring, not kernel denial.
-- **Exec** (Linux, Phase 29) has no floor equivalent — bwrap cannot path-gate exec
-  at all (no `noexec` mount option) — but the same exfil-capable tools (`curl`,
-  `wget`, `nc`, …) are individually exec-denied by masking each with
-  `--ro-bind /dev/null <path>` unless a `process:` Grant lifts it. A binary
-  dropped into a writable location can still exec on Linux (still fs+network
-  confined). A true cross-platform floor needs Landlock (a native syscall
-  piece), deferred pre-1.0 — issue #8 stays open (ADR-0043).
+- **Exec** (Linux, Phase 29 + Phase 2/Landlock) always exec-denies the
+  exfil-capable tools (`curl`, `wget`, `nc`, …) by masking each with
+  `--ro-bind /dev/null <path>` unless a `process:` Grant lifts it (bwrap itself
+  cannot path-gate exec — no `noexec` mount option). As of Phase 2 the exec
+  **floor** is also enforced where a from-source Landlock helper is available:
+  `landlock-exec`, compiled by `npm run build` (Linux + `cc` only, a no-op
+  elsewhere) and invoked inside bwrap, applies `LANDLOCK_ACCESS_FS_EXECUTE`
+  over the floor (`execAllowFloor` plus the library/linker dirs `/lib`,
+  `/lib64`, `/usr/lib`, `/usr/lib64`) before exec'ing the script — a dropped
+  binary outside that floor is kernel-denied, matching the macOS behavior.
+  Detection is fail-open and pre-checked (helper present AND a `--check` ABI
+  probe passes, cached); anything else falls back to the Phase 29 advisory
+  floor with a one-time notice — no availability regression on hosts without
+  Landlock or a `cc` toolchain, which stay filesystem+network confined as
+  before. The `/dev/null` exfil-tool carve-out is unchanged either way
+  (ADR-0043, ADR-0044).
 
 A denied credential read surfaces as a confirmed runtime violation on Seatbelt (EPERM); on bubblewrap the read is *contained* (a `--tmpfs` mask yields `ENOENT`) but not classified — an accepted telemetry asymmetry (ADR-0023). Both backends contain; only the telemetry differs.
 
