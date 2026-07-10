@@ -309,4 +309,12 @@ describe("generateBwrapArgs — under-$HOME process: path-grant visibility (issu
     const args = generateBwrapArgs([proc("*"), proc("~/tools/bin/x")], OPTS2);
     assert.ok(binds(args, "--ro-bind-try").includes("/home/x/tools/bin/x"));
   });
+
+  test("grant shapes that normalize to $HOME ('~//', '~/.', trailing '/') are dropped — argv identical to no-grant baseline (#28)", () => {
+    const baseline = generateBwrapArgs([], OPTS2);
+    for (const shape of ["~//", "~/.", "/home/x/", "/home/x/."]) {
+      assert.deepEqual(generateBwrapArgs([proc(shape)], OPTS2), baseline, `process:${shape} must be inert`);
+      assert.deepEqual(generateBwrapArgs([fs(shape)], OPTS2), baseline, `filesystem:${shape} must be inert`);
+    }
+  });
 });

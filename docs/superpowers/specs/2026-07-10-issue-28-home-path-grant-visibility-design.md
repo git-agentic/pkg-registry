@@ -42,10 +42,11 @@ re-binds (step 3), before the rw binds (step 4).
   already in `--allow` (#25); on an advisory host the visible file simply
   execs.
 - **Strictly-under filtering** keeps the argv byte-identical for every
-  configuration without an under-home path grant, and structurally prevents
-  re-binding `$HOME` itself or an ancestor (which would nullify the tmpfs) —
-  including an absolute grant target literally equal to `homeDir`, which the
-  syntactic guard below cannot see.
+  configuration without an under-home path grant, and prevents re-binding
+  `$HOME` itself or an ancestor (which would nullify the tmpfs) — including an
+  absolute grant target literally equal to `homeDir`, which the syntactic
+  guard below cannot see (with the §2 guard rejecting the `.`/empty-segment
+  shapes that would normalize back to it).
 - Grants **outside** `$HOME` (e.g. `/opt/vendor/bin/tool`) get no re-bind —
   they're already visible through the `--ro-bind / /` root.
 - The `execWildcard` check keeps wrapping only the mask loop — a path grant
@@ -62,7 +63,12 @@ re-binds (step 3), before the rw binds (step 4).
 export function isSafeGrantTarget(target: string): boolean {
   if (!target || target === "*" || target === "/") return false;
   if (target === "~" || target === "~/") return false; // expands to all of $HOME (#28)
-  return !target.split("/").includes("..");
+  // A `.` or empty (non-leading) segment lets the path normalize back to an
+  // ancestor at mount/rule time (e.g. `~//`, `~/.`, `/home/x/` → $HOME itself),
+  // defeating every strictly-under check downstream (#28) — reject fail-closed,
+  // same class as `..`.
+  const segs = target.split("/");
+  return !segs.some((s, i) => s === ".." || s === "." || (s === "" && i > 0));
 }
 ```
 
@@ -81,6 +87,12 @@ Phase 28 semantics). Fail-closed direction; operator-gated either way. A
 literal absolute path equal to `homeDir` (e.g. `filesystem:/home/user`) still
 passes the syntactic guard — maximally explicit operator intent, and the
 strictly-under filter in (1) keeps even that from nullifying the tmpfs.
+
+Follow-up hardening from the final whole-branch review: a "." or non-leading
+empty segment (trailing slash, //) is rejected too — such a target normalizes
+back to an ancestor at mount/rule time (e.g. ~// → $HOME itself), defeating
+the strictly-under filter; this also closes the pre-existing filesystem:~//
+rw variant of the same class.
 
 ### 3. No classifier change
 
