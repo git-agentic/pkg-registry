@@ -274,7 +274,7 @@ top-level commands (a commander-15 quirk with nested `requiredOption`s made
 a true subcommand impractical). See
 [ADR-0032](./docs/adr/0032-signed-audit-attestations.md).
 
-### Sandbox — default-deny (Phases 3–5 + 25; macOS Seatbelt / Linux bubblewrap)
+### Sandbox — default-deny (Phases 3–5, 25, 28; macOS Seatbelt / Linux bubblewrap)
 
 `sentinel run-scripts <package-dir> [--approve network:host …]` runs the package's lifecycle scripts under a kernel sandbox generated from its approved capabilities — `createSandbox()` selects **Seatbelt** on macOS and **bubblewrap** on Linux, same capability model and fail-closed contract. As of Phase 25 the sandbox is **deny-by-default** (ADR-0038):
 
@@ -282,6 +282,13 @@ a true subcommand impractical). See
 - **`$HOME` reads** are denied by default, re-allowing only what a lifecycle script needs: system paths, the node install prefix (so a node-under-`$HOME` nvm/fnm/volta runtime still loads its stdlib), the project root (so `require()` resolves), and the build caches — closing credential theft as a whole class. `/etc/passwd`/`/etc/shadow` stay denied via the `SENSITIVE_PATHS` carve-out.
 - **Network egress** is denied unless a `network` capability is approved.
 - **Environment secrets** are fail-closed **scrubbed** (Phase 4): a credential-looking env var (`NPM_TOKEN`, `AWS_SECRET_ACCESS_KEY`, …) never reaches the script unless approved with an `env:NAME` capability. The `secret-exfil` audit rule additionally flags env reads at scoring time.
+- **Exec** (macOS, Phase 28) is denied outside a fixed floor — system dirs, the node
+  prefix, the project tree, Apple/Homebrew toolchains — plus approved `process:`
+  grants (`process:curl` lifts one tool's carve-out; `process:/path` opens a path;
+  `process:*` lifts the carve-out only), and exfil-capable tools (`curl`, `wget`,
+  `nc`, …) are re-denied inside the floor unless granted. A dropped binary in `/tmp`
+  or a cache is kernel-denied. Linux exec gating (Landlock) is Phase 29 — until it
+  lands, exec on Linux remains advisory (ADR-0042).
 
 A denied credential read surfaces as a confirmed runtime violation on Seatbelt (EPERM); on bubblewrap the read is *contained* (a `--tmpfs` mask yields `ENOENT`) but not classified — an accepted telemetry asymmetry (ADR-0023). Both backends contain; only the telemetry differs.
 

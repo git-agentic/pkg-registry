@@ -158,18 +158,23 @@ deny-sensitive Seatbelt (SBPL) profile, each deny relaxed by an approved capabil
 `SeatbeltSandbox` runs each lifecycle script under it via `sandbox-exec` (failing closed
 off-darwin). `sentinel run-scripts <dir>` ties it together and, on a loud failure, reports
 the detected-but-unapproved capabilities (inferred, best-effort). A child process inherits
-the *filesystem/network* confinement of the sandbox — but see the enforcement-scope note
-below: the **spawn itself is not gated**. Full `npm install --enforce` orchestration is
-deferred.
+the *filesystem/network* confinement of the sandbox — and, as of Phase 28, the spawn itself
+is also gated on macOS; see the enforcement-scope note below. Full `npm install --enforce`
+orchestration is deferred.
 
-**Enforcement scope — `process`/`native` are advisory-only (not enforced).** The
-capability model exposes `process` and `native` as approvable kinds and the
-`capability-novelty` rule scores a newly-added `process` capability, but neither backend
-restricts process execution: the Seatbelt profile opens `(allow default)` with no
-`process-exec*` deny, and the bwrap argv adds no `--unshare-pid`/seccomp exec restriction.
-So an unapproved `child_process` spawn or native/WASM exec is **permitted** — the
-enforced surface is filesystem + network + env only. Whether to implement a real exec
-policy or formally keep these as scoring-only signal is tracked in
+**Enforcement scope — `process` enforced on macOS (Phase 28); Linux pending; `native`
+advisory by decision.** The Seatbelt profile denies `process-exec*` by default,
+re-allows a fixed exec floor (`execAllowFloor`: system dirs, the node prefix, the
+project root, Apple/Homebrew toolchains) plus approved `process:` path-Grants, then
+re-denies a curated `SENSITIVE_EXECUTABLES` carve-out (curl, wget, nc, …) unless a
+command/wildcard Grant lifts it — so an unapproved exec of a dropped binary outside
+the project tree is kernel-denied (ADR-0042). On Linux, exec remains advisory until
+the Landlock-based Phase 29 lands (bwrap alone cannot path-filter exec). `native`
+(dlopen/WASM) is formally advisory-only on both platforms — no path-level primitive
+distinguishes loading an artifact from reading it. The projectRoot-in-floor residual
+(a package executing a binary written into its own tree) is a recorded ADR-0042
+trade-off, mitigated by `unscanned-content` (ADR-0041) and `process` capability
+scoring. Enforce-vs-advisory for Linux exec is tracked in
 [#8](https://github.com/git-agentic/pkg-registry/issues/8).
 
 **Enforced surface (Phase 3):** sensitive file reads + network egress. `SENSITIVE_PATHS`

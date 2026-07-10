@@ -16,10 +16,10 @@ private-namespace registry (packages scoped to claimed namespaces are served onl
 the private store).
 Phase 3 adds **`@sentinel/sandbox`** — a macOS Seatbelt / Linux bubblewrap runner, selected
 by `createSandbox()`, that enforces the **filesystem, network, and env** portions of a
-package's approved capability manifest at install time (`sentinel run-scripts`). Note: the
-`process` and `native` capability kinds are **detected and scored (advisory-only), not
-enforced** — neither backend restricts process execution, so a child process inherits the
-filesystem/network confinement but the act of spawning it is ungated (tracked in #8).
+package's approved capability manifest at install time (`sentinel run-scripts`). Note: as
+of Phase 28 the `process` kind is **enforced on macOS** (exec deny-by-default, ADR-0042);
+on Linux it remains advisory until Phase 29 (Landlock), and `native` is advisory-only on
+both platforms by decision (tracked in #8).
 Synthetic malware fixtures are still scored-as-text and
 **never executed**; enforcement is tested with benign probe packages.
 Phase 4 hardened the sandbox: fail-closed env-var scrubbing via an `env` capability
@@ -376,6 +376,27 @@ are unchanged; a policy setting `provenanceIdentities` without
 (which exempts `unknown` per ADR-0022 by design) — operators should pair the
 two gates (#12). ADR-0041 extends ADR-0039 and ADR-0022; supersedes neither.
 
+Phase 28 enforces the `process` capability on macOS: Seatbelt gains an
+**exec deny-by-default** layer mirroring Phase 25's write layering —
+`(deny process-exec*)`, re-allow a fixed `execAllowFloor` (`packages/sandbox/
+src/exec-floor.ts`: /bin, /usr/bin, /usr/sbin, node prefix, project root,
+/Library/Developer, /Applications/Xcode.app, /opt/homebrew, /usr/local) plus
+approved `process:` path-Grants, then re-deny a curated `SENSITIVE_EXECUTABLES`
+carve-out (`sensitive-executables.ts`: curl, wget, nc, ncat, socat, osascript,
+scp, sftp — fixed literals across the floor's bin dirs, no PATH resolution)
+unless a command/wildcard Grant lifts it. Grant shapes: bare word ⇒ lifts that
+command's carve-out; contains `/` or starts `~` ⇒ path Grant (guarded by
+`isSafeGrantTarget`); `*` ⇒ lifts the whole carve-out, opens no paths.
+`process-fork` stays allowed. `computeDenySet` mirrors the exec sets
+(non-drift-tested) and `classifyViolation` attributes denied execs, using the
+write floor to disambiguate the shell's ambiguous "Operation not permitted"
+line (writable location ⇒ confirmed; outside both floors ⇒ suspected).
+Accepted residual: projectRoot is in the floor, so a package can exec a binary
+written into its own tree (mitigated by `unscanned-content` + `process`
+scoring). Linux exec is unchanged pending Phase 29 (Landlock, needs a small
+native piece); `native` is formally advisory-only on both platforms. Scoring
+and the approval model are untouched (invariants #1–#7, ADR-0042).
+
 We are the Socket/Chainguard wedge: **do not** try to replace npm. Resolve and
 serve real packages transparently; only attach signal.
 
@@ -464,15 +485,15 @@ decompression-bomb caps (unpacked bytes / file count; defaults 1 GiB / 100k).
 
 ```bash
 npm run build            # tsc --build (project references: core → proxy/cli)
-npm test                 # engine + end-to-end proxy: 690 tests on this host (688 pass, 2 skipped on darwin).
+npm test                 # engine + end-to-end proxy: 725 tests on this host (723 pass, 2 skipped on darwin).
                          # Skips are platform-gated enforcement: "non-darwin throws" skips on darwin
                          # (it verifies darwin-only behaviour), and the "no silent skip" CI guard skips
                          # off-CI. The BubblewrapSandbox enforcement suite and the Linux enforce-e2e tests
-                         # skip as describe-level blocks on darwin ("requires Linux") and are not in the 690
+                         # skip as describe-level blocks on darwin ("requires Linux") and are not in the 725
                          # count. Phase 10's violation-enforce e2e and the darwin-gated runtime-violation
                          # effect test (SeatbeltSandbox: "a denied credential read surfaces a confirmed
                          # runtime violation") RUN on darwin via Seatbelt, the same way the rest of the
-                         # Seatbelt effect suite does, and ARE in the 690 count. Phase 25 Slice 1's
+                         # Seatbelt effect suite does, and ARE in the 725 count. Phase 25 Slice 1's
                          # write-floor SeatbeltSandbox enforcement effect tests (positive control on
                          # the floor, persistence carve-out under a fake $HOME inside the floor's
                          # temp dir, a real /dev/null redirect) are likewise darwin-gated and RUN on
@@ -526,7 +547,11 @@ npm test                 # engine + end-to-end proxy: 690 tests on this host (68
                          # git-agentic/pkg-registry; the darwin count is one lower with one more skip (the
                          # bubblewrap enforcement suite is a describe-level skip off Linux). Each
                          # platform's enforcement is verified on that platform (macOS dev host /
-                         # ubuntu-latest CI).
+                         # ubuntu-latest CI). Phase 28's exec-floor/sensitive-executables/profile-exec/
+                         # deny-set-exec/violation-exec unit tests are hermetic and platform-neutral;
+                         # its three Seatbelt exec effect tests (floor positive control, dropped-binary
+                         # denial + confirmed process violation, curl carve-out lift) are darwin-gated
+                         # and RUN on darwin.
 npm run demo             # offline malware-detection walkthrough
 node packages/proxy/dist/index.js   # run the proxy (see README for env vars)
 ```
