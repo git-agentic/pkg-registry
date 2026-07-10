@@ -159,4 +159,42 @@ describe("BubblewrapSandbox enforcement", { skip }, () => {
     // (the accepted Seatbelt/bwrap telemetry asymmetry; report is Seatbelt-only, ADR-0023).
     assert.ok(r.stdout.includes("READ_DENIED") && !r.stdout.includes("LEAK"), "the non-allow-listed $HOME read must be contained" + diag);
   });
+
+  test("the curl carve-out is denied without a Grant and lifted by process:curl", () => {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "bw-exec-curl-")));
+    const proj = join(home, "proj"); mkdirSync(proj);
+    const out = join(proj, "curl-out.txt");
+    // curl masked → exec fails; script writes nothing useful:
+    new BubblewrapSandbox().run(`/usr/bin/curl --version > "${out}" 2>/dev/null || true`,
+      { cwd: proj, approved: [], homeDir: home, projectRoot: proj });
+    const denied = existsSync(out) ? readFileSync(out, "utf8") : "";
+    assert.ok(!denied.includes("curl"), "curl must not run without a Grant");
+
+    const approved: Capability[] = [{ kind: "process", target: "curl", evidence: [] }];
+    new BubblewrapSandbox().run(`/usr/bin/curl --version > "${out}"`,
+      { cwd: proj, approved, homeDir: home, projectRoot: proj });
+    assert.ok(readFileSync(out, "utf8").includes("curl"), "an approved process:curl must run");
+  });
+
+  test("a denied curl exec surfaces a confirmed process violation", () => {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "bw-exec-viol-")));
+    const proj = join(home, "proj"); mkdirSync(proj);
+    const res = new BubblewrapSandbox().run(`/usr/bin/curl --version`,
+      { cwd: proj, approved: [], homeDir: home, projectRoot: proj });
+    assert.notEqual(res.exitCode, 0);
+    assert.equal(res.violation?.kind, "process");
+    assert.equal(res.violation?.confidence, "confirmed");
+  });
+
+  test("positive control: a node_modules/.bin shim and node still run (carve-out doesn't over-block)", () => {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "bw-exec-pos-")));
+    const proj = join(home, "proj"); mkdirSync(join(proj, "node_modules", ".bin"), { recursive: true });
+    const shim = join(proj, "node_modules", ".bin", "hello");
+    writeFileSync(shim, "#!/bin/sh\necho SHIM-OK\n", { mode: 0o755 });
+    const res = new BubblewrapSandbox().run(`node -e "console.log('NODE-OK')" && "${shim}"`,
+      { cwd: proj, approved: [], homeDir: home, projectRoot: proj });
+    assert.equal(res.exitCode, 0, res.stderr);
+    assert.match(res.stdout, /NODE-OK/);
+    assert.match(res.stdout, /SHIM-OK/);
+  });
 });
