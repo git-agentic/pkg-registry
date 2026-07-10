@@ -1,6 +1,6 @@
 import { sensitivePathsFor, type Capability } from "@sentinel/core";
 import { pathCovers } from "./path-cover.js";
-import { execAllowFloor } from "./exec-floor.js";
+import { execAllowFloor, linuxExecFloor } from "./exec-floor.js";
 import { SENSITIVE_EXECUTABLES, execCarveOutPaths, classifyProcessTarget } from "./sensitive-executables.js";
 import { writeAllowFloor } from "./write-floor.js";
 
@@ -18,6 +18,8 @@ export interface DenySet {
   execDeniedPaths?: string[];
   /** the write floor, expanded + canonicalized (disambiguates exec vs write denials) */
   writeAllowedPaths?: string[];
+  /** "linux-landlock" when the Linux exec FLOOR is enforced (Landlock helper active); absent otherwise */
+  execFloorMode?: "linux-landlock";
 }
 
 /**
@@ -66,7 +68,7 @@ export function canonicalizeMacPath(p: string): string {
  */
 export function computeDenySet(
   approved: Capability[],
-  opts: { homeDir: string; platform: "darwin" | "linux"; nodePrefix?: string; projectRoot?: string; cwd?: string; tmpDir?: string },
+  opts: { homeDir: string; platform: "darwin" | "linux"; nodePrefix?: string; projectRoot?: string; cwd?: string; tmpDir?: string; landlockFloor?: boolean },
 ): DenySet {
   const approvedFs = approved.filter((c) => c.kind === "filesystem").map((c) => c.target);
   const networkDenied = !approved.some((c) => c.kind === "network");
@@ -96,6 +98,18 @@ export function computeDenySet(
       .filter((cmd) => !lGrantedCmds.has(cmd))
       .flatMap((cmd) => execCarveOutPaths(cmd))
       .filter((p) => !lPathGrants.some((g) => pathCovers(g, p)));
+    // Phase 2: when the Landlock exec FLOOR is active, model a real floor so
+    // classifyViolation can attribute a floor-outside exec denial. Otherwise the
+    // exact Phase 29 shape (carve-out only, no floor).
+    if (opts.landlockFloor && opts.nodePrefix && opts.projectRoot) {
+      return {
+        ...base,
+        execDenied: true,
+        execDeniedPaths: lDenied,
+        execAllowedPaths: linuxExecFloor({ nodePrefix: opts.nodePrefix, projectRoot: opts.projectRoot }),
+        execFloorMode: "linux-landlock",
+      };
+    }
     return { ...base, execDenied: lDenied.length > 0, execDeniedPaths: lDenied };
   }
 

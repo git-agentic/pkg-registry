@@ -171,6 +171,34 @@ describe("computeDenySet ↔ generateBwrapArgs Linux non-drift (Phase 29)", () =
   });
 });
 
+describe("computeDenySet — Linux Landlock floor mode (Phase 2)", () => {
+  const L = { homeDir: "/home/test", platform: "linux" as const, nodePrefix: "/usr", projectRoot: "/work/pkg", cwd: "/work/pkg", tmpDir: "/tmp/x" };
+
+  test("landlockFloor populates execAllowedPaths (linuxExecFloor) + sets execFloorMode + execDenied", () => {
+    const ds = computeDenySet([], { ...L, landlockFloor: true });
+    assert.equal(ds.execFloorMode, "linux-landlock");
+    assert.equal(ds.execDenied, true);
+    assert.ok(ds.execAllowedPaths!.includes("/bin"), "floor has /bin");
+    assert.ok(ds.execAllowedPaths!.includes("/lib64"), "floor has the lib dirs");
+    assert.ok(ds.execAllowedPaths!.includes("/work/pkg"), "floor has projectRoot");
+    assert.ok(ds.execDeniedPaths!.some((p) => p.endsWith("/curl")), "carve-out literals still present");
+  });
+
+  test("execDenied is true even when all carve-out is granted away (the floor still denies)", () => {
+    const ds = computeDenySet([procCap("*")], { ...L, landlockFloor: true });
+    assert.equal(ds.execDenied, true);
+    assert.deepEqual(ds.execDeniedPaths, []);
+    assert.ok((ds.execAllowedPaths?.length ?? 0) > 0);
+  });
+
+  test("without landlockFloor: EXACT Phase 29 shape (no floor, no execFloorMode)", () => {
+    const ds = computeDenySet([], L);
+    assert.equal(ds.execFloorMode, undefined);
+    assert.equal(ds.execAllowedPaths, undefined);
+    assert.ok(ds.execDeniedPaths!.some((p) => p.endsWith("/curl")));
+  });
+});
+
 describe("isSafeGrantTarget", () => {
   test("safe targets are allowed", () => {
     assert.ok(isSafeGrantTarget(".zshrc"));
