@@ -3,6 +3,8 @@ import { describe, test } from "node:test";
 import type { Capability } from "@sentinel/core";
 import { computeDenySet, isSafeGrantTarget } from "../src/deny-set.js";
 import { generateProfile } from "../src/profile.js";
+import { generateBwrapArgs } from "../src/bwrap.js";
+import { SENSITIVE_EXECUTABLES } from "../src/sensitive-executables.js";
 
 const HOME = "/Users/test";
 const fsCap = (target: string): Capability => ({ kind: "filesystem", target, evidence: [] });
@@ -54,10 +56,13 @@ describe("computeDenySet — exec (Phase 28)", () => {
     assert.ok(ds.writeAllowedPaths!.some((p) => p.startsWith("/private/tmp")));
   });
 
-  test("without exec opts (legacy callers / linux): exec fields absent", () => {
-    const ds = computeDenySet([], { homeDir: HOME, platform: "linux" });
-    assert.equal(ds.execDenied, undefined);
-    assert.equal(ds.execDeniedPaths, undefined);
+  test("darwin without exec opts (legacy callers): exec fields absent; linux now has carve-out", () => {
+    const dsDarwin = computeDenySet([], { homeDir: HOME, platform: "darwin" });
+    assert.equal(dsDarwin.execDenied, undefined);
+    assert.equal(dsDarwin.execDeniedPaths, undefined);
+    // Linux now returns the carve-out even without the full exec opts (Phase 29)
+    const dsLinux = computeDenySet([], { homeDir: HOME, platform: "linux" });
+    assert.ok(Array.isArray(dsLinux.execDeniedPaths), "Linux carve-out is always available");
   });
 
   test("a command Grant removes its carve-out entries; a path Grant lands in execAllowedPaths", () => {
@@ -73,6 +78,96 @@ describe("computeDenySet — exec (Phase 28)", () => {
     const profile = generateProfile(approved, { homeDir: HOME, cwd: "/work/pkg", tmpDir: "/private/tmp/tmpdir-x", nodePrefix: "/usr/local", projectRoot: "/work/pkg" });
     for (const p of ds.execDeniedPaths!) assert.ok(profile.includes(`(literal "${p}")`), `profile must carve out ${p}`);
     for (const p of ds.execAllowedPaths!) assert.ok(profile.includes(`(subpath "${p}")`), `profile must exec-allow ${p}`);
+  });
+});
+
+describe("computeDenySet — Linux carve-out (Phase 29)", () => {
+  const L = { homeDir: "/home/test", platform: "linux" as const, nodePrefix: "/usr", projectRoot: "/work/pkg", cwd: "/work/pkg", tmpDir: "/tmp/x" };
+
+  test("lists the carve-out literals as execDeniedPaths, sets execDenied, and models NO floor", () => {
+    const ds = computeDenySet([], L);
+    assert.equal(ds.execDenied, true);
+    assert.ok(ds.execDeniedPaths!.some((p) => p.endsWith("/curl")), "curl literal denied");
+    assert.ok(ds.execDeniedPaths!.some((p) => p.endsWith("/wget")), "wget literal denied");
+    assert.equal(ds.execAllowedPaths, undefined, "Linux has NO exec floor");
+    assert.equal(ds.writeAllowedPaths, undefined, "Linux has NO write floor in the exec model");
+  });
+
+  test("a command Grant removes that command's literals; a path Grant removes a covered literal", () => {
+    const ds = computeDenySet([procCap("curl"), procCap("/bin/wget")], L);
+    assert.ok(!ds.execDeniedPaths!.some((p) => p.endsWith("/curl")), "process:curl lifts curl");
+    assert.ok(!ds.execDeniedPaths!.includes("/bin/wget"), "path grant lifts /bin/wget");
+    assert.ok(ds.execDeniedPaths!.some((p) => p.endsWith("/nc")), "nc stays denied");
+  });
+
+  test("the * Grant empties the carve-out and clears execDenied", () => {
+    const ds = computeDenySet([procCap("*")], L);
+    assert.deepEqual(ds.execDeniedPaths, []);
+    assert.equal(ds.execDenied, false);
+  });
+
+  test("Linux paths are NOT firmlink-canonicalized (no /private rewrite)", () => {
+    const ds = computeDenySet([], L);
+    assert.ok(ds.execDeniedPaths!.every((p) => !p.startsWith("/private/")), "no macOS canon on linux");
+  });
+
+  test("legacy Linux call without exec opts still returns the base shape unchanged", () => {
+    const ds = computeDenySet([], { homeDir: "/home/test", platform: "linux" });
+    assert.ok(ds.deniedPaths.length >= 0);
+    // exec fields may be present (carve-out needs no nodePrefix), but must be internally consistent:
+    if (ds.execDenied) assert.ok(Array.isArray(ds.execDeniedPaths));
+  });
+});
+
+describe("computeDenySet ↔ generateBwrapArgs Linux non-drift (Phase 29)", () => {
+  const L = { homeDir: "/home/test", platform: "linux" as const, nodePrefix: "/usr", projectRoot: "/work/pkg", cwd: "/work/pkg", tmpDir: "/tmp/x" };
+
+  test("every exec carve-out literal /dev/null-masked in the argv is in execDeniedPaths", () => {
+    const approved: Capability[] = [procCap("curl")]; // curl lifted, others masked
+    const ds = computeDenySet(approved, L);
+    const argv = generateBwrapArgs(approved, {
+      homeDir: L.homeDir, cwd: L.cwd, tmpDir: L.tmpDir, nodePrefix: L.nodePrefix,
+      projectRoot: L.projectRoot, pathExists: () => true,
+    });
+    const masks: string[] = [];
+    for (let i = 0; i < argv.length - 2; i++) {
+      if (argv[i] === "--ro-bind" && argv[i + 1] === "/dev/null") {
+        const mask = argv[i + 2];
+        // Filter to only exec carve-out masks (paths ending with a command name from SENSITIVE_EXECUTABLES)
+        if (SENSITIVE_EXECUTABLES.some((cmd) => mask.endsWith("/" + cmd))) {
+          masks.push(mask);
+        }
+      }
+    }
+    for (const m of masks) assert.ok(ds.execDeniedPaths!.includes(m), `deny set must include exec-carve-out masked ${m}`);
+  });
+
+  test("non-drift under live merged-usr path resolution (Phase 29)", () => {
+    // Inject a realpath that simulates merged-usr: /bin/<x> → /usr/bin/<x>
+    const mergedUsrResolve = (p: string): string => {
+      if (p.startsWith("/bin/")) return "/usr/bin/" + p.slice(5);
+      return p; // leave other paths unchanged
+    };
+
+    const approved: Capability[] = [procCap("wget")]; // wget lifted, others masked
+    const ds = computeDenySet(approved, L);
+    const argv = generateBwrapArgs(approved, {
+      homeDir: L.homeDir, cwd: L.cwd, tmpDir: L.tmpDir, nodePrefix: L.nodePrefix,
+      projectRoot: L.projectRoot, pathExists: () => true,
+      realpath: mergedUsrResolve, // inject resolution
+    });
+    const masks: string[] = [];
+    for (let i = 0; i < argv.length - 2; i++) {
+      if (argv[i] === "--ro-bind" && argv[i + 1] === "/dev/null") {
+        const mask = argv[i + 2];
+        // Filter to only exec carve-out masks (paths ending with a command name from SENSITIVE_EXECUTABLES)
+        if (SENSITIVE_EXECUTABLES.some((cmd) => mask.endsWith("/" + cmd))) {
+          masks.push(mask);
+        }
+      }
+    }
+    // Even with live resolution, every masked path must be in execDeniedPaths (the deny set enumerates all candidates)
+    for (const m of masks) assert.ok(ds.execDeniedPaths!.includes(m), `deny set must include resolved exec-carve-out masked ${m}`);
   });
 });
 

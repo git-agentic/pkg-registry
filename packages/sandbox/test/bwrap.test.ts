@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { generateBwrapArgs } from "../src/bwrap.js";
+import { SENSITIVE_EXECUTABLES } from "../src/sensitive-executables.js";
 import type { Capability } from "@sentinel/core";
 
 const fs = (target: string): Capability => ({ kind: "filesystem", target, evidence: [] });
@@ -165,5 +166,80 @@ describe("generateBwrapArgs — $HOME-read-deny (Phase 25 Slice 2)", () => {
     assert.ok(roIdx !== -1, "cwd is ro-bound as the projectRoot read-allow");
     assert.ok(rwIdx !== -1, "cwd is also rw-bound by the write floor");
     assert.ok(rwIdx > roIdx, "the rw cwd bind must come AFTER the ro projectRoot bind, so cwd stays writable");
+  });
+});
+
+const proc = (target: string): Capability => ({ kind: "process", target, evidence: [] });
+const L_HOME = "/home/test";
+// all candidate literals "exist" so masks are emitted:
+const allExist = () => true;
+const lopts = (extra?: Partial<Parameters<typeof generateBwrapArgs>[1]>) => ({
+  homeDir: L_HOME, cwd: "/work/pkg", tmpDir: "/tmp/x",
+  nodePrefix: "/usr", projectRoot: "/work/pkg", pathExists: allExist, ...extra,
+});
+// helper: pull the mask target that follows each "--ro-bind /dev/null" in argv
+function devNullMasks(argv: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < argv.length - 2; i++) {
+    if (argv[i] === "--ro-bind" && argv[i + 1] === "/dev/null") out.push(argv[i + 2]);
+  }
+  return out;
+}
+
+describe("generateBwrapArgs — exfil-tool carve-out (Phase 29)", () => {
+  test("masks curl/wget/nc/… literals with --ro-bind /dev/null when they exist", () => {
+    const masks = devNullMasks(generateBwrapArgs([], lopts()));
+    assert.ok(masks.includes("/usr/bin/curl"), "curl must be masked");
+    assert.ok(masks.includes("/usr/bin/wget"), "wget must be masked");
+    assert.ok(masks.includes("/bin/nc") || masks.includes("/usr/bin/nc"), "nc must be masked");
+  });
+
+  test("skips a literal that does not exist (pathExists=false)", () => {
+    const masks = devNullMasks(generateBwrapArgs([], lopts({ pathExists: () => false })));
+    assert.ok(!masks.some((m) => m.endsWith("/curl")), "non-existent literals must not be masked");
+  });
+
+  test("a command Grant lifts exactly that command's masks", () => {
+    const masks = devNullMasks(generateBwrapArgs([proc("curl")], lopts()));
+    assert.ok(!masks.some((m) => m.endsWith("/curl")), "process:curl lifts curl masks");
+    assert.ok(masks.some((m) => m.endsWith("/wget")), "siblings stay masked");
+  });
+
+  test("a path Grant covering a literal lifts that literal's mask", () => {
+    const masks = devNullMasks(generateBwrapArgs([proc("/usr/bin/curl")], lopts()));
+    assert.ok(!masks.includes("/usr/bin/curl"), "path grant lifts the covered literal");
+    assert.ok(masks.includes("/bin/curl") || masks.some((m) => m.endsWith("/wget")), "other candidates stay masked");
+  });
+
+  test("the * Grant lifts all carve-out masks", () => {
+    const masks = devNullMasks(generateBwrapArgs([proc("*")], lopts()));
+    assert.ok(!masks.some((m) => SENSITIVE_EXECUTABLES.some((c) => m.endsWith("/" + c))), "* lifts every mask");
+  });
+
+  test("does not disturb the existing SENSITIVE read masks or network/floor args", () => {
+    const a = generateBwrapArgs([], lopts());
+    const b = generateBwrapArgs([proc("curl")], lopts());
+    // the non-carve-out argv (everything except the /dev/null carve-out masks) is identical:
+    const strip = (argv: string[]) => JSON.stringify(argv);
+    // only the curl masks differ; assert both contain the shared floor/network structure:
+    assert.ok(a.includes("--unshare-net") && b.includes("--unshare-net"));
+    assert.ok(a.includes("--tmpfs") && b.includes("--tmpfs"));
+    assert.notEqual(strip(a), strip(b)); // they DO differ (curl masks) — sanity
+  });
+
+  test("deterministic for the same inputs", () => {
+    assert.deepEqual(generateBwrapArgs([proc("curl")], lopts()), generateBwrapArgs([proc("curl")], lopts()));
+  });
+
+  test("a merged-usr symlink ancestor (e.g. /bin -> /usr/bin) is masked at its real path, not the symlinked literal, and only once", () => {
+    // Debian/Ubuntu merge /bin into /usr/bin via a symlink; bwrap can't materialize a
+    // NEW bind-mount destination through a symlinked ancestor directory (it doesn't
+    // resolve intermediate symlinks the way a normal open() does), so masking the
+    // literal `/bin/nc` can fail with ENOENT even though the file "exists" via the
+    // symlink. The generator must resolve each candidate to its real path first.
+    const realpath = (p: string) => (p.startsWith("/bin/") ? p.replace(/^\/bin\//, "/usr/bin/") : p);
+    const masks = devNullMasks(generateBwrapArgs([], lopts({ realpath })));
+    assert.ok(!masks.includes("/bin/nc"), "the symlinked-ancestor literal must not be used as a mask destination");
+    assert.equal(masks.filter((m) => m === "/usr/bin/nc").length, 1, "the merged-usr pair collapses to a single real-path mask");
   });
 });

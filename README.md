@@ -274,7 +274,7 @@ top-level commands (a commander-15 quirk with nested `requiredOption`s made
 a true subcommand impractical). See
 [ADR-0032](./docs/adr/0032-signed-audit-attestations.md).
 
-### Sandbox — default-deny (Phases 3–5, 25, 28; macOS Seatbelt / Linux bubblewrap)
+### Sandbox — default-deny (Phases 3–5, 25, 28, 29; macOS Seatbelt / Linux bubblewrap)
 
 `sentinel run-scripts <package-dir> [--approve network:host …]` runs the package's lifecycle scripts under a kernel sandbox generated from its approved capabilities — `createSandbox()` selects **Seatbelt** on macOS and **bubblewrap** on Linux, same capability model and fail-closed contract. As of Phase 25 the sandbox is **deny-by-default** (ADR-0038):
 
@@ -290,8 +290,13 @@ a true subcommand impractical). See
   or a cache is kernel-denied; a binary the package writes into its *own* project
   tree can still exec there (the floor includes the project root), mitigated by the
   `unscanned-content` finding and `process` capability scoring, not kernel denial.
-  Linux exec gating (Landlock) is Phase 29 — until it lands, exec on Linux remains
-  advisory (ADR-0042).
+- **Exec** (Linux, Phase 29) has no floor equivalent — bwrap cannot path-gate exec
+  at all (no `noexec` mount option) — but the same exfil-capable tools (`curl`,
+  `wget`, `nc`, …) are individually exec-denied by masking each with
+  `--ro-bind /dev/null <path>` unless a `process:` Grant lifts it. A binary
+  dropped into a writable location can still exec on Linux (still fs+network
+  confined). A true cross-platform floor needs Landlock (a native syscall
+  piece), deferred pre-1.0 — issue #8 stays open (ADR-0043).
 
 A denied credential read surfaces as a confirmed runtime violation on Seatbelt (EPERM); on bubblewrap the read is *contained* (a `--tmpfs` mask yields `ENOENT`) but not classified — an accepted telemetry asymmetry (ADR-0023). Both backends contain; only the telemetry differs.
 

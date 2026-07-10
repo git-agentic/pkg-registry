@@ -257,16 +257,22 @@ allowlist, so an escaped-detection script still does not see
 runtime violation revokes any standing approval and quarantines the integrity
 at serve time (ADR-0023).
 
-**Enforcement scope — process execution is restricted on macOS (Phase 28); Linux
-pending.** The `process` and `native` capability kinds are
-detected and fed to scoring, and on macOS (Phase 28, ADR-0042) an exec is
-enforced deny-by-default: a spawn is kernel-permitted only from the fixed exec
-floor (system dirs, node prefix, project tree, developer/Homebrew toolchains)
-or an approved `process:` Grant, with exfil-capable tools (curl, wget, nc, …)
-re-denied inside the floor unless granted. On Linux exec remains advisory until
-the Landlock-based Phase 29 lands; `native` is advisory-only on both platforms
-by decision. A spawned child inherits the filesystem/network confinement on
-both platforms. Remaining Linux work is tracked in
+**Enforcement scope — process execution: macOS enforces the floor + carve-out;
+Linux enforces the carve-out only, floor advisory.** The `process` and `native`
+capability kinds are detected and fed to scoring, and on macOS (Phase 28,
+ADR-0042) an exec is enforced deny-by-default: a spawn is kernel-permitted only
+from the fixed exec floor (system dirs, node prefix, project tree,
+developer/Homebrew toolchains) or an approved `process:` Grant, with
+exfil-capable tools (curl, wget, nc, …) re-denied inside the floor unless
+granted. On Linux (Phase 29, ADR-0043) bwrap cannot path-gate exec at all — no
+floor exists — but the same exfil-tool carve-out is enforced independently: each
+`SENSITIVE_EXECUTABLES` literal is masked with `--ro-bind /dev/null` unless a
+`process:` Grant lifts it, so a denied carve-out exec is still kernel-denied and
+surfaces as a confirmed violation. A binary dropped into a writable location can
+still exec on Linux (no floor), but stays filesystem+network confined. `native`
+is advisory-only on both platforms by decision. A spawned child inherits the
+filesystem/network confinement on both platforms. A true Linux exec floor needs
+Landlock (a native syscall piece), deferred pre-1.0; remaining work is tracked in
 [issue #8](https://github.com/git-agentic/pkg-registry/issues/8).
 
 ## 4. Accepted limitations
@@ -279,13 +285,17 @@ Stated plainly. Each is a deliberate, recorded trade-off, not an oversight.
   build script trips `install-scripts`). Sentinel's stance is
   defense-in-depth — score, gate, sandbox — not a guarantee that a scored
   `allow` is safe (ADR-0001/0002/0008).
-- **`process` is enforced on macOS only (for now); `native` is advisory
-  everywhere.** On macOS an unapproved exec outside the floor is kernel-denied
-  (ADR-0042), with two recorded residuals: a package may exec a binary written
-  into its own project tree (floor decision), and Linux exec gating awaits
-  Phase 29 (Landlock). `native` loading is not distinguishable from reading at
-  the path level and stays a scoring signal. See §3.9;
-  [issue #8](https://github.com/git-agentic/pkg-registry/issues/8).
+- **`process` exec floor is macOS-only (for now); the exfil-tool carve-out is
+  enforced on both platforms; `native` is advisory everywhere.** On macOS an
+  unapproved exec outside the floor is kernel-denied (ADR-0042), with a recorded
+  residual: a package may exec a binary written into its own project tree
+  (floor decision). On Linux (Phase 29, ADR-0043) there is no floor equivalent —
+  bwrap cannot path-gate exec — but the exfil-capable tools (curl, wget, nc, …)
+  are still individually exec-denied via `/dev/null` masking; a dropped binary
+  in a writable location can still exec, but stays filesystem+network confined.
+  A cross-platform floor needs Landlock, deferred pre-1.0. `native` loading is
+  not distinguishable from reading at the path level and stays a scoring
+  signal. See §3.9; [issue #8](https://github.com/git-agentic/pkg-registry/issues/8).
 - **A swallowed denial evades telemetry, not containment.** The runtime
   violation sensor only sees denials that surface as process failure. A
   script that catches the sandbox's denial and exits 0 is invisible to

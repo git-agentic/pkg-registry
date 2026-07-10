@@ -17,9 +17,11 @@ the private store).
 Phase 3 adds **`@sentinel/sandbox`** — a macOS Seatbelt / Linux bubblewrap runner, selected
 by `createSandbox()`, that enforces the **filesystem, network, and env** portions of a
 package's approved capability manifest at install time (`sentinel run-scripts`). Note: as
-of Phase 28 the `process` kind is **enforced on macOS** (exec deny-by-default, ADR-0042);
-on Linux it remains advisory until Phase 29 (Landlock), and `native` is advisory-only on
-both platforms by decision (tracked in #8).
+of Phase 28 the `process` kind's exec **floor** is **enforced on macOS** (exec
+deny-by-default, ADR-0042); Linux has no floor equivalent (bwrap cannot path-gate exec),
+but as of Phase 29 the exfil-tool **carve-out** is enforced on Linux too via `/dev/null`
+masking (floor advisory, ADR-0043), and `native` is advisory-only on both platforms by
+decision (tracked in #8).
 Synthetic malware fixtures are still scored-as-text and
 **never executed**; enforcement is tested with benign probe packages.
 Phase 4 hardened the sandbox: fail-closed env-var scrubbing via an `env` capability
@@ -393,9 +395,27 @@ write floor to disambiguate the shell's ambiguous "Operation not permitted"
 line (writable location ⇒ confirmed; outside both floors ⇒ suspected).
 Accepted residual: projectRoot is in the floor, so a package can exec a binary
 written into its own tree (mitigated by `unscanned-content` + `process`
-scoring). Linux exec is unchanged pending Phase 29 (Landlock, needs a small
-native piece); `native` is formally advisory-only on both platforms. Scoring
+scoring). `native` is formally advisory-only on both platforms. Scoring
 and the approval model are untouched (invariants #1–#7, ADR-0042).
+Phase 29 adds **Linux exec hardening in pure TypeScript, floor still
+advisory**: a decisive check found bwrap has no `noexec` mount mechanism
+(confirmed against the `bwrap(1)` man page and the open, unimplemented
+containers/bubblewrap#349), and a CAP_SYS_ADMIN inner-remount was rejected as
+a security regression — so there is no Linux exec floor equivalent to
+Phase 28's macOS one. What Phase 29 does ship: `generateBwrapArgs` masks each
+`SENSITIVE_EXECUTABLES` literal (curl, wget, nc, ncat, socat, scp, sftp —
+`osascript` is macOS-only) with `--ro-bind /dev/null <literal>` (execve on
+`/dev/null` fails EACCES) unless an approved `process:` Grant covers it,
+resolving merged-usr symlink ancestors (e.g. Debian/Ubuntu's `/bin` →
+`/usr/bin`) first so the bind always targets a mountable node.
+`computeDenySet`'s Linux branch models no floor (only the masked carve-out
+literals), so `classifyViolation`'s Linux branch only ever `confirmed`s a
+process violation on a masked literal — never a `suspected` floor guess. A
+binary dropped into a writable location can still exec on Linux; it stays
+filesystem+network confined (no credential read, no exfil without an approved
+`network` cap). A true Linux exec floor needs Landlock (a native syscall
+piece), deferred as too large a dependency for pre-1.0 — **#8 stays open**.
+Scoring and the approval model are untouched (invariants #1–#7, ADR-0043).
 
 We are the Socket/Chainguard wedge: **do not** try to replace npm. Resolve and
 serve real packages transparently; only attach signal.
@@ -485,15 +505,15 @@ decompression-bomb caps (unpacked bytes / file count; defaults 1 GiB / 100k).
 
 ```bash
 npm run build            # tsc --build (project references: core → proxy/cli)
-npm test                 # engine + end-to-end proxy: 725 tests on this host (723 pass, 2 skipped on darwin).
+npm test                 # engine + end-to-end proxy: 747 tests on this host (745 pass, 2 skipped on darwin).
                          # Skips are platform-gated enforcement: "non-darwin throws" skips on darwin
                          # (it verifies darwin-only behaviour), and the "no silent skip" CI guard skips
                          # off-CI. The BubblewrapSandbox enforcement suite and the Linux enforce-e2e tests
-                         # skip as describe-level blocks on darwin ("requires Linux") and are not in the 725
+                         # skip as describe-level blocks on darwin ("requires Linux") and are not in the 747
                          # count. Phase 10's violation-enforce e2e and the darwin-gated runtime-violation
                          # effect test (SeatbeltSandbox: "a denied credential read surfaces a confirmed
                          # runtime violation") RUN on darwin via Seatbelt, the same way the rest of the
-                         # Seatbelt effect suite does, and ARE in the 725 count. Phase 25 Slice 1's
+                         # Seatbelt effect suite does, and ARE in the 747 count. Phase 25 Slice 1's
                          # write-floor SeatbeltSandbox enforcement effect tests (positive control on
                          # the floor, persistence carve-out under a fake $HOME inside the floor's
                          # temp dir, a real /dev/null redirect) are likewise darwin-gated and RUN on
@@ -551,7 +571,15 @@ npm test                 # engine + end-to-end proxy: 725 tests on this host (72
                          # deny-set-exec/violation-exec unit tests are hermetic and platform-neutral;
                          # its three Seatbelt exec effect tests (floor positive control, dropped-binary
                          # denial + confirmed process violation, curl carve-out lift) are darwin-gated
-                         # and RUN on darwin.
+                         # and RUN on darwin. Phase 29's bwrap carve-out generator tests, the
+                         # computeDenySet Linux carve-out branch unit tests (plus its non-drift and
+                         # live merged-usr-resolution non-drift checks against generateBwrapArgs), and
+                         # the classifyViolation Linux carve-out branch unit tests are hermetic and
+                         # platform-neutral; its three bwrap Linux exec effect tests (the curl
+                         # carve-out denied without a Grant and lifted by process:curl, a denied curl
+                         # exec surfacing a confirmed process violation, and a positive control that a
+                         # node_modules/.bin shim and node still run) are CI-only (Linux/bubblewrap)
+                         # and do not run on darwin.
 npm run demo             # offline malware-detection walkthrough
 node packages/proxy/dist/index.js   # run the proxy (see README for env vars)
 ```

@@ -80,9 +80,28 @@ export function computeDenySet(
   }
   const base: DenySet = { deniedPaths, networkDenied };
 
+  // Linux exec (Phase 29): carve-out only — no floor (bwrap can't path-gate exec,
+  // ADR-0043). Mirror generateBwrapArgs's /dev/null masks: the masked exfil-tool
+  // literals are the exec-deny set; execAllowedPaths/writeAllowedPaths are intentionally
+  // absent so classifyViolation only ever confirms on a masked literal (never the macOS
+  // floor guess). Paths are NOT firmlink-canonicalized on Linux.
+  if (opts.platform === "linux") {
+    const lProcTargets = approved.filter((c) => c.kind === "process").map((c) => c.target);
+    const lGrantedCmds = new Set(lProcTargets.filter((t) => classifyProcessTarget(t) === "command"));
+    const lWildcard = lProcTargets.some((t) => classifyProcessTarget(t) === "wildcard");
+    const lPathGrants = lProcTargets
+      .filter((t) => classifyProcessTarget(t) === "path" && isSafeGrantTarget(t))
+      .map((p) => expandHome(p, opts.homeDir));
+    const lDenied = lWildcard ? [] : SENSITIVE_EXECUTABLES
+      .filter((cmd) => !lGrantedCmds.has(cmd))
+      .flatMap((cmd) => execCarveOutPaths(cmd))
+      .filter((p) => !lPathGrants.some((g) => pathCovers(g, p)));
+    return { ...base, execDenied: lDenied.length > 0, execDeniedPaths: lDenied };
+  }
+
   // Exec gating (Phase 28, darwin only) — MUST mirror generateProfile's exec
   // section exactly (the non-drift test enforces this).
-  if (opts.platform !== "darwin" || !opts.nodePrefix || !opts.projectRoot) return base;
+  if (!opts.nodePrefix || !opts.projectRoot) return base;
   const canon = (p: string) => canonicalizeMacPath(expandHome(p, opts.homeDir));
   const procTargets = approved.filter((c) => c.kind === "process").map((c) => c.target);
   const grantedCmds = new Set(procTargets.filter((t) => classifyProcessTarget(t) === "command"));

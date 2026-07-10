@@ -162,20 +162,26 @@ the *filesystem/network* confinement of the sandbox — and, as of Phase 28, the
 is also gated on macOS; see the enforcement-scope note below. Full `npm install --enforce`
 orchestration is deferred.
 
-**Enforcement scope — `process` enforced on macOS (Phase 28); Linux pending; `native`
-advisory by decision.** The Seatbelt profile denies `process-exec*` by default,
-re-allows a fixed exec floor (`execAllowFloor`: system dirs, the node prefix, the
-project root, Apple/Homebrew toolchains) plus approved `process:` path-Grants, then
-re-denies a curated `SENSITIVE_EXECUTABLES` carve-out (curl, wget, nc, …) unless a
-command/wildcard Grant lifts it — so an unapproved exec of a dropped binary outside
-the project tree is kernel-denied (ADR-0042). On Linux, exec remains advisory until
-the Landlock-based Phase 29 lands (bwrap alone cannot path-filter exec). `native`
-(dlopen/WASM) is formally advisory-only on both platforms — no path-level primitive
-distinguishes loading an artifact from reading it. The projectRoot-in-floor residual
-(a package executing a binary written into its own tree) is a recorded ADR-0042
-trade-off, mitigated by `unscanned-content` (ADR-0041) and `process` capability
-scoring. Enforce-vs-advisory for Linux exec is tracked in
-[#8](https://github.com/git-agentic/pkg-registry/issues/8).
+**Enforcement scope — `process` exec floor enforced on macOS, advisory on Linux;
+the exfil-tool carve-out enforced on both; `native` advisory by decision.** The
+Seatbelt profile denies `process-exec*` by default, re-allows a fixed exec floor
+(`execAllowFloor`: system dirs, the node prefix, the project root, Apple/Homebrew
+toolchains) plus approved `process:` path-Grants, then re-denies a curated
+`SENSITIVE_EXECUTABLES` carve-out (curl, wget, nc, …) unless a command/wildcard
+Grant lifts it — so an unapproved exec of a dropped binary outside the project
+tree is kernel-denied (ADR-0042). On Linux, bwrap cannot path-gate exec at all
+(no `noexec` mount option), so there is no floor equivalent — but Phase 29 masks
+each `SENSITIVE_EXECUTABLES` literal with `--ro-bind /dev/null <literal>` unless a
+`process:` Grant lifts it, enforcing the same exfil-tool carve-out on Linux even
+without a floor; a binary dropped into a writable location can still exec there
+(ADR-0043). `native` (dlopen/WASM) is formally advisory-only on both platforms —
+no path-level primitive distinguishes loading an artifact from reading it. The
+projectRoot-in-floor residual (a macOS package executing a binary written into
+its own tree) is a recorded ADR-0042 trade-off, mitigated by `unscanned-content`
+(ADR-0041) and `process` capability scoring. A true Linux exec floor needs
+Landlock (a native syscall piece), deferred as too large a commitment for
+pre-1.0 — [#8](https://github.com/git-agentic/pkg-registry/issues/8) stays open
+until it lands.
 
 **Enforced surface (Phase 3):** sensitive file reads + network egress. `SENSITIVE_PATHS`
 are deny-listed for reads; network is all-or-nothing (Seatbelt can't host-filter; per-host

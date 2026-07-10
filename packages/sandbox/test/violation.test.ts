@@ -192,3 +192,64 @@ describe("classifyViolation — exec (Phase 28)", () => {
     assert.equal(v?.target, "/var/folders/vl/tmp.S6oZE9G04A/payload");
   });
 });
+
+const LINUX_DS = {
+  deniedPaths: ["/home/test/.ssh"],
+  networkDenied: true,
+  execDenied: true,
+  execDeniedPaths: ["/usr/bin/curl", "/bin/curl", "/usr/bin/wget"],
+  // NO execAllowedPaths, NO writeAllowedPaths → Linux carve-out mode
+};
+const failL = (stderr: string) => ({ exitCode: 126, stdout: "", stderr });
+
+describe("classifyViolation — Linux carve-out (Phase 29)", () => {
+  test("a denied masked-literal exec (dash EACCES shape) is a confirmed process violation", () => {
+    const v = classifyViolation(failL("/bin/sh: 1: /usr/bin/curl: Permission denied"), LINUX_DS);
+    assert.equal(v?.kind, "process");
+    assert.equal(v?.confidence, "confirmed");
+    assert.equal(v?.deniedResource, "/usr/bin/curl");
+  });
+
+  test("also handles the no-lineno shell shape", () => {
+    const v = classifyViolation(failL("/bin/sh: /usr/bin/wget: Permission denied"), LINUX_DS);
+    assert.equal(v?.kind, "process");
+    assert.equal(v?.deniedResource, "/usr/bin/wget");
+  });
+
+  test("a Permission-denied error on a NON-masked path is not a process violation (no floor to guess)", () => {
+    // /usr/bin/make is not in execDeniedPaths → falls through, no process attribution
+    const v = classifyViolation(failL("/bin/sh: 1: /usr/bin/make: Permission denied"), LINUX_DS);
+    assert.ok(v === null || v.kind !== "process", "must not fabricate a process violation off the floor");
+  });
+
+  test("never emits suspected/exec-default-deny on Linux (no floor)", () => {
+    const v = classifyViolation(failL("/bin/sh: 1: /tmp/dropped: Permission denied"), LINUX_DS);
+    assert.ok(v === null || v.confidence !== "suspected", "Linux never guesses a floor denial");
+    assert.notEqual(v?.deniedResource, "exec-default-deny");
+  });
+
+  test("exit 0 (swallowed) stays null", () => {
+    assert.equal(classifyViolation({ exitCode: 0, stdout: "", stderr: "" }, LINUX_DS), null);
+  });
+
+  // Final-review Finding 1: a spawn-shaped permission error (no shell prefix, so
+  // firstLinuxExecLine can't see it) used to fall through into the macOS exec
+  // branch below, which still fires because execDenied is true, and reach the
+  // terminal arm's "suspected" fallback — a false positive, since Linux carve-out
+  // mode has no floor to guess a write-vs-exec ambiguity from. The terminal arm's
+  // noFloorModeled guard must return null here instead.
+  test("a spawn-shape ambient EACCES (no shell prefix, non-masked path) classifies null, not suspected", () => {
+    const v = classifyViolation(failL("spawnSync /tmp/dropped EACCES"), LINUX_DS);
+    assert.equal(v, null);
+  });
+
+  // Same spawn shape, but on a masked literal — the pre-existing macOS branch's
+  // `carved` check (which precedes the terminal arm) must still confirm it. The
+  // Finding 1 guard lives strictly after that check and must not break this path.
+  test("a spawn-shape masked-literal EACCES still classifies confirmed via the carved check", () => {
+    const v = classifyViolation(failL("spawnSync /usr/bin/curl EACCES"), LINUX_DS);
+    assert.equal(v?.kind, "process");
+    assert.equal(v?.confidence, "confirmed");
+    assert.equal(v?.deniedResource, "/usr/bin/curl");
+  });
+});
