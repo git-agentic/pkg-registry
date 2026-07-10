@@ -4,6 +4,7 @@ import type { Capability } from "@sentinel/core";
 import { computeDenySet, isSafeGrantTarget } from "../src/deny-set.js";
 import { generateProfile } from "../src/profile.js";
 import { generateBwrapArgs } from "../src/bwrap.js";
+import { SENSITIVE_EXECUTABLES } from "../src/sensitive-executables.js";
 
 const HOME = "/Users/test";
 const fsCap = (target: string): Capability => ({ kind: "filesystem", target, evidence: [] });
@@ -133,7 +134,7 @@ describe("computeDenySet ↔ generateBwrapArgs Linux non-drift (Phase 29)", () =
       if (argv[i] === "--ro-bind" && argv[i + 1] === "/dev/null") {
         const mask = argv[i + 2];
         // Filter to only exec carve-out masks (paths ending with a command name from SENSITIVE_EXECUTABLES)
-        if (mask.endsWith("/curl") || mask.endsWith("/wget") || mask.endsWith("/nc") || mask.endsWith("/ncat") || mask.endsWith("/socat") || mask.endsWith("/osascript") || mask.endsWith("/scp") || mask.endsWith("/sftp")) {
+        if (SENSITIVE_EXECUTABLES.some((cmd) => mask.endsWith("/" + cmd))) {
           masks.push(mask);
         }
       }
@@ -160,7 +161,7 @@ describe("computeDenySet ↔ generateBwrapArgs Linux non-drift (Phase 29)", () =
       if (argv[i] === "--ro-bind" && argv[i + 1] === "/dev/null") {
         const mask = argv[i + 2];
         // Filter to only exec carve-out masks (paths ending with a command name from SENSITIVE_EXECUTABLES)
-        if (mask.endsWith("/curl") || mask.endsWith("/wget") || mask.endsWith("/nc") || mask.endsWith("/ncat") || mask.endsWith("/socat") || mask.endsWith("/osascript") || mask.endsWith("/scp") || mask.endsWith("/sftp")) {
+        if (SENSITIVE_EXECUTABLES.some((cmd) => mask.endsWith("/" + cmd))) {
           masks.push(mask);
         }
       }

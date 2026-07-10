@@ -231,4 +231,25 @@ describe("classifyViolation — Linux carve-out (Phase 29)", () => {
   test("exit 0 (swallowed) stays null", () => {
     assert.equal(classifyViolation({ exitCode: 0, stdout: "", stderr: "" }, LINUX_DS), null);
   });
+
+  // Final-review Finding 1: a spawn-shaped permission error (no shell prefix, so
+  // firstLinuxExecLine can't see it) used to fall through into the macOS exec
+  // branch below, which still fires because execDenied is true, and reach the
+  // terminal arm's "suspected" fallback — a false positive, since Linux carve-out
+  // mode has no floor to guess a write-vs-exec ambiguity from. The terminal arm's
+  // noFloorModeled guard must return null here instead.
+  test("a spawn-shape ambient EACCES (no shell prefix, non-masked path) classifies null, not suspected", () => {
+    const v = classifyViolation(failL("spawnSync /tmp/dropped EACCES"), LINUX_DS);
+    assert.equal(v, null);
+  });
+
+  // Same spawn shape, but on a masked literal — the pre-existing macOS branch's
+  // `carved` check (which precedes the terminal arm) must still confirm it. The
+  // Finding 1 guard lives strictly after that check and must not break this path.
+  test("a spawn-shape masked-literal EACCES still classifies confirmed via the carved check", () => {
+    const v = classifyViolation(failL("spawnSync /usr/bin/curl EACCES"), LINUX_DS);
+    assert.equal(v?.kind, "process");
+    assert.equal(v?.confidence, "confirmed");
+    assert.equal(v?.deniedResource, "/usr/bin/curl");
+  });
 });

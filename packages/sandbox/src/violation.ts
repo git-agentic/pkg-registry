@@ -166,6 +166,12 @@ export function classifyViolation(result: SandboxResult, denySet: DenySet): Sand
     }
     if ((denySet.execAllowedPaths ?? []).some((p) => pathCovers(p, canonTarget))) return null; // exec allowed there → ambient
     const writable = (denySet.writeAllowedPaths ?? []).some((p) => pathCovers(p, canonTarget));
+    // No floor modeled at all (Linux carve-out mode has no exec/write floor to guess
+    // from): a permission error outside both floors is genuinely ambient, not
+    // suspected. macOS always populates execAllowedPaths, so this never fires there.
+    const noFloorModeled =
+      (denySet.execAllowedPaths?.length ?? 0) === 0 && (denySet.writeAllowedPaths?.length ?? 0) === 0;
+    if (!writable && noFloorModeled) return null;
     return {
       kind: "process",
       target,
