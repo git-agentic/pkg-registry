@@ -413,10 +413,11 @@ resolving merged-usr symlink ancestors (e.g. Debian/Ubuntu's `/bin` →
 `computeDenySet`'s Linux branch models no floor (only the masked carve-out
 literals), so `classifyViolation`'s Linux branch only ever `confirmed`s a
 process violation on a masked literal — never a `suspected` floor guess. A
-binary dropped into a writable location can still exec on Linux; it stays
-filesystem+network confined (no credential read, no exfil without an approved
-`network` cap). A true Linux exec floor needs Landlock (a native syscall
-piece), deferred as too large a dependency for pre-1.0 — **#8 stays open**.
+binary dropped into a writable location can still exec on Linux *when the
+Landlock floor is inactive* (advisory fallback); it stays filesystem+network
+confined (no credential read, no exfil without an approved `network` cap). The
+enforced Linux exec floor that closes this gap where Landlock is available
+lands in Phase 2 below (ADR-0044).
 Scoring and the approval model are untouched (invariants #1–#7, ADR-0043).
 Phase 2 (Landlock) closes the Linux exec-floor gap ADR-0043 left open, **where
 Landlock and a compiled toolchain are available — advisory otherwise**: a

@@ -5,7 +5,8 @@
  * Grants LANDLOCK_ACCESS_FS_EXECUTE beneath each --allow path; exec of anything
  * outside the floor is then kernel-denied. Restriction is inherited across execve.
  * Self-contained: inlines the Landlock uapi so it needs no kernel headers.
- * SPIKE ARTIFACT (Phase 1). Linux-only; does not compile on macOS.
+ * Phase 2 production helper (promoted from the Phase 1 spike; ADR-0044).
+ * Linux-only; does not compile on macOS.
  */
 #define _GNU_SOURCE
 #include <sys/prctl.h>
