@@ -273,4 +273,33 @@ describe("BubblewrapSandbox enforcement", { skip }, () => {
     assert.equal(res.violation?.confidence, "confirmed");
     assert.equal(res.violation?.deniedResource, "exec-floor-deny");
   });
+
+  test("Landlock floor: a process: path grant under $HOME is re-exposed and execs (issue #28)", { skip: skipNoHelper }, () => {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "bw-ll-homegrant-")));
+    const proj = join(home, "proj"); mkdirSync(proj);
+    const toolDir = join(home, "tools", "bin"); mkdirSync(toolDir, { recursive: true });
+    const tool = join(toolDir, "x");
+    writeFileSync(tool, "#!/bin/sh\necho HOME-TOOL-OK\n", { mode: 0o755 });
+    // The ~-form grant exercises expandHome against the run's homeDir end-to-end:
+    // it must land in BOTH the Landlock --allow set (#25) and the ro re-binds (#28).
+    const approved: Capability[] = [{ kind: "process", target: "~/tools/bin/x", evidence: [] }];
+    const res = new BubblewrapSandbox().run(`"${tool}"`, { cwd: proj, approved, homeDir: home, projectRoot: proj });
+    assert.equal(res.exitCode, 0, res.stderr);
+    assert.match(res.stdout, /HOME-TOOL-OK/);
+    assert.equal(res.violation, undefined);
+  });
+
+  test("Landlock floor: the same under-$HOME exec WITHOUT the grant stays contained (tmpfs ENOENT)", { skip: skipNoHelper }, () => {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "bw-ll-homenogrant-")));
+    const proj = join(home, "proj"); mkdirSync(proj);
+    const toolDir = join(home, "tools", "bin"); mkdirSync(toolDir, { recursive: true });
+    const tool = join(toolDir, "x");
+    writeFileSync(tool, "#!/bin/sh\necho HOME-TOOL-OK\n", { mode: 0o755 });
+    const res = new BubblewrapSandbox().run(`"${tool}"`, { cwd: proj, approved: [], homeDir: home, projectRoot: proj });
+    assert.notEqual(res.exitCode, 0);
+    assert.doesNotMatch(res.stdout, /HOME-TOOL-OK/);
+    // Containment-only: the tmpfs makes the path ENOENT, which carries no perm
+    // signature, so NO violation classification is asserted (the accepted
+    // Seatbelt/bwrap telemetry asymmetry, ADR-0038/ADR-0023).
+  });
 });

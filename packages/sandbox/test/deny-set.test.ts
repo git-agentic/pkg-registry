@@ -242,6 +242,8 @@ describe("computeDenySet — Linux Landlock floor mode (Phase 2)", () => {
     assert.ok(ds.execAllowedPaths!.includes("/bin"), "floor entries still present");
   });
   test("a ~-form path grant expands against homeDir", () => {
+    // runtime visibility: fixed by #28 — generateBwrapArgs re-exposes under-$HOME
+    // grants inside the tmpfs (see the bubblewrap "re-exposed and execs" effect test).
     const ds = computeDenySet([procCap("~/tools/bin/x")], { ...L, landlockFloor: true });
     assert.ok(ds.execAllowedPaths!.includes("/home/test/tools/bin/x"));
   });
