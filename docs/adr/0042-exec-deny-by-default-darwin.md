@@ -1,9 +1,11 @@
 # ADR-0042: Exec deny-by-default on macOS; Landlock plan for Linux; `native` formally advisory
 
-Date: 2026-07-10
-Status: Accepted
-Extends: ADR-0038 (sandbox default-deny — this mirrors its write layering for exec), ADR-0023 (violation telemetry — `classifyViolation` now attributes denied execs)
-Supersedes: nothing. Resolves the enforce-or-formally-downgrade decision tracked in issue #8 for the `process` kind on macOS; Linux enforcement is Phase 29.
+**Status:** Accepted (Phase 28)
+**Date:** 2026-07-10
+
+## Status
+
+Extends ADR-0038 (sandbox default-deny — this mirrors its write layering for exec) and ADR-0023 (violation telemetry — `classifyViolation` now attributes denied execs); supersedes nothing. This resolves the enforce-or-formally-downgrade decision tracked in issue #8 for the `process` kind on macOS; Linux enforcement is Phase 29.
 
 ## Context
 
