@@ -140,6 +140,34 @@ describe("computeDenySet ↔ generateBwrapArgs Linux non-drift (Phase 29)", () =
     }
     for (const m of masks) assert.ok(ds.execDeniedPaths!.includes(m), `deny set must include exec-carve-out masked ${m}`);
   });
+
+  test("non-drift under live merged-usr path resolution (Phase 29)", () => {
+    // Inject a realpath that simulates merged-usr: /bin/<x> → /usr/bin/<x>
+    const mergedUsrResolve = (p: string): string => {
+      if (p.startsWith("/bin/")) return "/usr/bin/" + p.slice(5);
+      return p; // leave other paths unchanged
+    };
+
+    const approved: Capability[] = [procCap("wget")]; // wget lifted, others masked
+    const ds = computeDenySet(approved, L);
+    const argv = generateBwrapArgs(approved, {
+      homeDir: L.homeDir, cwd: L.cwd, tmpDir: L.tmpDir, nodePrefix: L.nodePrefix,
+      projectRoot: L.projectRoot, pathExists: () => true,
+      realpath: mergedUsrResolve, // inject resolution
+    });
+    const masks: string[] = [];
+    for (let i = 0; i < argv.length - 2; i++) {
+      if (argv[i] === "--ro-bind" && argv[i + 1] === "/dev/null") {
+        const mask = argv[i + 2];
+        // Filter to only exec carve-out masks (paths ending with a command name from SENSITIVE_EXECUTABLES)
+        if (mask.endsWith("/curl") || mask.endsWith("/wget") || mask.endsWith("/nc") || mask.endsWith("/ncat") || mask.endsWith("/socat") || mask.endsWith("/osascript") || mask.endsWith("/scp") || mask.endsWith("/sftp")) {
+          masks.push(mask);
+        }
+      }
+    }
+    // Even with live resolution, every masked path must be in execDeniedPaths (the deny set enumerates all candidates)
+    for (const m of masks) assert.ok(ds.execDeniedPaths!.includes(m), `deny set must include resolved exec-carve-out masked ${m}`);
+  });
 });
 
 describe("isSafeGrantTarget", () => {
