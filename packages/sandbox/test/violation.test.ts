@@ -192,3 +192,43 @@ describe("classifyViolation — exec (Phase 28)", () => {
     assert.equal(v?.target, "/var/folders/vl/tmp.S6oZE9G04A/payload");
   });
 });
+
+const LINUX_DS = {
+  deniedPaths: ["/home/test/.ssh"],
+  networkDenied: true,
+  execDenied: true,
+  execDeniedPaths: ["/usr/bin/curl", "/bin/curl", "/usr/bin/wget"],
+  // NO execAllowedPaths, NO writeAllowedPaths → Linux carve-out mode
+};
+const failL = (stderr: string) => ({ exitCode: 126, stdout: "", stderr });
+
+describe("classifyViolation — Linux carve-out (Phase 29)", () => {
+  test("a denied masked-literal exec (dash EACCES shape) is a confirmed process violation", () => {
+    const v = classifyViolation(failL("/bin/sh: 1: /usr/bin/curl: Permission denied"), LINUX_DS);
+    assert.equal(v?.kind, "process");
+    assert.equal(v?.confidence, "confirmed");
+    assert.equal(v?.deniedResource, "/usr/bin/curl");
+  });
+
+  test("also handles the no-lineno shell shape", () => {
+    const v = classifyViolation(failL("/bin/sh: /usr/bin/wget: Permission denied"), LINUX_DS);
+    assert.equal(v?.kind, "process");
+    assert.equal(v?.deniedResource, "/usr/bin/wget");
+  });
+
+  test("a Permission-denied error on a NON-masked path is not a process violation (no floor to guess)", () => {
+    // /usr/bin/make is not in execDeniedPaths → falls through, no process attribution
+    const v = classifyViolation(failL("/bin/sh: 1: /usr/bin/make: Permission denied"), LINUX_DS);
+    assert.ok(v === null || v.kind !== "process", "must not fabricate a process violation off the floor");
+  });
+
+  test("never emits suspected/exec-default-deny on Linux (no floor)", () => {
+    const v = classifyViolation(failL("/bin/sh: 1: /tmp/dropped: Permission denied"), LINUX_DS);
+    assert.ok(v === null || v.confidence !== "suspected", "Linux never guesses a floor denial");
+    assert.notEqual(v?.deniedResource, "exec-default-deny");
+  });
+
+  test("exit 0 (swallowed) stays null", () => {
+    assert.equal(classifyViolation({ exitCode: 0, stdout: "", stderr: "" }, LINUX_DS), null);
+  });
+});

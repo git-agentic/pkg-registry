@@ -37,6 +37,13 @@ const SPAWN_EXEC_PREFIX = /(?:^|\s)spawn(?:Sync)?\s/;
 const SPAWN_EXEC_CODE = /EPERM|EACCES/;
 const SPAWN_EXEC_PATH = /spawn(?:Sync)?\s+(\/\S+)\s+(?:EPERM|EACCES)/;
 
+// Linux exec-denial (Phase 29, CI-validated). ubuntu /bin/sh is dash: a masked-literal
+// exec fails EACCES ("Permission denied"), printed roughly as
+// "/bin/sh: <lineno>: <path>: Permission denied" (lineno optional across shells). Two
+// linear tests (detect + extract), mirroring the SH_EXEC split, to stay ReDoS-safe.
+const LINUX_EXEC_PERM = /[Pp]ermission denied/;
+const LINUX_EXEC_PATH = /(?:^|[/\s])(?:sh|bash|dash|zsh): (?:\d+: )?(\/[^:\n]+):/;
+
 function firstMatchingLine(stderr: string, re: RegExp): string | null {
   for (const line of stderr.split(/\r?\n/)) if (re.test(line)) return line.trim();
   return null;
@@ -62,6 +69,14 @@ function firstShExecLine(stderr: string): string | null {
 function firstSpawnExecLine(stderr: string): string | null {
   for (const line of stderr.split(/\r?\n/)) {
     if (SPAWN_EXEC_PREFIX.test(line) && SPAWN_EXEC_CODE.test(line)) return line.trim();
+  }
+  return null;
+}
+
+/** First stderr line carrying BOTH a shell prefix and "Permission denied" (Linux exec-deny). */
+function firstLinuxExecLine(stderr: string): string | null {
+  for (const line of stderr.split(/\r?\n/)) {
+    if (LINUX_EXEC_PATH.test(line) && LINUX_EXEC_PERM.test(line)) return line.trim();
   }
   return null;
 }
@@ -94,6 +109,29 @@ export function classifyViolation(result: SandboxResult, denySet: DenySet): Sand
       deniedResource: target ? "network" : null,
       evidence: { exitCode: result.exitCode, stderrExcerpt: excerpt(netLine) },
     };
+  }
+
+  // Linux carve-out (Phase 29): no exec floor — only masked exfil-tool literals are
+  // exec-denied. Distinct from the macOS exec branch below (which needs "Operation not
+  // permitted" + a floor). Fires only in Linux carve-out mode (execDenied, denied
+  // literals, and NO floor modeled), and only ever confirms on a known masked literal —
+  // a Permission-denied on anything else falls through (no floor to guess from).
+  const linuxCarveMode = !!denySet.execDenied
+    && (denySet.execAllowedPaths?.length ?? 0) === 0
+    && (denySet.execDeniedPaths?.length ?? 0) > 0;
+  if (linuxCarveMode) {
+    const line = firstLinuxExecLine(stderr);
+    const target = line ? LINUX_EXEC_PATH.exec(line)?.[1] ?? null : null;
+    if (line && target) {
+      const carved = denySet.execDeniedPaths!.find((p) => p === target || pathCovers(p, target));
+      if (carved) {
+        return {
+          kind: "process", target, confidence: "confirmed", deniedResource: carved,
+          evidence: { exitCode: result.exitCode, stderrExcerpt: excerpt(line) },
+        };
+      }
+    }
+    // not a masked-literal exec → fall through (no floor to attribute against).
   }
 
   // Process/exec (Phase 28): a bare "sh: /path: ... Operation not permitted" line is
