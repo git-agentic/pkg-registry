@@ -143,8 +143,15 @@ export function classifyViolation(result: SandboxResult, denySet: DenySet): Sand
   // is untouched, and its "Operation not permitted" shape stays with the macOS
   // branch below.
   if (denySet.execFloorMode === "linux-landlock") {
-    const line = firstLinuxExecLine(stderr);
-    const target = line ? LINUX_EXEC_PATH.exec(line)?.[1] ?? null : null;
+    // Dash shape first; a denial surfacing through node instead reports
+    // "spawnSync <path> EACCES" (issue #24) — same ladder for both shapes.
+    // No canonicalizeMacPath: Linux paths are never firmlink-canonicalized.
+    let line = firstLinuxExecLine(stderr);
+    let target = line ? LINUX_EXEC_PATH.exec(line)?.[1] ?? null : null;
+    if (!line) {
+      line = firstSpawnExecLine(stderr);
+      target = line ? SPAWN_EXEC_PATH.exec(line)?.[1] ?? null : null;
+    }
     if (line && target) {
       const evidence = { exitCode: result.exitCode, stderrExcerpt: excerpt(line) };
       const carved = (denySet.execDeniedPaths ?? []).find((p) => p === target || pathCovers(p, target));

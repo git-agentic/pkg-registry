@@ -286,4 +286,31 @@ describe("classifyViolation — Linux Landlock floor mode (Phase 2)", () => {
     // a macOS 'Permission denied' fs line must NOT be classified as an exec-floor violation
     assert.equal(classifyViolation(failLL("/bin/sh: /home/x/.ssh/id: Permission denied"), macDs as any)?.deniedResource, undefined);
   });
+  // Issue #24: a denial surfacing through node instead of the shell reports
+  // "spawnSync <path> EACCES" — same attribution ladder as the dash shape.
+  test("a floor-OUTSIDE spawnSync-shape denial is confirmed exec-floor-deny (issue #24)", () => {
+    const v = classifyViolation(failLL("spawnSync /tmp/spikestash/payload EACCES"), LL_DS);
+    assert.equal(v?.kind, "process");
+    assert.equal(v?.confidence, "confirmed");
+    assert.equal(v?.deniedResource, "exec-floor-deny");
+    assert.equal(v?.target, "/tmp/spikestash/payload");
+  });
+  test("a spawnSync-shape denial on a masked carve-out literal is confirmed on the literal", () => {
+    const v = classifyViolation(failLL("spawnSync /usr/bin/curl EACCES"), LL_DS);
+    assert.equal(v?.kind, "process");
+    assert.equal(v?.confidence, "confirmed");
+    assert.equal(v?.deniedResource, "/usr/bin/curl");
+  });
+  test("a spawnSync-shape EACCES UNDER the floor stays ambient null", () => {
+    assert.equal(classifyViolation(failLL("spawnSync /usr/bin/make EACCES"), LL_DS), null);
+  });
+  // A spawn line with NO extractable path (relative command, no leading "/") must keep
+  // today's fall-through to the macOS branch: suspected, null target — pinned so a
+  // future refactor of the `if (line && target)` guard can't silently change it.
+  test("a spawnSync-shape denial with no extractable path falls through (suspected, null target)", () => {
+    const v = classifyViolation(failLL("spawnSync sh EACCES"), LL_DS);
+    assert.equal(v?.kind, "process");
+    assert.equal(v?.confidence, "suspected");
+    assert.equal(v?.target, null);
+  });
 });
