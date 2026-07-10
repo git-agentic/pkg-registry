@@ -10,6 +10,7 @@ echo "cc: $(command -v cc || echo MISSING)"; cc --version 2>&1 | head -1 || true
 echo "bwrap: $(command -v bwrap || echo MISSING)"; bwrap --version 2>&1 || true
 echo "kernel: $(uname -r)"
 echo "node prefix: $NODE_PREFIX"
+echo "/tmp mount opts: $(mount | grep ' /tmp ' || findmnt /tmp || echo UNKNOWN)"
 
 echo "=== compile helper ==="
 if ! cc -O2 -o "$HELPER" packages/sandbox/native/landlock-exec.c; then
@@ -58,19 +59,41 @@ if echo "$B_OUT" | grep -q PWNED; then
 fi
 echo "B: dropped binary was denied (good)"
 
-echo "=== C: composition with the Phase 29 /dev/null carve-out ==="
-# Landlock allows /usr/bin, but a /dev/null mask over curl must still deny it.
+echo "=== B-control: same payload, but /tmp ADDED to the floor (proves attribution) ==="
+# If adding /tmp to the floor makes the payload RUN, the section-B denial was
+# Landlock-attributable (lifting the floor lifted the denial). If it's STILL
+# denied even with /tmp in the floor, /tmp is noexec (or another confound) and
+# section B proves nothing about Landlock.
+BC_OUT="$(run_bwrap "$HELPER" "${FLOOR[@]}" --allow /tmp -- /bin/sh -c "$STASH/payload" 2>&1)"
+BC_RC=$?
+echo "--- B-control stderr (CAPTURE verbatim) ---"; echo "$BC_OUT"; echo "exit=$BC_RC (informational; PWNED presence is the authoritative 'it ran' signal)"
+if ! echo "$BC_OUT" | grep -q PWNED; then
+  echo "SPIKE-RESULT: INCONCLUSIVE (/tmp appears noexec — section B denial not Landlock-attributable; check mount opts)"
+  exit 14
+fi
+echo "B-control: payload RAN with /tmp in the floor (good — confirms section B's denial was Landlock-attributable)"
+
+echo "=== C: composition with the Phase 29 /dev/null carve-out (mount-level, NOT Landlock) ==="
+# NOTE: this denies curl via DAC — a non-executable /dev/null char device masks
+# the real binary — not via Landlock. It confirms the Phase 29 mount-mask still
+# composes with an active Landlock floor; it is NOT a Landlock-specific property.
+C_RAN=0
 if [ -x /usr/bin/curl ]; then
+  C_RAN=1
   C_OUT="$(run_bwrap --ro-bind /dev/null /usr/bin/curl "$HELPER" "${FLOOR[@]}" -- /bin/sh -c '/usr/bin/curl --version' 2>&1)"
   C_RC=$?
   echo "--- C stderr ---"; echo "$C_OUT"; echo "exit=$C_RC"
   if echo "$C_OUT" | grep -qi "curl [0-9]"; then
     echo "SPIKE-RESULT: FAIL (masked curl ran despite /dev/null — carve-out defeated)"; exit 13
   fi
-  echo "C: masked curl stayed denied under an allowed /usr/bin (good)"
+  echo "C: Phase 29 /dev/null carve-out still denies curl with the Landlock floor active (mount-level, composes)"
 else
   echo "C: curl not present, skipping composition check"
 fi
 
-echo "SPIKE-RESULT: PASS (Landlock exec floor works inside bwrap; floor allows, dropped-binary denied, carve-out intact)"
+if [ $C_RAN -eq 1 ]; then
+  echo "SPIKE-RESULT: PASS (Landlock exec floor works inside bwrap: A+B/B-control prove floor-allow + dropped-binary-denied are Landlock-attributable; C confirms the pre-existing Phase 29 /dev/null carve-out still composes with an active Landlock floor, a mount-level property, not a Landlock-specific one)"
+else
+  echo "SPIKE-RESULT: PASS (Landlock exec floor works inside bwrap: A+B/B-control prove floor-allow + dropped-binary-denied are Landlock-attributable; C skipped — curl absent)"
+fi
 exit 0
