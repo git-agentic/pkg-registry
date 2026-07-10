@@ -84,6 +84,15 @@ and `wontfix` — see [docs/agents/triage-labels.md](./docs/agents/triage-labels
 Security vulnerabilities: **not** a public issue — see
 [SECURITY.md](./SECURITY.md).
 
+## Updating pinned GitHub Actions
+
+Action dependencies in `action.yml` and `.github/workflows/*` are pinned to full
+commit SHAs (with a `# vX.Y.Z` comment) rather than mutable tags — a mutable tag
+can be repointed after review, and this project is about supply-chain pinning.
+When updating an action, change both the SHA and its version comment together,
+after reviewing the release. Dependabot's `github-actions` ecosystem raises
+SHA-pinned bump PRs and is the recommended maintenance path.
+
 ## Definition of done for a PR
 
 `npm run build` clean, `npm test` green, new behavior covered by a test, and
