@@ -181,6 +181,15 @@ function resolveRateLimiter(): RateLimiter | undefined {
   return createRateLimiter({ rpm, now: () => Date.now() });
 }
 
+function resolveAutoQuarantine(authEnabled: boolean): boolean {
+  const on = process.env.SENTINEL_AUTO_QUARANTINE === "1";
+  if (on && !authEnabled) {
+    console.error("FATAL: SENTINEL_AUTO_QUARANTINE=1 requires SENTINEL_AUTH_PUBKEY (auto-quarantine must be attributable to a verified token)");
+    process.exit(1);
+  }
+  return on;
+}
+
 function resolveTrustMaterial(): ProvenanceTrustMaterial | null | undefined {
   const rootPath = process.env.SENTINEL_TRUSTED_ROOT;
   if (!rootPath) return undefined; // bundled default
@@ -222,8 +231,9 @@ function main(): void {
   const authPublicKey = resolveAuthPublicKey();
   const advisories = resolveAdvisories();
   const vulnerabilities = resolveVulnerabilities();
+  const autoQuarantine = resolveAutoQuarantine(Boolean(authPublicKey));
 
-  const app = createServer({ upstream, store, approvals, enterprisePolicy, policyHash, policy, publicDir, privateStore, publishTokens, trustMaterial, violations, approvalRequests, authPublicKey, history, advisories, vulnerabilities, publicBaseUrl, maxTreePackages, rateLimiter, extractLimits });
+  const app = createServer({ upstream, store, approvals, enterprisePolicy, policyHash, policy, publicDir, privateStore, publishTokens, trustMaterial, violations, approvalRequests, authPublicKey, history, advisories, vulnerabilities, publicBaseUrl, maxTreePackages, rateLimiter, extractLimits, autoQuarantine });
   app.listen(port, () => {
     console.log(`Sentinel proxy listening on http://localhost:${port}`);
     console.log(`  upstream : ${upstream.name}`);
@@ -235,6 +245,7 @@ function main(): void {
     console.log(`  limits   : tree ${maxTreePackages ?? 5000} pkgs, tarball ${(maxTarballBytes ?? 256 * 1024 * 1024)} B, packument ${(maxPackumentBytes ?? 128 * 1024 * 1024)} B, unpacked ${(maxUnpackedBytes ?? 1024 * 1024 * 1024)} B, files ${(maxFileCount ?? 100000)}`);
     console.log(`  rate-limit: ${rateLimiter ? `${process.env.SENTINEL_RATE_LIMIT_RPM} rpm/source` : "disabled"}`);
     console.log(`  violations: ${process.env.SENTINEL_VIOLATIONS ? "persisted" : "in-memory"}`);
+    console.log(`  auto-quarantine: ${autoQuarantine ? "on (confirmed violations quarantine; auth-gated)" : "off (violations record-only)"}`);
     console.log(`  approval-requests: ${process.env.SENTINEL_APPROVAL_REQUESTS ? "persisted" : "in-memory"}`);
     console.log(`  history  : ${history ? `enabled (${process.env.SENTINEL_HISTORY_DB})` : "disabled"}`);
     console.log(`  dashboard: http://localhost:${port}/`);

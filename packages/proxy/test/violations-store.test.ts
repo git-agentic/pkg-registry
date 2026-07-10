@@ -10,12 +10,33 @@ const base = {
 };
 
 describe("ViolationStore", () => {
-  test("a confirmed violation is recorded and quarantines the integrity", () => {
+  test("a confirmed violation is recorded and quarantines the integrity when autoQuarantine is on", () => {
     const s = new ViolationStore();
-    const rec = s.record(base);
+    const rec = s.record(base, { autoQuarantine: true });
     assert.equal(rec.quarantined, true);
     assert.equal(s.isQuarantined("sha512-AAA"), true);
     assert.equal(s.get("sha512-AAA")?.target, "/Users/x/.ssh/id_rsa");
+  });
+
+  test("a confirmed report does NOT quarantine when autoQuarantine is off (default)", () => {
+    const s = new ViolationStore();
+    const rec = s.record(base);
+    assert.equal(rec.quarantined, false);
+    assert.equal(s.isQuarantined(base.integrity), false);
+  });
+
+  test("a confirmed report quarantines when autoQuarantine is on", () => {
+    const s = new ViolationStore();
+    const rec = s.record(base, { autoQuarantine: true });
+    assert.equal(rec.quarantined, true);
+    assert.equal(s.isQuarantined(base.integrity), true);
+  });
+
+  test("an existing quarantine is sticky across a later off-flag report", () => {
+    const s = new ViolationStore();
+    s.record(base, { autoQuarantine: true });
+    const later = s.record({ ...base, kind: "network", target: null, deniedResource: null }); // autoQuarantine off
+    assert.equal(later.quarantined, true, "must not un-quarantine");
   });
 
   test("a suspected violation is recorded but does NOT quarantine", () => {
@@ -34,7 +55,7 @@ describe("ViolationStore", () => {
 
   test("a suspected report does NOT lift a confirmed quarantine", () => {
     const s = new ViolationStore();
-    s.record(base);
+    s.record(base, { autoQuarantine: true });
     const rec = s.record({ ...base, confidence: "suspected", kind: "network", target: null, deniedResource: null });
     assert.equal(s.isQuarantined("sha512-AAA"), true);
     assert.equal(rec.confidence, "confirmed");
@@ -42,7 +63,7 @@ describe("ViolationStore", () => {
 
   test("clear removes the quarantine", () => {
     const s = new ViolationStore();
-    s.record(base);
+    s.record(base, { autoQuarantine: true });
     assert.equal(s.clear("sha512-AAA"), true);
     assert.equal(s.isQuarantined("sha512-AAA"), false);
   });

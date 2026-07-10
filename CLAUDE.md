@@ -319,6 +319,20 @@ path ENOENT, which is not classified — the read is **contained** on both
 backends regardless, only the *report* differs. Scoring and the
 approval/manifest model are untouched (invariants #1–#6, ADR-0038).
 
+Phase 26 Part B closes #9 (violation sensing ≠ enforcement): `ViolationStore`
+no longer derives quarantine from a client-supplied `confidence` field on
+`POST /-/violations`. Recording is unchanged and always allowed — every
+report, confirmed or suspected, authenticated or not, is still stored and
+surfaced. Quarantine — forcing the served verdict to `block` — is now a
+server decision, opt-in via `SENTINEL_AUTO_QUARANTINE=1` and effective only
+when `SENTINEL_AUTH_PUBKEY` is also set (auth disabled ⇒ the flag is inert;
+setting the flag without auth configured is a startup FATAL, same posture as
+the other fail-closed env vars). Default is unset ⇒ record-only: violations
+are visible but never auto-quarantine. This closes the anonymous/forged
+fleet-wide-DoS path an unauthenticated `confirmed` report previously had
+against any already-audited integrity, while leaving ADR-0023's sensing,
+classification, and serve-time-overlay mechanics untouched (ADR-0040,
+supersedes ADR-0023's auto-quarantine default only).
 Phase 26 Part A closes a **decompression-bomb** gap ADR-0037 didn't cover:
 ADR-0037 bounded compressed fetch bytes, not what happens after — a small
 `.tgz` within the fetch cap can still gzip-bomb into unbounded unpacked bytes
@@ -411,6 +425,12 @@ respectively. `SENTINEL_MAX_TARBALL_BYTES`/`SENTINEL_MAX_PACKUMENT_BYTES`/
 `SENTINEL_MAX_TREE_PACKAGES`/`SENTINEL_RATE_LIMIT_RPM` (Phase 24) round out
 the same fail-closed, load-once-at-startup posture for the fetch byte caps,
 the audit-tree package cap, and the opt-in token-bucket rate limiter.
+`SENTINEL_AUTO_QUARANTINE` (Phase 26 Part B, ADR-0040) is `0`/unset by
+default (record-only); only the exact value `1` enables it (any other value,
+e.g. `true`, is treated as off — matching the `SENTINEL_ENFORCE="1"`
+convention), and enabling it requires `SENTINEL_AUTH_PUBKEY` to
+also be set, or the proxy FATALs at startup — the same fail-closed posture as
+the rest of this list, applied to the auto-quarantine decision itself.
 `SENTINEL_MAX_UNPACKED_BYTES`/`SENTINEL_MAX_FILE_COUNT` (Phase 26 Part A) are
 the same fail-closed, load-once-at-startup posture for `extractTarball`'s
 decompression-bomb caps (unpacked bytes / file count; defaults 1 GiB / 100k).

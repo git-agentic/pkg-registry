@@ -350,6 +350,24 @@ unauthenticated (like `/-/approvals`); a spoofed report can only quarantine
 an *already-audited* integrity (the endpoint 400s otherwise) and can only
 force `block`, never relax a verdict — a fail-closed DoS, not a bypass.
 
+**Update (Phase 26 Part B, ADR-0040):** that last bound turned out to matter
+more than it looked — an anonymous or forged `confirmed` report could still
+force a fleet-wide quarantine of any already-audited integrity, since
+`ViolationStore` derived `quarantined` directly from the client's
+`confidence` field. Recording is unchanged and still open to any caller;
+quarantine is no longer derived from client `confidence` at all. It is now a
+server decision, opt-in via `SENTINEL_AUTO_QUARANTINE=1` and effective only
+when `SENTINEL_AUTH_PUBKEY` is also configured (`createServer` computes
+`autoQuarantineEnabled = autoQuarantine && authz.enabled`; the `/-/violations`
+handler quarantines only when `autoQuarantineEnabled && confidence ===
+"confirmed"`). Setting the flag without auth enabled is a startup FATAL, the
+same fail-closed posture as `SENTINEL_AUTH_PUBKEY` itself. Default is
+record-only: violations are stored and surfaced but never force `block`
+without the operator opting in *and* turning on token auth. Everything else
+in this section — sensing, classification, the deny-set non-drift guarantee,
+the serve-time overlay, the best-effort containment-unchanged limitation —
+is unchanged; ADR-0040 supersedes only ADR-0023's auto-quarantine default.
+
 ### 3.12 Control-plane auth (Phase 12, ADR-0025)
 
 Phases 2–11 left every mutating control-plane endpoint unauthenticated;
