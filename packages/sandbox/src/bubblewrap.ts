@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { generateBwrapArgs } from "./bwrap.js";
 import type { Sandbox, SandboxResult } from "./types.js";
 import type { Capability } from "@sentinel/core";
@@ -11,6 +11,15 @@ import { nodeInstallPrefix } from "./read-allow.js";
 /** bwrap's own errors when the kernel refuses unprivileged user namespaces (Ubuntu 24.04 AppArmor, etc.). */
 const NS_FAILURE = /Creating new namespace failed|No permissions to create new namespace|setting up uid map/i;
 
+/** realpathSync with an identity fallback (missing path, permission error, …) — never throws. */
+function safeRealpath(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    return p;
+  }
+}
+
 /** Enforces a generated bwrap profile via `bwrap`. Fails closed on non-Linux, missing bwrap, or refused namespace. */
 export class BubblewrapSandbox implements Sandbox {
   run(cmd: string, opts: { cwd: string; approved: Capability[]; homeDir: string; env?: NodeJS.ProcessEnv; projectRoot?: string }): SandboxResult {
@@ -19,7 +28,7 @@ export class BubblewrapSandbox implements Sandbox {
     }
     const args = [
       ...generateBwrapArgs(opts.approved, {
-        homeDir: opts.homeDir, cwd: opts.cwd, tmpDir: tmpdir(), pathExists: existsSync,
+        homeDir: opts.homeDir, cwd: opts.cwd, tmpDir: tmpdir(), pathExists: existsSync, realpath: safeRealpath,
         nodePrefix: nodeInstallPrefix(process.execPath),
         projectRoot: opts.projectRoot ?? opts.cwd,
       }),

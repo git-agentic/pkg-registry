@@ -18,11 +18,17 @@ import { SENSITIVE_EXECUTABLES, execCarveOutPaths, classifyProcessTarget } from 
  */
 export function generateBwrapArgs(
   approved: Capability[],
-  opts: { homeDir: string; cwd: string; tmpDir: string; nodePrefix: string; projectRoot: string; pathExists?: (p: string) => boolean },
+  opts: {
+    homeDir: string; cwd: string; tmpDir: string; nodePrefix: string; projectRoot: string;
+    pathExists?: (p: string) => boolean;
+    /** resolves symlinks; defaults to identity (kept pure for tests). Real callers pass realpathSync-ish. */
+    realpath?: (p: string) => string;
+  },
 ): string[] {
   const approvedFs = approved.filter((c) => c.kind === "filesystem").map((c) => c.target);
   const hasNetwork = approved.some((c) => c.kind === "network");
   const exists = opts.pathExists ?? (() => true);
+  const resolve = opts.realpath ?? ((p: string) => p);
 
   const home = opts.homeDir;
   // `p` is an ancestor-or-equal of $HOME (i.e. it CONTAINS $HOME) — e.g. tmpDir when a
@@ -81,12 +87,23 @@ export function generateBwrapArgs(
     .filter((t) => classifyProcessTarget(t) === "path" && isSafeGrantTarget(t))
     .map((p) => expandHome(p, home));
   if (!execWildcard) {
+    // Distro-merged-usr dirs (e.g. Debian/Ubuntu's `/bin` → `/usr/bin` symlink) mean a
+    // literal like `/bin/nc` isn't itself a creatable bind-mount destination — bwrap
+    // doesn't follow symlinked ancestors when materializing a mount point there, so
+    // `--ro-bind /dev/null /bin/nc` can fail with ENOENT even though the file "exists"
+    // (through the symlink). Resolve each candidate to its real path first so the mask
+    // always targets an actual mount-able node, and dedupe so a merged-usr pair like
+    // `/bin/nc` + `/usr/bin/nc` (same real file) isn't masked twice.
+    const maskedReal = new Set<string>();
     for (const cmd of SENSITIVE_EXECUTABLES) {
       if (grantedCmds.has(cmd)) continue;
       for (const lit of execCarveOutPaths(cmd)) {
         if (execPathGrants.some((g) => pathCovers(g, lit))) continue;
         if (!exists(lit)) continue;
-        args.push("--ro-bind", "/dev/null", lit);
+        const real = resolve(lit);
+        if (maskedReal.has(real)) continue;
+        maskedReal.add(real);
+        args.push("--ro-bind", "/dev/null", real);
       }
     }
   }

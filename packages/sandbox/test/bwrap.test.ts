@@ -230,4 +230,16 @@ describe("generateBwrapArgs — exfil-tool carve-out (Phase 29)", () => {
   test("deterministic for the same inputs", () => {
     assert.deepEqual(generateBwrapArgs([proc("curl")], lopts()), generateBwrapArgs([proc("curl")], lopts()));
   });
+
+  test("a merged-usr symlink ancestor (e.g. /bin -> /usr/bin) is masked at its real path, not the symlinked literal, and only once", () => {
+    // Debian/Ubuntu merge /bin into /usr/bin via a symlink; bwrap can't materialize a
+    // NEW bind-mount destination through a symlinked ancestor directory (it doesn't
+    // resolve intermediate symlinks the way a normal open() does), so masking the
+    // literal `/bin/nc` can fail with ENOENT even though the file "exists" via the
+    // symlink. The generator must resolve each candidate to its real path first.
+    const realpath = (p: string) => (p.startsWith("/bin/") ? p.replace(/^\/bin\//, "/usr/bin/") : p);
+    const masks = devNullMasks(generateBwrapArgs([], lopts({ realpath })));
+    assert.ok(!masks.includes("/bin/nc"), "the symlinked-ancestor literal must not be used as a mask destination");
+    assert.equal(masks.filter((m) => m === "/usr/bin/nc").length, 1, "the merged-usr pair collapses to a single real-path mask");
+  });
 });
