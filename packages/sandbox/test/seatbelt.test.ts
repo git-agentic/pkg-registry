@@ -131,6 +131,49 @@ describe("SeatbeltSandbox enforcement", { skip: darwin ? false : "requires macOS
     assert.ok(r.stdout.includes("DEP_OK"), "the project tree must be readable (require resolves)");
     assert.ok(r.stdout.includes("READ_DENIED") && !r.stdout.includes("LEAK"), "a non-allow-listed $HOME read must be denied");
   });
+
+  test("exec floor positive control: /bin/echo and a node_modules/.bin shim still run", () => {
+    // NOTE: projectRoot is a subdir of homeDir (matching every other test in this
+    // file, and real installs), not homeDir itself — the Slice 2 read-allow guard
+    // (profile.ts) deliberately refuses to re-allow $HOME itself or an ancestor of
+    // $HOME (readAllowSafe), so a projectRoot === homeDir would make the shim
+    // unreadable and this "positive control" would spuriously fail on the read
+    // path rather than proving the exec floor.
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "sb-exec-pos-")));
+    const proj = join(home, "proj");
+    mkdirSync(join(proj, "node_modules", ".bin"), { recursive: true });
+    const shim = join(proj, "node_modules", ".bin", "hello");
+    writeFileSync(shim, "#!/bin/sh\necho SHIM-OK\n", { mode: 0o755 });
+    const res = new SeatbeltSandbox().run(`/bin/echo FLOOR-OK && "${shim}"`, { cwd: proj, approved: [], homeDir: home, projectRoot: proj });
+    assert.equal(res.exitCode, 0, res.stderr);
+    assert.match(res.stdout, /FLOOR-OK/);
+    assert.match(res.stdout, /SHIM-OK/);
+  });
+
+  test("a dropped binary in a writable non-project dir is denied and surfaces as a process violation", () => {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "sb-exec-home-")));
+    const stash = realpathSync(mkdtempSync(join(tmpdir(), "sb-exec-stash-"))); // writable (under tmp floor), NOT under projectRoot
+    const marker = join(stash, "marker.txt");
+    // the script itself WRITES the payload (proving the location is writable), then tries to exec it
+    const cmd = `printf '#!/bin/sh\\necho PWNED > "${marker}"\\n' > "${stash}/payload" && chmod +x "${stash}/payload" && "${stash}/payload"`;
+    const res = new SeatbeltSandbox().run(cmd, { cwd: home, approved: [], homeDir: home });
+    assert.ok(existsSync(join(stash, "payload")), "the write must have succeeded (writable location)");
+    assert.ok(!existsSync(marker), "the dropped binary must NOT have executed");
+    assert.notEqual(res.exitCode, 0);
+    assert.equal(res.violation?.kind, "process");
+    assert.equal(res.violation?.confidence, "confirmed");
+  });
+
+  test("the curl carve-out is denied without a Grant and lifted by process:curl", () => {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "sb-exec-curl-")));
+    const out = join(home, "curl-out.txt");
+    new SeatbeltSandbox().run(`/usr/bin/curl --version > "${out}" 2>/dev/null || true`, { cwd: home, approved: [], homeDir: home });
+    const denied = existsSync(out) ? readFileSync(out, "utf8") : "";
+    assert.ok(!denied.includes("curl"), "curl must not have run without a Grant");
+    const approved: Capability[] = [{ kind: "process", target: "curl", evidence: [] }];
+    new SeatbeltSandbox().run(`/usr/bin/curl --version > "${out}"`, { cwd: home, approved, homeDir: home });
+    assert.ok(readFileSync(out, "utf8").includes("curl"), "an approved process:curl must run");
+  });
 });
 
 describe("runLifecycleScripts", { skip: darwin ? false : "requires macOS sandbox-exec" }, () => {
