@@ -102,6 +102,10 @@ export function generateBwrapArgs(
     // A PATH grant must agree with that resolution (issue #21): compare grants and
     // candidates in resolved space too, or a grant on /usr/bin/curl is defeated by
     // its ungranted /bin/curl sibling resolving back onto the same inode.
+    // Accepted residual: resolution makes the lift depend on live symlink state — a
+    // grant target the package can rewrite into a dir symlink would lift every mask
+    // under it. Operator-gated (needs an approved writable process: grant), same
+    // class as ADR-0042/0044's projectRoot-in-floor residual.
     const resolvedGrants = execPathGrants.map(resolve);
     const maskedReal = new Set<string>();
     for (const cmd of SENSITIVE_EXECUTABLES) {
