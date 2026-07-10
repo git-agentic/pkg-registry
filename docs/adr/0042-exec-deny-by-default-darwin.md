@@ -3,8 +3,6 @@
 **Status:** Accepted (Phase 28)
 **Date:** 2026-07-10
 
-## Status
-
 Extends ADR-0038 (sandbox default-deny — this mirrors its write layering for exec) and ADR-0023 (violation telemetry — `classifyViolation` now attributes denied execs); supersedes nothing. This resolves the enforce-or-formally-downgrade decision tracked in issue #8 for the `process` kind on macOS; Linux enforcement is Phase 29.
 
 ## Context
