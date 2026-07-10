@@ -10,3 +10,4 @@ export { computeDenySet, expandHome, canonicalizeMacPath, type DenySet } from ".
 export { classifyViolation } from "./violation.js";
 export type { SandboxViolation } from "./types.js";
 export { readAllowList, nodeInstallPrefix, resolveProjectRoot } from "./read-allow.js";
+export { execAllowFloor, linuxExecFloor } from "./exec-floor.js";

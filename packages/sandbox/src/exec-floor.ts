@@ -23,3 +23,19 @@ export function execAllowFloor(opts: { nodePrefix: string; projectRoot: string }
     "/usr/local",             // Homebrew (Intel), user-installed tools
   ];
 }
+
+/**
+ * The Linux exec floor: the shared `execAllowFloor` PLUS the dynamic-linker and
+ * shared-library directories. Landlock's `LANDLOCK_ACCESS_FS_EXECUTE` gates
+ * `mmap(PROT_EXEC)` as well as `execve`, so a dynamically-linked binary's ELF
+ * interpreter (`/lib64/ld-linux-*`) and its libraries must be exec-granted or the
+ * binary can't start — verified by the Phase 2 feasibility spike (the first CI run
+ * failed precisely because these were omitted). macOS does NOT need these (dylib
+ * loading is file-read there, not process-exec), so they live here, not in
+ * `execAllowFloor`. Pure. The macOS-only entries `execAllowFloor` returns
+ * (`/Library/Developer`, …) are harmless on Linux — the helper skips an `--allow`
+ * path that doesn't exist.
+ */
+export function linuxExecFloor(opts: { nodePrefix: string; projectRoot: string }): string[] {
+  return [...execAllowFloor(opts), "/lib", "/lib64", "/usr/lib", "/usr/lib64"];
+}
