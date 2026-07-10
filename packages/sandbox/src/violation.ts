@@ -1,4 +1,5 @@
 import type { DenySet } from "./deny-set.js";
+import { canonicalizeMacPath } from "./deny-set.js";
 import { pathCovers } from "./path-cover.js";
 import type { SandboxResult, SandboxViolation } from "./types.js";
 
@@ -21,7 +22,7 @@ const PERM_SIGNATURE = /EPERM|EACCES|operation not permitted|permission denied/i
 // shebang-script exec (probe b) instead shows an interpreter-resolution wrapper
 // BETWEEN the path and the final "Operation not permitted"
 // ("sh: <path>: /bin/sh: bad interpreter: Operation not permitted") — so
-// SH_EXEC_LINE only requires the shell prefix AND "Operation not permitted"
+// firstShExecLine only requires SH_EXEC_PREFIX AND OPERATION_NOT_PERMITTED
 // somewhere on the line (checked as two separate linear tests, mirroring the
 // FS_CODE + QUOTED_PATH split above — no capture group precedes an unbounded
 // greedy run before a literal, avoiding the polynomial-ReDoS shape CodeQL flags),
@@ -111,16 +112,22 @@ export function classifyViolation(result: SandboxResult, denySet: DenySet): Sand
     if (!target) {
       return { kind: "process", target: null, confidence: "suspected", deniedResource: null, evidence };
     }
-    const sensitive = (denySet.deniedPaths ?? []).find((dp) => pathCovers(dp, target));
+    // Deny-set path arrays are canonicalized (firmlink roots collapsed to their
+    // /private/... form); the shell/node print the UNRESOLVED path in stderr
+    // (e.g. /var/folders/... under $TMPDIR). Canonicalize before matching so a
+    // dropped-binary exec under $TMPDIR still attributes correctly — the `target`
+    // FIELD stays the raw extracted path (better evidence of what actually printed).
+    const canonTarget = canonicalizeMacPath(target);
+    const sensitive = (denySet.deniedPaths ?? []).find((dp) => pathCovers(dp, canonTarget));
     if (sensitive) {
       return { kind: "filesystem", target, confidence: "confirmed", deniedResource: sensitive, evidence };
     }
-    const carved = (denySet.execDeniedPaths ?? []).find((p) => p === target || pathCovers(p, target));
+    const carved = (denySet.execDeniedPaths ?? []).find((p) => p === canonTarget || pathCovers(p, canonTarget));
     if (carved) {
       return { kind: "process", target, confidence: "confirmed", deniedResource: carved, evidence };
     }
-    if ((denySet.execAllowedPaths ?? []).some((p) => pathCovers(p, target))) return null; // exec allowed there → ambient
-    const writable = (denySet.writeAllowedPaths ?? []).some((p) => pathCovers(p, target));
+    if ((denySet.execAllowedPaths ?? []).some((p) => pathCovers(p, canonTarget))) return null; // exec allowed there → ambient
+    const writable = (denySet.writeAllowedPaths ?? []).some((p) => pathCovers(p, canonTarget));
     return {
       kind: "process",
       target,

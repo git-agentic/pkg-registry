@@ -67,6 +67,10 @@ artifact from reading it.
   spawn pattern.
 - Platform asymmetry until Phase 29, documented in the threat model —
   same precedent as the ADR-0023/0038 telemetry and /dev asymmetries.
+- A broad `process:` PATH Grant (e.g. `process:~` or `process:/Users`)
+  widens the exec-allowed surface as much as the operator approves it to —
+  human-approval-gated and consistent with the Phase 25 filesystem-Grant
+  model, but a wide Grant is a wide Grant.
 - Scoring, the approval model, bwrap, and the proxy are untouched
   (invariants #1–#7).
 

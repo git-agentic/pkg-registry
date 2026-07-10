@@ -88,14 +88,16 @@ describe("classifyViolation", () => {
 // shebang/interpreter-resolution wrapper (payload has a #!/bin/sh line) vs. a direct
 // binary exec — plus a separate node spawnSync/execFileSync EPERM shape. All three
 // carry the UNRESOLVED /var/folders/... form of a temp path on this host (never the
-// resolved /private/var/... realpath).
+// resolved /private/var/... realpath) — but computeDenySet's path arrays are always
+// canonicalized (firmlink roots collapsed to /private/...), matching what a real
+// DenySet from computeDenySet would contain (see the final-review fix note below).
 const EXEC_DS: DenySet = {
   deniedPaths: ["/Users/test/.ssh"],
   networkDenied: true,
   execDenied: true,
   execAllowedPaths: ["/bin", "/usr/bin", "/usr/local", "/work/pkg", "/Library/Developer"],
   execDeniedPaths: ["/usr/bin/curl", "/opt/homebrew/bin/curl"],
-  writeAllowedPaths: ["/work/pkg", "/var/folders/vl/tmp.S6oZE9G04A", "/private/tmp", "/dev"],
+  writeAllowedPaths: ["/work/pkg", "/private/var/folders/vl/tmp.S6oZE9G04A", "/private/tmp", "/dev"],
 };
 const fail = (stderr: string): SandboxResult => ok({ exitCode: 126, stderr });
 
@@ -159,5 +161,34 @@ describe("classifyViolation — exec (Phase 28)", () => {
   test("without execDenied (legacy DenySet / linux) the exec branch never fires", () => {
     const legacy: DenySet = { deniedPaths: [], networkDenied: true };
     assert.equal(classifyViolation(fail("/bin/sh: /private/tmp/x: Operation not permitted"), legacy), null);
+  });
+
+  // Final-review regression (Finding 1): the deny-set path arrays are canonicalized
+  // to the /private/... firmlink form, but the shell/node print the UNRESOLVED
+  // /var/folders/... form in stderr. Before the fix, comparing the raw target against
+  // a canonicalized writeAllowedPaths entry never matched — a binary dropped in
+  // $TMPDIR and exec'd (the phase's headline scenario) wrongly classified as
+  // "suspected" / deniedResource: null instead of "confirmed" / "exec-default-deny",
+  // which meant SENTINEL_AUTO_QUARANTINE would never fire on a real dropped-binary exec.
+  test("a dropped-$TMPDIR-binary exec (unresolved /var/folders path) against a canonicalized writeAllowedPaths entry is confirmed exec-default-deny (shebang shape)", () => {
+    const v = classifyViolation(
+      fail("/bin/sh: /var/folders/vl/tmp.S6oZE9G04A/payload: /bin/sh: bad interpreter: Operation not permitted"),
+      EXEC_DS,
+    );
+    assert.equal(v?.kind, "process");
+    assert.equal(v?.confidence, "confirmed");
+    assert.equal(v?.deniedResource, "exec-default-deny");
+    assert.equal(v?.target, "/var/folders/vl/tmp.S6oZE9G04A/payload");
+  });
+
+  test("a dropped-$TMPDIR-binary exec (unresolved /var/folders path) against a canonicalized writeAllowedPaths entry is confirmed exec-default-deny (spawnSync shape)", () => {
+    const v = classifyViolation(
+      fail("spawnSync /var/folders/vl/tmp.S6oZE9G04A/payload EPERM"),
+      EXEC_DS,
+    );
+    assert.equal(v?.kind, "process");
+    assert.equal(v?.confidence, "confirmed");
+    assert.equal(v?.deniedResource, "exec-default-deny");
+    assert.equal(v?.target, "/var/folders/vl/tmp.S6oZE9G04A/payload");
   });
 });

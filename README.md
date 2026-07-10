@@ -287,8 +287,11 @@ a true subcommand impractical). See
   grants (`process:curl` lifts one tool's carve-out; `process:/path` opens a path;
   `process:*` lifts the carve-out only), and exfil-capable tools (`curl`, `wget`,
   `nc`, …) are re-denied inside the floor unless granted. A dropped binary in `/tmp`
-  or a cache is kernel-denied. Linux exec gating (Landlock) is Phase 29 — until it
-  lands, exec on Linux remains advisory (ADR-0042).
+  or a cache is kernel-denied; a binary the package writes into its *own* project
+  tree can still exec there (the floor includes the project root), mitigated by the
+  `unscanned-content` finding and `process` capability scoring, not kernel denial.
+  Linux exec gating (Landlock) is Phase 29 — until it lands, exec on Linux remains
+  advisory (ADR-0042).
 
 A denied credential read surfaces as a confirmed runtime violation on Seatbelt (EPERM); on bubblewrap the read is *contained* (a `--tmpfs` mask yields `ENOENT`) but not classified — an accepted telemetry asymmetry (ADR-0023). Both backends contain; only the telemetry differs.
 
