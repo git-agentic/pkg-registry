@@ -18,7 +18,7 @@
     "packages/action"
   ],
   "scripts": {
-    "build": "tsc --build",
+    "build": "tsc --build && node packages/sandbox/scripts/build-native.mjs",
     "typecheck": "tsc --build --noEmit false",
     "test": "node --import tsx --test packages/**/test/*.test.ts",
     "fixtures": "tsx scripts/make-fixtures.ts",

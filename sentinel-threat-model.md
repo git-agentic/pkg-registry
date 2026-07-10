@@ -258,22 +258,34 @@ runtime violation revokes any standing approval and quarantines the integrity
 at serve time (ADR-0023).
 
 **Enforcement scope — process execution: macOS enforces the floor + carve-out;
-Linux enforces the carve-out only, floor advisory.** The `process` and `native`
+Linux enforces the floor where Landlock + the from-source helper are available
+(advisory otherwise), plus the carve-out always.** The `process` and `native`
 capability kinds are detected and fed to scoring, and on macOS (Phase 28,
 ADR-0042) an exec is enforced deny-by-default: a spawn is kernel-permitted only
 from the fixed exec floor (system dirs, node prefix, project tree,
 developer/Homebrew toolchains) or an approved `process:` Grant, with
 exfil-capable tools (curl, wget, nc, …) re-denied inside the floor unless
-granted. On Linux (Phase 29, ADR-0043) bwrap cannot path-gate exec at all — no
-floor exists — but the same exfil-tool carve-out is enforced independently: each
+granted. On Linux (Phase 29, ADR-0043) bwrap cannot path-gate exec at all, so
+the exfil-tool carve-out is enforced independently of any floor: each
 `SENSITIVE_EXECUTABLES` literal is masked with `--ro-bind /dev/null` unless a
 `process:` Grant lifts it, so a denied carve-out exec is still kernel-denied and
-surfaces as a confirmed violation. A binary dropped into a writable location can
-still exec on Linux (no floor), but stays filesystem+network confined. `native`
-is advisory-only on both platforms by decision. A spawned child inherits the
-filesystem/network confinement on both platforms. A true Linux exec floor needs
-Landlock (a native syscall piece), deferred pre-1.0; remaining work is tracked in
-[issue #8](https://github.com/git-agentic/pkg-registry/issues/8).
+surfaces as a confirmed violation. Phase 2 (Landlock, ADR-0044) closes the
+Linux floor gap where the kernel and toolchain allow it: a first-party,
+from-source `landlock-exec` helper, compiled by a `npm run build` step (Linux +
+`cc` only, no-op elsewhere) and invoked inside bwrap, applies
+`LANDLOCK_ACCESS_FS_EXECUTE` over the floor (`execAllowFloor` plus the
+library/linker dirs `/lib`, `/lib64`, `/usr/lib`, `/usr/lib64`) before exec'ing
+the lifecycle script — a dropped binary outside that floor is kernel-denied.
+Detection is fail-open and pre-checked (the helper must exist AND pass a
+`--check` ABI probe, cached); any negative falls back to the Phase 29 advisory
+floor with a one-time notice, so a Landlock-less or no-`cc` host is unaffected
+and stays filesystem+network confined as before. The Phase 29 `/dev/null`
+carve-out is unchanged (Landlock is allow-list-only and can't deny a literal
+under an allowed dir). `native` is advisory-only on both platforms by decision.
+A spawned child inherits the filesystem/network confinement on both platforms.
+A cross-platform exec floor now exists (macOS Seatbelt, Linux Landlock where
+available); [issue #8](https://github.com/git-agentic/pkg-registry/issues/8)
+is closable on merge, with the Landlock-availability caveat documented here.
 
 ## 4. Accepted limitations
 
@@ -285,17 +297,24 @@ Stated plainly. Each is a deliberate, recorded trade-off, not an oversight.
   build script trips `install-scripts`). Sentinel's stance is
   defense-in-depth — score, gate, sandbox — not a guarantee that a scored
   `allow` is safe (ADR-0001/0002/0008).
-- **`process` exec floor is macOS-only (for now); the exfil-tool carve-out is
-  enforced on both platforms; `native` is advisory everywhere.** On macOS an
-  unapproved exec outside the floor is kernel-denied (ADR-0042), with a recorded
-  residual: a package may exec a binary written into its own project tree
-  (floor decision). On Linux (Phase 29, ADR-0043) there is no floor equivalent —
-  bwrap cannot path-gate exec — but the exfil-capable tools (curl, wget, nc, …)
-  are still individually exec-denied via `/dev/null` masking; a dropped binary
-  in a writable location can still exec, but stays filesystem+network confined.
-  A cross-platform floor needs Landlock, deferred pre-1.0. `native` loading is
-  not distinguishable from reading at the path level and stays a scoring
-  signal. See §3.9; [issue #8](https://github.com/git-agentic/pkg-registry/issues/8).
+- **`process` exec floor is enforced on macOS, and on Linux where Landlock +
+  the from-source helper are available (advisory otherwise); the exfil-tool
+  carve-out is enforced on both platforms unconditionally; `native` is
+  advisory everywhere.** On macOS an unapproved exec outside the floor is
+  kernel-denied (ADR-0042), with a recorded residual: a package may exec a
+  binary written into its own project tree (floor decision) — the same
+  residual now applies on a Landlock-enforced Linux host. On Linux (Phase 29,
+  ADR-0043) the exfil-capable tools (curl, wget, nc, …) are individually
+  exec-denied via `/dev/null` masking regardless of floor availability; Phase 2
+  (Landlock, ADR-0044) additionally kernel-denies a dropped binary outside the
+  floor on hosts where Landlock + a compiled `cc` toolchain are available
+  (fail-open, pre-checked detection with a one-time notice on fallback) — a
+  host without either stays on the Phase 29 advisory floor, filesystem+network
+  confined as before, no availability regression. `native` loading is not
+  distinguishable from reading at the path level and stays a scoring signal. A
+  cross-platform floor now exists; see §3.9;
+  [issue #8](https://github.com/git-agentic/pkg-registry/issues/8) is closable
+  on merge with the availability caveat documented above.
 - **A swallowed denial evades telemetry, not containment.** The runtime
   violation sensor only sees denials that surface as process failure. A
   script that catches the sandbox's denial and exits 0 is invisible to

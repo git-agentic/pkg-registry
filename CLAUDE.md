@@ -18,10 +18,12 @@ Phase 3 adds **`@sentinel/sandbox`** — a macOS Seatbelt / Linux bubblewrap run
 by `createSandbox()`, that enforces the **filesystem, network, and env** portions of a
 package's approved capability manifest at install time (`sentinel run-scripts`). Note: as
 of Phase 28 the `process` kind's exec **floor** is **enforced on macOS** (exec
-deny-by-default, ADR-0042); Linux has no floor equivalent (bwrap cannot path-gate exec),
-but as of Phase 29 the exfil-tool **carve-out** is enforced on Linux too via `/dev/null`
-masking (floor advisory, ADR-0043), and `native` is advisory-only on both platforms by
-decision (tracked in #8).
+deny-by-default, ADR-0042); as of Phase 29 the exfil-tool **carve-out** is enforced on
+Linux too via `/dev/null` masking (ADR-0043); and as of Phase 2 (Landlock) the exec
+**floor** is also **enforced on Linux where a from-source Landlock helper is available**
+(fail-open, pre-checked detection — advisory otherwise, ADR-0044). `native` is
+advisory-only on both platforms by decision. A cross-platform exec floor now exists;
+closing #8 is left to the controller after final review.
 Synthetic malware fixtures are still scored-as-text and
 **never executed**; enforcement is tested with benign probe packages.
 Phase 4 hardened the sandbox: fail-closed env-var scrubbing via an `env` capability
@@ -411,11 +413,37 @@ resolving merged-usr symlink ancestors (e.g. Debian/Ubuntu's `/bin` →
 `computeDenySet`'s Linux branch models no floor (only the masked carve-out
 literals), so `classifyViolation`'s Linux branch only ever `confirmed`s a
 process violation on a masked literal — never a `suspected` floor guess. A
-binary dropped into a writable location can still exec on Linux; it stays
-filesystem+network confined (no credential read, no exfil without an approved
-`network` cap). A true Linux exec floor needs Landlock (a native syscall
-piece), deferred as too large a dependency for pre-1.0 — **#8 stays open**.
+binary dropped into a writable location can still exec on Linux *when the
+Landlock floor is inactive* (advisory fallback); it stays filesystem+network
+confined (no credential read, no exfil without an approved `network` cap). The
+enforced Linux exec floor that closes this gap where Landlock is available
+lands in Phase 2 below (ADR-0044).
 Scoring and the approval model are untouched (invariants #1–#7, ADR-0043).
+Phase 2 (Landlock) closes the Linux exec-floor gap ADR-0043 left open, **where
+Landlock and a compiled toolchain are available — advisory otherwise**: a
+~100-line, self-contained C helper (`packages/sandbox/native/landlock-exec.c`,
+inline Landlock uapi, no kernel headers) applies
+`LANDLOCK_ACCESS_FS_EXECUTE` over `linuxExecFloor` (`packages/sandbox/src/
+exec-floor.ts`: `execAllowFloor` plus `/lib`, `/lib64`, `/usr/lib`,
+`/usr/lib64` — the dynamic linker + library `mmap` gate the spike found) and
+execs the script, invoked inside bwrap as `landlock-exec --allow <floor> --
+/bin/sh -c <script>`. It's **compiled from source by a `npm run build` step**
+(`build-native.mjs` — Linux + `cc` only, a no-op exit-0 everywhere else),
+never a `postinstall` hook or a lazy runtime compile (both would be posture
+violations for a tool that guards against exactly that). Detection is
+**fail-open and pre-checked**: the helper is used iff it exists AND
+`landlock-exec --check` (an ABI probe) exits 0, cached per process
+(`landlockActive` in `packages/sandbox/src/bubblewrap.ts`) — any negative
+falls back to the Phase 29 advisory floor with a one-time notice, so a
+Landlock-less kernel or a host without `cc` never regresses and never fails a
+lifecycle script. `computeDenySet` gains a `linux-landlock` `execFloorMode`
+and `classifyViolation` confirms a floor-outside exec denial as
+`exec-floor-deny`; the Phase 29 `/dev/null` exfil-tool carve-out is unchanged
+(Landlock is allow-list-only and can't deny a literal under an allowed dir).
+macOS/Seatbelt is untouched; `native` stays advisory on both platforms. A
+cross-platform exec floor now exists (macOS Seatbelt + Linux Landlock where
+available) — #8 is closable, left to the controller after final review.
+Scoring and the approval model are untouched (invariants #1–#7, ADR-0044).
 
 We are the Socket/Chainguard wedge: **do not** try to replace npm. Resolve and
 serve real packages transparently; only attach signal.
@@ -505,15 +533,15 @@ decompression-bomb caps (unpacked bytes / file count; defaults 1 GiB / 100k).
 
 ```bash
 npm run build            # tsc --build (project references: core → proxy/cli)
-npm test                 # engine + end-to-end proxy: 747 tests on this host (745 pass, 2 skipped on darwin).
+npm test                 # engine + end-to-end proxy: 760 tests on this host (758 pass, 2 skipped on darwin).
                          # Skips are platform-gated enforcement: "non-darwin throws" skips on darwin
                          # (it verifies darwin-only behaviour), and the "no silent skip" CI guard skips
                          # off-CI. The BubblewrapSandbox enforcement suite and the Linux enforce-e2e tests
-                         # skip as describe-level blocks on darwin ("requires Linux") and are not in the 747
+                         # skip as describe-level blocks on darwin ("requires Linux") and are not in the 760
                          # count. Phase 10's violation-enforce e2e and the darwin-gated runtime-violation
                          # effect test (SeatbeltSandbox: "a denied credential read surfaces a confirmed
                          # runtime violation") RUN on darwin via Seatbelt, the same way the rest of the
-                         # Seatbelt effect suite does, and ARE in the 747 count. Phase 25 Slice 1's
+                         # Seatbelt effect suite does, and ARE in the 760 count. Phase 25 Slice 1's
                          # write-floor SeatbeltSandbox enforcement effect tests (positive control on
                          # the floor, persistence carve-out under a fake $HOME inside the floor's
                          # temp dir, a real /dev/null redirect) are likewise darwin-gated and RUN on
@@ -579,7 +607,22 @@ npm test                 # engine + end-to-end proxy: 747 tests on this host (74
                          # carve-out denied without a Grant and lifted by process:curl, a denied curl
                          # exec surfacing a confirmed process violation, and a positive control that a
                          # node_modules/.bin shim and node still run) are CI-only (Linux/bubblewrap)
-                         # and do not run on darwin.
+                         # and do not run on darwin. Phase 2 (Landlock)'s linuxExecFloor unit tests
+                         # (exec-floor.test.ts), computeDenySet's Landlock-floor-mode unit tests
+                         # (execFloorMode + populated floor, deny-set.test.ts), classifyViolation's
+                         # Landlock-floor-mode unit tests ("Linux Landlock floor mode (Phase 2)":
+                         # floor-outside denial confirmed exec-floor-deny, masked carve-out literal
+                         # still confirmed, under-floor denial null, inert without execFloorMode —
+                         # violation.test.ts), and build-native.mjs's no-op-off-Linux/no-cc unit
+                         # tests (build-native.test.ts) are hermetic and platform-neutral, in the
+                         # 760 count. The two Landlock bwrap effect tests in bubblewrap.test.ts
+                         # ("Landlock floor: a dropped /tmp binary is denied and surfaces a confirmed
+                         # process violation" and "Landlock floor: a floor binary (node) and a
+                         # node_modules/.bin shim still run") live inside the same
+                         # describe-level-skip-on-darwin `BubblewrapSandbox enforcement` block as the
+                         # rest of the Linux effect suite — CI-only (Linux/bubblewrap with a built
+                         # `landlock-exec` helper), not in the darwin 760 count, same convention as
+                         # the Phase 28/29 effect tests above.
 npm run demo             # offline malware-detection walkthrough
 node packages/proxy/dist/index.js   # run the proxy (see README for env vars)
 ```

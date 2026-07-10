@@ -134,6 +134,27 @@ export function classifyViolation(result: SandboxResult, denySet: DenySet): Sand
     // not a masked-literal exec → fall through (no floor to attribute against).
   }
 
+  // Linux Landlock FLOOR mode (Phase 2): a real exec floor is modeled
+  // (execFloorMode set, execAllowedPaths populated). A denied exec surfaces as the
+  // dash EACCES shape ("/bin/sh: <n>: <path>: Permission denied"). Attribute: a
+  // masked carve-out literal → confirmed on the literal; a floor-OUTSIDE target →
+  // confirmed "exec-floor-deny" (the dropped-binary case); a floor-inside target →
+  // ambient null. Gated on execFloorMode so a macOS DenySet (which never sets it)
+  // is untouched, and its "Operation not permitted" shape stays with the macOS
+  // branch below.
+  if (denySet.execFloorMode === "linux-landlock") {
+    const line = firstLinuxExecLine(stderr);
+    const target = line ? LINUX_EXEC_PATH.exec(line)?.[1] ?? null : null;
+    if (line && target) {
+      const evidence = { exitCode: result.exitCode, stderrExcerpt: excerpt(line) };
+      const carved = (denySet.execDeniedPaths ?? []).find((p) => p === target || pathCovers(p, target));
+      if (carved) return { kind: "process", target, confidence: "confirmed", deniedResource: carved, evidence };
+      const allowed = (denySet.execAllowedPaths ?? []).some((p) => pathCovers(p, target));
+      if (!allowed) return { kind: "process", target, confidence: "confirmed", deniedResource: "exec-floor-deny", evidence };
+      return null; // under the floor → exec allowed → ambient
+    }
+  }
+
   // Process/exec (Phase 28): a bare "sh: /path: ... Operation not permitted" line is
   // ambiguous between a denied exec and a denied write-redirect — disambiguate via
   // the deny/allow sets. A SENSITIVE-path hit is attributed as filesystem (fs takes

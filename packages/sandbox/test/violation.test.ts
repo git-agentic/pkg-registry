@@ -253,3 +253,37 @@ describe("classifyViolation — Linux carve-out (Phase 29)", () => {
     assert.equal(v?.deniedResource, "/usr/bin/curl");
   });
 });
+
+const LL_DS = {
+  deniedPaths: ["/home/test/.ssh"],
+  networkDenied: true,
+  execDenied: true,
+  execFloorMode: "linux-landlock" as const,
+  execAllowedPaths: ["/bin", "/usr/bin", "/lib", "/lib64", "/usr/lib", "/usr/lib64", "/work/pkg"],
+  execDeniedPaths: ["/usr/bin/curl", "/bin/curl"],
+};
+const failLL = (stderr: string) => ({ exitCode: 126, stdout: "", stderr });
+
+describe("classifyViolation — Linux Landlock floor mode (Phase 2)", () => {
+  test("a floor-OUTSIDE exec denial (dropped /tmp binary) is confirmed exec-floor-deny", () => {
+    const v = classifyViolation(failLL("/bin/sh: 1: /tmp/spikestash/payload: Permission denied"), LL_DS);
+    assert.equal(v?.kind, "process");
+    assert.equal(v?.confidence, "confirmed");
+    assert.equal(v?.deniedResource, "exec-floor-deny");
+    assert.equal(v?.target, "/tmp/spikestash/payload");
+  });
+  test("a masked carve-out literal is confirmed on the literal (curl under an allowed /usr/bin)", () => {
+    const v = classifyViolation(failLL("/bin/sh: 1: /usr/bin/curl: Permission denied"), LL_DS);
+    assert.equal(v?.kind, "process");
+    assert.equal(v?.confidence, "confirmed");
+    assert.equal(v?.deniedResource, "/usr/bin/curl");
+  });
+  test("a denial UNDER the floor is ambient null (exec allowed there)", () => {
+    assert.equal(classifyViolation(failLL("/bin/sh: 1: /usr/bin/make: Permission denied"), LL_DS), null);
+  });
+  test("does not fire without execFloorMode (a macOS DenySet is untouched)", () => {
+    const macDs = { deniedPaths: [], networkDenied: true, execDenied: true, execAllowedPaths: ["/bin"], execDeniedPaths: ["/usr/bin/curl"] };
+    // a macOS 'Permission denied' fs line must NOT be classified as an exec-floor violation
+    assert.equal(classifyViolation(failLL("/bin/sh: /home/x/.ssh/id: Permission denied"), macDs as any)?.deniedResource, undefined);
+  });
+});

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { execAllowFloor } from "../src/exec-floor.js";
+import { execAllowFloor, linuxExecFloor } from "../src/exec-floor.js";
 
 describe("execAllowFloor", () => {
   const floor = execAllowFloor({ nodePrefix: "/Users/x/.nvm/versions/node/v24.1.0", projectRoot: "/work/pkg" });
@@ -24,5 +24,21 @@ describe("execAllowFloor", () => {
 
   test("deterministic for the same inputs", () => {
     assert.deepEqual(floor, execAllowFloor({ nodePrefix: "/Users/x/.nvm/versions/node/v24.1.0", projectRoot: "/work/pkg" }));
+  });
+});
+
+describe("linuxExecFloor", () => {
+  const floor = linuxExecFloor({ nodePrefix: "/usr", projectRoot: "/work/pkg" });
+  test("includes the exec floor entries plus the library/linker dirs", () => {
+    for (const p of ["/bin", "/usr/bin", "/usr", "/work/pkg", "/lib", "/lib64", "/usr/lib", "/usr/lib64"]) {
+      assert.ok(floor.includes(p), `linux floor must include ${p}`);
+    }
+  });
+  test("the lib dirs are the Landlock-specific addition (FS_EXECUTE gates library mmap)", () => {
+    const base = new Set(["/lib", "/lib64", "/usr/lib", "/usr/lib64"]);
+    for (const p of base) assert.ok(floor.includes(p));
+  });
+  test("deterministic", () => {
+    assert.deepEqual(floor, linuxExecFloor({ nodePrefix: "/usr", projectRoot: "/work/pkg" }));
   });
 });
