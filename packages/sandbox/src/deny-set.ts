@@ -1,5 +1,8 @@
 import { sensitivePathsFor, type Capability } from "@sentinel/core";
 import { pathCovers } from "./path-cover.js";
+import { execAllowFloor } from "./exec-floor.js";
+import { SENSITIVE_EXECUTABLES, execCarveOutPaths, classifyProcessTarget } from "./sensitive-executables.js";
+import { writeAllowFloor } from "./write-floor.js";
 
 /** The concrete resources the sandbox profile denies, for runtime-violation attribution. */
 export interface DenySet {
@@ -7,6 +10,14 @@ export interface DenySet {
   deniedPaths: string[];
   /** True when the profile denies all network (no approved `network` capability). */
   networkDenied: boolean;
+  /** true when the profile denies exec by default (darwin + exec opts present) */
+  execDenied?: boolean;
+  /** floor + safe process path-Grants, expanded + canonicalized */
+  execAllowedPaths?: string[];
+  /** uncovered carve-out literals, canonicalized */
+  execDeniedPaths?: string[];
+  /** the write floor, expanded + canonicalized (disambiguates exec vs write denials) */
+  writeAllowedPaths?: string[];
 }
 
 /**
@@ -55,7 +66,7 @@ export function canonicalizeMacPath(p: string): string {
  */
 export function computeDenySet(
   approved: Capability[],
-  opts: { homeDir: string; platform: "darwin" | "linux" },
+  opts: { homeDir: string; platform: "darwin" | "linux"; nodePrefix?: string; projectRoot?: string; cwd?: string; tmpDir?: string },
 ): DenySet {
   const approvedFs = approved.filter((c) => c.kind === "filesystem").map((c) => c.target);
   const networkDenied = !approved.some((c) => c.kind === "network");
@@ -67,5 +78,29 @@ export function computeDenySet(
       deniedPaths.push(opts.platform === "darwin" ? canonicalizeMacPath(expanded) : expanded);
     }
   }
-  return { deniedPaths, networkDenied };
+  const base: DenySet = { deniedPaths, networkDenied };
+
+  // Exec gating (Phase 28, darwin only) — MUST mirror generateProfile's exec
+  // section exactly (the non-drift test enforces this).
+  if (opts.platform !== "darwin" || !opts.nodePrefix || !opts.projectRoot) return base;
+  const canon = (p: string) => canonicalizeMacPath(expandHome(p, opts.homeDir));
+  const procTargets = approved.filter((c) => c.kind === "process").map((c) => c.target);
+  const grantedCmds = new Set(procTargets.filter((t) => classifyProcessTarget(t) === "command"));
+  const execWildcard = procTargets.some((t) => classifyProcessTarget(t) === "wildcard");
+  const execPathGrants = procTargets
+    .filter((t) => classifyProcessTarget(t) === "path" && isSafeGrantTarget(t))
+    .map(canon);
+  const execAllowedPaths = [
+    ...execAllowFloor({ nodePrefix: opts.nodePrefix, projectRoot: opts.projectRoot }).map(canon),
+    ...execPathGrants,
+  ];
+  const execDeniedPaths = execWildcard ? [] : SENSITIVE_EXECUTABLES
+    .filter((cmd) => !grantedCmds.has(cmd))
+    .flatMap((cmd) => execCarveOutPaths(cmd))
+    .map(canon)
+    .filter((p) => !execPathGrants.some((g) => pathCovers(g, p)));
+  const writeAllowedPaths = opts.cwd && opts.tmpDir
+    ? writeAllowFloor({ cwd: opts.cwd, tmpDir: opts.tmpDir }).map(canon)
+    : [];
+  return { ...base, execDenied: true, execAllowedPaths, execDeniedPaths, writeAllowedPaths };
 }
