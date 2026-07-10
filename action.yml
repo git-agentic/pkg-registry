@@ -22,7 +22,7 @@ outputs:
 runs:
   using: composite
   steps:
-    - uses: actions/setup-node@v4
+    - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
       with: { node-version: "24" }
     - name: Install & build Sentinel
       shell: bash
@@ -46,14 +46,14 @@ runs:
       run: node "${{ github.action_path }}/packages/action/dist/index.js"
     - name: Upload SBOM
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
       with:
         name: sentinel-sbom
         path: ${{ inputs.working-directory }}/${{ inputs.sbom-path }}
         if-no-files-found: ignore
     - name: Comment verdict on PR
       if: always() && inputs.comment == 'true' && github.event_name == 'pull_request'
-      uses: actions/github-script@v7
+      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
       with:
         script: |
           const fs = require('fs');

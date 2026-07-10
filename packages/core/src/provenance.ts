@@ -107,13 +107,25 @@ export function verifyProvenance(input: {
   try {
     const verifier = buildVerifier(input.trust);
     let identity: ProvenanceIdentity | null = null;
+    let sawSlsa = false;
     for (const a of list) {
       const bundle = bundleFromJSON(a.bundle);
       const result = verifier.verify(toSignedEntity(bundle));
       const stmt = statementOf(bundle);
       const bindErr = checkSubjectBinding(stmt, input.integrity);
       if (bindErr) return { status: "invalid", identity: null, reason: bindErr, rootStale };
-      if (stmt.predicateType === SLSA_V1) identity = extractIdentity(result, stmt);
+      if (stmt.predicateType === SLSA_V1) {
+        identity = extractIdentity(result, stmt);
+        sawSlsa = true;
+      }
+    }
+    if (!sawSlsa) {
+      return {
+        status: "unknown",
+        identity: null,
+        reason: "attestation present but no recognized SLSA v1 provenance predicate",
+        rootStale,
+      };
     }
     return { status: "verified", identity, reason: null, rootStale };
   } catch (e) {

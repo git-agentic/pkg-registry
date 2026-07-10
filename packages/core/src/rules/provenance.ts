@@ -21,7 +21,7 @@ export const provenanceRule: Rule = {
     else if (signature === "unknown") add("info", "registry signature present but no trusted key to verify it");
 
     if (provenance === "invalid") add("critical", "provenance attestation failed verification — possible forgery or tampering");
-    else if (provenance === "unknown") add("low", "provenance attested but could not be verified (bundle unavailable or no trust material)");
+    else if (provenance === "unknown") add("low", "provenance attested but not established as verified SLSA v1 provenance (unrecognized predicate, bundle unavailable, or no trust material)");
     else if (provenance === "absent") add("info", "no build provenance attestation");
     // "verified" emits nothing — identity is surfaced on meta, not as a finding.
     return out;

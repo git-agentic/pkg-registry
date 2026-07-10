@@ -177,4 +177,69 @@ describe("extractTarball caps", () => {
     assert.equal(r.truncated, true);
     assert.ok(r.unpackedSize > 1024 * 1024, `expected unpackedSize to reflect the streamed body, got ${r.unpackedSize}`);
   });
+
+  test("a large code file (>2MB .js) is tracked as unscanned large-code", async () => {
+    const big = "x".repeat(3 * 1024 * 1024);
+    const tgz = await makeTgz({ "package/index.js": "ok\n", "package/bundle.js": big });
+    const r = await extractTarball(tgz);
+    assert.equal(r.truncated, false);
+    const u = r.unscanned.find((e) => e.path === "package/bundle.js");
+    assert.ok(u && u.kind === "large-code", "large .js should be tracked as large-code");
+    assert.ok(u.size >= 3 * 1024 * 1024);
+  });
+
+  test("a native binary is tracked as unscanned native", async () => {
+    const tgz = await makeTgz({ "package/index.js": "ok\n", "package/addon.node": "\0\0binary" });
+    const r = await extractTarball(tgz);
+    const u = r.unscanned.find((e) => e.path === "package/addon.node");
+    assert.ok(u && u.kind === "native", "*.node should be tracked as native");
+  });
+
+  test("a benign small package has no unscanned entries", async () => {
+    const tgz = await makeTgz({ "package/index.js": "module.exports=1\n", "package/readme.md": "hi" });
+    const r = await extractTarball(tgz);
+    assert.deepEqual(r.unscanned, []);
+  });
+
+  test("a large non-executable file (>2MB .json) is NOT tracked", async () => {
+    const bigJson = '{"a":"' + "x".repeat(3 * 1024 * 1024) + '"}';
+    const tgz = await makeTgz({ "package/data.json": bigJson });
+    const r = await extractTarball(tgz);
+    assert.equal(r.unscanned.length, 0, "large .json is skipped but not executable-looking");
+  });
+
+  test("unscannedTotals stays complete when the unscanned list is capped (native entry after the cap is still counted)", async () => {
+    // 150 tiny native files: the `unscanned` list caps at MAX_UNSCANNED (100),
+    // so a naive count/nativeCount derived from that list would read 100/100 —
+    // undercounting, and (worse) blind to any native entry that lands after the
+    // cap on a list built from a *different* kind. Here every entry is native
+    // and tiny, so this is cheap while still proving the totals are complete.
+    const files: Record<string, string> = {};
+    const total = 150;
+    for (let i = 0; i < total; i++) files[`package/addon${i}.node`] = "\0\0binary";
+    const tgz = await makeTgz(files);
+    const r = await extractTarball(tgz);
+    assert.equal(r.truncated, false);
+    assert.equal(r.unscanned.length, 100, "the detail list stays capped at MAX_UNSCANNED");
+    assert.equal(r.unscannedTotals.count, total, "totals.count must reflect every unscanned entry, not just the capped list");
+    assert.equal(r.unscannedTotals.native, total, "totals.native must count every native entry, including those beyond the cap");
+    assert.ok(r.unscannedTotals.count > r.unscanned.length, "totals must exceed the capped list length to prove completeness");
+  });
+
+  test("a native entry that would land after the cap on a mixed large-code+native tarball is still counted in totals", async () => {
+    // 100 large-code files fill the capped list first; a native file after them
+    // must still be reflected in unscannedTotals.native even though it never
+    // makes it into the `unscanned` list itself.
+    const files: Record<string, string> = {};
+    const big = "x".repeat(3 * 1024 * 1024);
+    for (let i = 0; i < 100; i++) files[`package/bundle${i}.js`] = big;
+    files["package/addon.node"] = "\0\0binary";
+    const tgz = await makeTgz(files);
+    const r = await extractTarball(tgz);
+    assert.equal(r.truncated, false);
+    assert.equal(r.unscanned.length, 100, "detail list capped at 100 large-code entries");
+    assert.ok(!r.unscanned.some((u) => u.kind === "native"), "the native entry landed after the cap and is absent from the detail list");
+    assert.equal(r.unscannedTotals.native, 1, "totals.native must still count the native entry dropped from the capped list");
+    assert.equal(r.unscannedTotals.count, 101, "totals.count must include the entry dropped from the capped list");
+  });
 });

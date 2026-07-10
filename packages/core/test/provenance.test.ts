@@ -84,6 +84,18 @@ describe("verifyProvenance — real captured bundle, offline", () => {
     assert.equal(verifyProvenance({ ...base, attestations: { attestations: [] } }).status, "unknown");
   });
 
+  test("unknown: bundles verify and bind but none carries the SLSA v1 predicate", () => {
+    const publishOnly = structuredClone(ATTESTATIONS);
+    publishOnly.attestations = publishOnly.attestations.filter(
+      (a) => a.predicateType !== "https://slsa.dev/provenance/v1",
+    );
+    assert.equal(publishOnly.attestations.length, 1, "fixture must still contain exactly the non-SLSA publish attestation");
+    const r = verifyProvenance({ ...base, attestations: publishOnly });
+    assert.equal(r.status, "unknown");
+    assert.equal(r.identity, null);
+    assert.match(r.reason ?? "", /no recognized SLSA v1/i);
+  });
+
   test("rootStale: real root with an open-ended CA never reports stale, even far in the future", () => {
     const now = verifyProvenance({ ...base, attestations: ATTESTATIONS, now: "2026-07-07T00:00:00Z" });
     assert.equal(now.rootStale, false);

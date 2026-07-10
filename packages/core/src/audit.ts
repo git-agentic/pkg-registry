@@ -157,6 +157,23 @@ export async function runAudit(input: AuditTarballInput): Promise<Audit> {
       onChangedFile: false, evidence: [],
     });
   }
+  if (extracted.unscannedTotals.count > 0) {
+    const { count, native: nativeCount, bytes: totalBytes } = extracted.unscannedTotals;
+    const mb = (totalBytes / (1024 * 1024)).toFixed(1);
+    // Use the combined install-script signal (packument OR scanned package.json),
+    // not a re-derived detectInstallScripts(extracted.files) — a package whose
+    // signal only comes from the packument (package.json wasn't scanned) must
+    // still escalate (#11 review fix).
+    const escalate = nativeCount > 0 && meta.hasInstallScripts;
+    audit.findings.push({
+      ruleId: "unscanned-content", category: "metadata",
+      severity: escalate ? "medium" : "low",
+      message: escalate
+        ? `${count} executable-looking file(s) (${mb} MB) were not scanned, including ${nativeCount} native/binary, and the package runs install scripts`
+        : `${count} executable-looking file(s) (${mb} MB) were not scanned (${nativeCount} native, ${count - nativeCount} large-code)`,
+      onChangedFile: false, evidence: [],
+    });
+  }
   if (prov.rootStale) {
     audit.findings.push({
       ruleId: "trust-root-stale", category: "provenance", severity: "info",
