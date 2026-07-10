@@ -242,4 +242,22 @@ describe("generateBwrapArgs — exfil-tool carve-out (Phase 29)", () => {
     assert.ok(!masks.includes("/bin/nc"), "the symlinked-ancestor literal must not be used as a mask destination");
     assert.equal(masks.filter((m) => m === "/usr/bin/nc").length, 1, "the merged-usr pair collapses to a single real-path mask");
   });
+
+  test("merged-usr: a path Grant on the real path lifts its /bin sibling candidate too (issue #21)", () => {
+    // Without this, /bin/curl (not literally covered by the grant) resolves to
+    // /usr/bin/curl and re-masks the very inode the grant approved.
+    const realpath = (p: string) => (p.startsWith("/bin/") ? p.replace(/^\/bin\//, "/usr/bin/") : p);
+    const masks = devNullMasks(generateBwrapArgs([proc("/usr/bin/curl")], lopts({ realpath })));
+    assert.ok(!masks.includes("/usr/bin/curl"), "the granted real path must not be re-masked via its /bin sibling");
+    assert.ok(!masks.includes("/bin/curl"), "the sibling literal itself must be lifted, not just deduped");
+    assert.ok(masks.includes("/usr/bin/wget"), "other commands' candidates stay masked");
+  });
+
+  test("merged-usr: the inverse grant form (/bin/curl) resolves and lifts both siblings (issue #21)", () => {
+    const realpath = (p: string) => (p.startsWith("/bin/") ? p.replace(/^\/bin\//, "/usr/bin/") : p);
+    const masks = devNullMasks(generateBwrapArgs([proc("/bin/curl")], lopts({ realpath })));
+    assert.ok(!masks.includes("/usr/bin/curl"), "a /bin-form grant must lift the /usr/bin real path");
+    assert.ok(!masks.includes("/bin/curl"), "and its own literal");
+    assert.ok(masks.includes("/usr/bin/wget"), "wget stays masked");
+  });
 });

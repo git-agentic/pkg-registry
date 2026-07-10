@@ -99,6 +99,10 @@ export function generateBwrapArgs(
     // (through the symlink). Resolve each candidate to its real path first so the mask
     // always targets an actual mount-able node, and dedupe so a merged-usr pair like
     // `/bin/nc` + `/usr/bin/nc` (same real file) isn't masked twice.
+    // A PATH grant must agree with that resolution (issue #21): compare grants and
+    // candidates in resolved space too, or a grant on /usr/bin/curl is defeated by
+    // its ungranted /bin/curl sibling resolving back onto the same inode.
+    const resolvedGrants = execPathGrants.map(resolve);
     const maskedReal = new Set<string>();
     for (const cmd of SENSITIVE_EXECUTABLES) {
       if (grantedCmds.has(cmd)) continue;
@@ -106,6 +110,7 @@ export function generateBwrapArgs(
         if (execPathGrants.some((g) => pathCovers(g, lit))) continue;
         if (!exists(lit)) continue;
         const real = resolve(lit);
+        if (resolvedGrants.some((g) => pathCovers(g, real))) continue;
         if (maskedReal.has(real)) continue;
         maskedReal.add(real);
         args.push("--ro-bind", "/dev/null", real);
