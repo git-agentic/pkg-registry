@@ -1,5 +1,8 @@
 # Sentinel — Threat Model
 
+> Snapshot: 2026-07-10, through ADR-0044 (Landlock Linux exec floor). If the
+> ADR log has moved past that, check newer ADRs for controls added since.
+
 This document is for a security engineer evaluating Sentinel before adopting it.
 It reframes the project's decision log for an external reader: every behavioral
 claim below traces to [ARCHITECTURE.md](./ARCHITECTURE.md) or a specific ADR in

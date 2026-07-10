@@ -93,6 +93,22 @@ not yet built · `Superseded` / `Deprecated` — replaced; see the linked succes
 |-----|-------|----------------------|
 | [0038](./0038-sandbox-default-deny.md) | Sandbox default-deny (writes + reads) | Writes deny-by-default with a fixed floor + Grant re-allow (Slice 1); `$HOME` reads deny-by-default with a read-allow list for the node prefix/project root/caches (Slice 2) — both slices landed |
 
+## Phases 26–27 — external-review hardening (Accepted, implemented)
+
+| ADR | Title | Decision in one line |
+|-----|-------|----------------------|
+| [0039](./0039-bounded-tarball-extraction.md) | Bounded tarball extraction (Phase 26 Part A) | Cap unpacked bytes + file count at the gunzip boundary; a truncated current tarball is a critical `resource-abuse` finding |
+| [0040](./0040-violation-sensing-vs-enforcement.md) | Violation sensing ≠ enforcement (Phase 26 Part B) | Quarantine becomes a server decision, opt-in via `SENTINEL_AUTO_QUARANTINE=1` + auth; recording stays open — closes the forged-violation DoS path |
+| [0041](./0041-review-hardening.md) | Review hardening (Phase 27) | SHA-pin all third-party Actions; surface the >2 MB/non-text scan blind spot as `unscanned-content`; require a SLSA v1 predicate for `provenance: verified` |
+
+## Phases 28–29 + Landlock — exec enforcement (Accepted, implemented)
+
+| ADR | Title | Decision in one line |
+|-----|-------|----------------------|
+| [0042](./0042-exec-deny-by-default-darwin.md) | Exec deny-by-default on macOS (Phase 28) | Seatbelt denies `process-exec*` except a fixed floor + `process:` Grants, with a `SENSITIVE_EXECUTABLES` carve-out (curl, nc, …) |
+| [0043](./0043-linux-exec-carveout-advisory-floor.md) | Linux exec carve-out, advisory floor (Phase 29) | bwrap masks exfil-tool literals with `/dev/null` binds; no bwrap `noexec` primitive exists, so the floor stays advisory |
+| [0044](./0044-landlock-linux-exec-floor.md) | Landlock Linux exec floor | A from-source `landlock-exec` helper enforces the exec floor where kernel + toolchain allow; fail-open pre-checked detection, advisory fallback otherwise |
+
 ## Conventions
 
 - One decision per record; number sequentially; never renumber.

@@ -1,12 +1,14 @@
 # Sentinel — Architecture
 
-> An agent-auditable security layer for the npm ecosystem.
-> Phase 1 ships as a **transparent auditing proxy** in front of `registry.npmjs.org`
-> (the Socket/Chainguard wedge). Phase 2 adds policy, private-namespace override,
-> and an install-time permission manifest.
+> An agent-auditable security layer for the npm ecosystem: a **transparent
+> auditing proxy** in front of `registry.npmjs.org` (the Socket/Chainguard
+> wedge), a signed per-enterprise **policy** with a private-namespace override
+> and an install-time **permission manifest**, and a cross-platform
+> **capability sandbox** that enforces approved manifests at install time.
 
-This document covers the Phase 1 design that is implemented in this repo, and the
-Phase 2 design that the data model and proxy are built to accommodate.
+This document describes the design as implemented in this repo — everything in
+it is shipped unless a section explicitly says otherwise. Sections are labeled
+with the phase that introduced them, but they describe the *current* system.
 
 > The decisions below are recorded individually, with options and trade-offs, in the
 > **[Architecture Decision Records](./docs/adr/)** (`docs/adr/`). Where this document
@@ -22,14 +24,15 @@ risk signaling. The concrete attack surface we target:
 | Threat | Real-world example | How Sentinel addresses it |
 |---|---|---|
 | Malicious release of a trusted package | `event-stream` → `flatmap-stream` (2018), `ua-parser-js` (2021) | Diff-audit every version; flag obfuscation, egress, secret access in install scripts |
-| Install-time code execution | `pre/post-install` exfil scripts | Static detection of lifecycle scripts + dangerous patterns; Phase 2 permission prompt |
-| Secret / token exfiltration | `~/.npmrc`, `AWS_SECRET_*`, `.aws/credentials`, env enumeration | `secret-exfil` rule correlates secret reads with network egress |
-| Dependency confusion / name-squatting | Alex Birsan 2021 | Phase 2 private-namespace override (private always wins) |
-| Unsigned / tampered artifacts | — | Surface signature/provenance status pre-install |
+| Install-time code execution | `pre/post-install` exfil scripts | Static detection of lifecycle scripts + dangerous patterns; approval gate + deny-by-default sandbox enforcement (§3.3, §3.6+) |
+| Secret / token exfiltration | `~/.npmrc`, `AWS_SECRET_*`, `.aws/credentials`, env enumeration | `secret-exfil` rule correlates secret reads with network egress; sandbox env scrub + credential-path denies |
+| Dependency confusion / name-squatting | Alex Birsan 2021 | Private-namespace override — private always wins (§3.5); `typosquat`/`dependencyConfusion` heuristics |
+| Unsigned / tampered artifacts | — | Surface signature/provenance status pre-install; deep provenance verify bound to served bytes |
 
-**Non-goals (Phase 1):** we do not replace npm, we do not rewrite tarballs, we do
-not sandbox execution. We resolve and serve real packages transparently and attach
-a verdict. An agent or human decides what to do with the verdict.
+**Non-goals:** we do not replace npm and we do not rewrite tarballs. We resolve
+and serve real packages transparently and attach a verdict; execution is
+sandboxed only at install time (lifecycle scripts) — runtime behavior after a
+package is installed and approved is out of scope.
 
 ---
 
@@ -194,8 +197,9 @@ distinguishes loading an artifact from reading it. The projectRoot-in-floor
 residual (a package executing a binary written into its own tree) is a
 recorded ADR-0042 trade-off on both platforms now, mitigated by
 `unscanned-content` (ADR-0041) and `process` capability scoring. A
-cross-platform exec floor now exists (macOS Seatbelt + Linux Landlock);
-[#8](https://github.com/git-agentic/pkg-registry/issues/8) is closable on merge.
+cross-platform exec floor now exists (macOS Seatbelt + Linux Landlock where
+available), closing
+[#8](https://github.com/git-agentic/pkg-registry/issues/8).
 
 **Enforced surface (Phase 3):** sensitive file reads + network egress. `SENSITIVE_PATHS`
 are deny-listed for reads; network is all-or-nothing (Seatbelt can't host-filter; per-host
@@ -333,13 +337,13 @@ informational only — a zero-weight `trust-root-stale` finding via an injectabl
 clock, conservative by design (stale only when *every* pinned CA's `validFor.end`
 has passed; the real Fulcio CA is open-ended, so it never reports stale today).
 
-**Update (Phase 27, ADR-0041):** `verified` now additionally requires that at
-least one attestation in the list carry the SLSA v1 predicate. A bundle list
-that verifies and binds cleanly but never carries SLSA v1 (e.g. an npm
-publish-only attestation with no build-provenance claim) now returns
-`unknown` — the existing status, not a new one — since the evidence needed to
-call it verified *build provenance* is missing even though the crypto itself
-checked out. Real `npm publish --provenance` packages carry a SLSA v1 bundle
+**SLSA v1 predicate required for `verified` (ADR-0041):** `verified`
+additionally requires that at least one attestation in the list carry the
+SLSA v1 predicate. A bundle list that verifies and binds cleanly but never
+carries SLSA v1 (e.g. an npm publish-only attestation with no
+build-provenance claim) returns `unknown` — the existing status, not a new
+one — since the evidence needed to call it verified *build provenance* is
+missing even though the crypto itself checked out. Real `npm publish --provenance` packages carry a SLSA v1 bundle
 alongside the publish attestation and are unaffected. The `invalid`-on-thrown-
 error mapping, `requireProvenance` (still demands exactly `verified`), and the
 `provenanceIdentities` gate's exemption of `unknown` are all unchanged; a
@@ -384,28 +388,25 @@ header; `sentinel violations`, the dashboard's runtime-violations panel, and
 `audit-tree`'s per-row/aggregate output all read the same store. Best-effort
 limitation: the sensor only detects violations that surface as process
 failure — a swallowed denial (exit `0`) is invisible to telemetry but still
-contained by the sandbox, unchanged from Phase 6. `POST /-/violations` is
-unauthenticated (like `/-/approvals`); a spoofed report can only quarantine
-an *already-audited* integrity (the endpoint 400s otherwise) and can only
-force `block`, never relax a verdict — a fail-closed DoS, not a bypass.
+contained by the sandbox, unchanged from Phase 6.
 
-**Update (Phase 26 Part B, ADR-0040):** that last bound turned out to matter
-more than it looked — an anonymous or forged `confirmed` report could still
-force a fleet-wide quarantine of any already-audited integrity, since
-`ViolationStore` derived `quarantined` directly from the client's
-`confidence` field. Recording is unchanged and still open to any caller;
-quarantine is no longer derived from client `confidence` at all. It is now a
-server decision, opt-in via `SENTINEL_AUTO_QUARANTINE=1` and effective only
-when `SENTINEL_AUTH_PUBKEY` is also configured (`createServer` computes
-`autoQuarantineEnabled = autoQuarantine && authz.enabled`; the `/-/violations`
-handler quarantines only when `autoQuarantineEnabled && confidence ===
-"confirmed"`). Setting the flag without auth enabled is a startup FATAL, the
-same fail-closed posture as `SENTINEL_AUTH_PUBKEY` itself. Default is
-record-only: violations are stored and surfaced but never force `block`
-without the operator opting in *and* turning on token auth. Everything else
-in this section — sensing, classification, the deny-set non-drift guarantee,
-the serve-time overlay, the best-effort containment-unchanged limitation —
-is unchanged; ADR-0040 supersedes only ADR-0023's auto-quarantine default.
+**Quarantine is a server decision, never client-derived (ADR-0040).**
+Recording is open to any caller (a report can only ever target an
+*already-audited* integrity — the endpoint 400s otherwise — and can only
+force `block`, never relax a verdict), but `ViolationStore` does not derive
+`quarantined` from the client-supplied `confidence` field: an anonymous or
+forged `confirmed` report would otherwise be a fleet-wide DoS against any
+audited package. Auto-quarantine is opt-in via `SENTINEL_AUTO_QUARANTINE=1`
+and effective only when `SENTINEL_AUTH_PUBKEY` is also configured
+(`createServer` computes `autoQuarantineEnabled = autoQuarantine &&
+authz.enabled`; the `/-/violations` handler quarantines only when
+`autoQuarantineEnabled && confidence === "confirmed"`). Setting the flag
+without auth enabled is a startup FATAL, the same fail-closed posture as
+`SENTINEL_AUTH_PUBKEY` itself. Default is record-only: violations are stored
+and surfaced but never force `block` without the operator opting in *and*
+turning on token auth. ADR-0040 supersedes only ADR-0023's auto-quarantine
+default; sensing, classification, the deny-set non-drift guarantee, and the
+serve-time overlay are as described above.
 
 ### 3.12 Control-plane auth (Phase 12, ADR-0025)
 
