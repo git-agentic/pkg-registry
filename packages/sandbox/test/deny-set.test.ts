@@ -169,6 +169,34 @@ describe("computeDenySet ↔ generateBwrapArgs Linux non-drift (Phase 29)", () =
     // Even with live resolution, every masked path must be in execDeniedPaths (the deny set enumerates all candidates)
     for (const m of masks) assert.ok(ds.execDeniedPaths!.includes(m), `deny set must include resolved exec-carve-out masked ${m}`);
   });
+
+  test("merged-usr: a path grant excludes BOTH sibling literals from execDeniedPaths (issue #21)", () => {
+    const mergedUsrResolve = (p: string): string => (p.startsWith("/bin/") ? "/usr/bin/" + p.slice(5) : p);
+    const ds = computeDenySet([procCap("/usr/bin/curl")], { ...L, realpath: mergedUsrResolve });
+    assert.ok(!ds.execDeniedPaths!.includes("/usr/bin/curl"), "the granted literal is lifted");
+    assert.ok(!ds.execDeniedPaths!.includes("/bin/curl"), "the merged-usr sibling literal is lifted too");
+    assert.ok(ds.execDeniedPaths!.includes("/usr/bin/wget"), "other commands stay denied");
+    assert.ok(ds.execDeniedPaths!.includes("/bin/wget"), "…in BOTH literal forms (invocation-form matching)");
+  });
+
+  test("non-drift under live merged-usr path resolution with a PATH grant (issue #21)", () => {
+    const mergedUsrResolve = (p: string): string => (p.startsWith("/bin/") ? "/usr/bin/" + p.slice(5) : p);
+    const approved: Capability[] = [procCap("/usr/bin/curl")];
+    const ds = computeDenySet(approved, { ...L, realpath: mergedUsrResolve });
+    const argv = generateBwrapArgs(approved, {
+      homeDir: L.homeDir, cwd: L.cwd, tmpDir: L.tmpDir, nodePrefix: L.nodePrefix,
+      projectRoot: L.projectRoot, pathExists: () => true, realpath: mergedUsrResolve,
+    });
+    const masks: string[] = [];
+    for (let i = 0; i < argv.length - 2; i++) {
+      if (argv[i] === "--ro-bind" && argv[i + 1] === "/dev/null") {
+        const mask = argv[i + 2];
+        if (SENSITIVE_EXECUTABLES.some((cmd) => mask.endsWith("/" + cmd))) masks.push(mask);
+      }
+    }
+    assert.ok(!masks.includes("/usr/bin/curl") && !masks.includes("/bin/curl"), "the generator lifts both curl siblings");
+    for (const m of masks) assert.ok(ds.execDeniedPaths!.includes(m), `deny set must include exec-carve-out masked ${m}`);
+  });
 });
 
 describe("computeDenySet — Linux Landlock floor mode (Phase 2)", () => {
@@ -196,6 +224,13 @@ describe("computeDenySet — Linux Landlock floor mode (Phase 2)", () => {
     assert.equal(ds.execFloorMode, undefined);
     assert.equal(ds.execAllowedPaths, undefined);
     assert.ok(ds.execDeniedPaths!.some((p) => p.endsWith("/curl")));
+  });
+
+  test("Landlock floor mode shares the merged-usr path-grant filter (issue #21)", () => {
+    const mergedUsrResolve = (p: string): string => (p.startsWith("/bin/") ? "/usr/bin/" + p.slice(5) : p);
+    const ds = computeDenySet([procCap("/usr/bin/curl")], { ...L, landlockFloor: true, realpath: mergedUsrResolve });
+    assert.equal(ds.execFloorMode, "linux-landlock");
+    assert.ok(!ds.execDeniedPaths!.includes("/bin/curl"), "the sibling literal is lifted in floor mode too");
   });
 });
 

@@ -68,7 +68,13 @@ export function canonicalizeMacPath(p: string): string {
  */
 export function computeDenySet(
   approved: Capability[],
-  opts: { homeDir: string; platform: "darwin" | "linux"; nodePrefix?: string; projectRoot?: string; cwd?: string; tmpDir?: string; landlockFloor?: boolean },
+  opts: {
+    homeDir: string; platform: "darwin" | "linux"; nodePrefix?: string; projectRoot?: string;
+    cwd?: string; tmpDir?: string; landlockFloor?: boolean;
+    /** resolves symlinks for the Linux path-grant coverage check ONLY (issue #21);
+     *  defaults to identity (kept pure for tests). Real callers pass realpathSync-ish. */
+    realpath?: (p: string) => string;
+  },
 ): DenySet {
   const approvedFs = approved.filter((c) => c.kind === "filesystem").map((c) => c.target);
   const networkDenied = !approved.some((c) => c.kind === "network");
@@ -87,6 +93,10 @@ export function computeDenySet(
   // literals are the exec-deny set; execAllowedPaths/writeAllowedPaths are intentionally
   // absent so classifyViolation only ever confirms on a masked literal (never the macOS
   // floor guess). Paths are NOT firmlink-canonicalized on Linux.
+  // execDeniedPaths stays INVOCATION-FORM literals (the shell prints the invoked
+  // path in a denial line, and execCarveOutPaths already enumerates both /bin and
+  // /usr/bin forms); `realpath` is used only so the grant-coverage decision agrees
+  // with generateBwrapArgs's resolved masking on merged-usr systems (issue #21).
   if (opts.platform === "linux") {
     const lProcTargets = approved.filter((c) => c.kind === "process").map((c) => c.target);
     const lGrantedCmds = new Set(lProcTargets.filter((t) => classifyProcessTarget(t) === "command"));
@@ -94,10 +104,13 @@ export function computeDenySet(
     const lPathGrants = lProcTargets
       .filter((t) => classifyProcessTarget(t) === "path" && isSafeGrantTarget(t))
       .map((p) => expandHome(p, opts.homeDir));
+    const lResolve = opts.realpath ?? ((p: string) => p);
+    const lResolvedGrants = lPathGrants.map(lResolve);
     const lDenied = lWildcard ? [] : SENSITIVE_EXECUTABLES
       .filter((cmd) => !lGrantedCmds.has(cmd))
       .flatMap((cmd) => execCarveOutPaths(cmd))
-      .filter((p) => !lPathGrants.some((g) => pathCovers(g, p)));
+      .filter((p) => !lPathGrants.some((g) => pathCovers(g, p)))
+      .filter((p) => !lResolvedGrants.some((g) => pathCovers(g, lResolve(p))));
     // Phase 2: when the Landlock exec FLOOR is active, model a real floor so
     // classifyViolation can attribute a floor-outside exec denial. Otherwise the
     // exact Phase 29 shape (carve-out only, no floor).
