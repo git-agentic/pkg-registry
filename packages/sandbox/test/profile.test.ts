@@ -201,3 +201,66 @@ describe("generateProfile — $HOME-read-deny (Phase 25 Slice 2)", () => {
     assert.ok(!readAllowLine.includes(`(subpath "/Users/x")`), "the guard must drop $HOME itself from the read-allow list");
   });
 });
+
+const proc = (target: string): Capability => ({ kind: "process", target, evidence: [] });
+
+describe("generateProfile — exec deny-by-default (Phase 28)", () => {
+  test("blanket exec deny, then floor re-allow (last-match-wins order)", () => {
+    const p = generateProfile([], withOpts({ homeDir: HOME }));
+    assert.match(p, /\(deny process-exec\*\)/);
+    const denyIdx = p.indexOf("(deny process-exec*)");
+    const allowIdx = p.indexOf("(allow process-exec*");
+    assert.ok(denyIdx >= 0 && allowIdx > denyIdx, "floor allow must FOLLOW the blanket deny");
+    assert.match(p, /\(allow process-exec\* [^\n]*\(subpath "\/bin"\)/);
+    assert.match(p, /\(subpath "\/work\/pkg"\)/);           // projectRoot
+    assert.match(p, /\(subpath "\/Library\/Developer"\)/);
+  });
+
+  test("carve-out literals are re-denied AFTER the floor allow", () => {
+    const p = generateProfile([], withOpts({ homeDir: HOME }));
+    assert.match(p, /\(deny process-exec\* [^\n]*\(literal "\/usr\/bin\/curl"\)/);
+    const allowIdx = p.indexOf("(allow process-exec*");
+    const carveIdx = p.indexOf('(literal "/usr/bin/curl")');
+    assert.ok(carveIdx > allowIdx, "carve-out must FOLLOW the floor allow");
+  });
+
+  test("a command Grant lifts exactly that command's carve-out", () => {
+    const p = generateProfile([proc("curl")], withOpts({ homeDir: HOME }));
+    assert.doesNotMatch(p, /literal "\/usr\/bin\/curl"/);
+    assert.match(p, /literal "\/usr\/bin\/wget"/);          // siblings stay denied
+  });
+
+  test("a path Grant is appended to the exec allow (with ~ expansion)", () => {
+    const p = generateProfile([proc("~/tools/bin")], withOpts({ homeDir: HOME }));
+    assert.match(p, /\(allow process-exec\* [^\n]*\(subpath "\/Users\/test\/tools\/bin"\)/);
+  });
+
+  test("a path Grant covering a carve-out literal lifts it", () => {
+    const p = generateProfile([proc("/usr/bin/curl")], withOpts({ homeDir: HOME }));
+    assert.doesNotMatch(p, /literal "\/usr\/bin\/curl"/);
+    assert.match(p, /literal "\/opt\/homebrew\/bin\/curl"/); // other candidates stay denied
+  });
+
+  test("the * Grant lifts the whole carve-out but opens no paths", () => {
+    const p = generateProfile([proc("*")], withOpts({ homeDir: HOME }));
+    assert.doesNotMatch(p, /\(deny process-exec\* \(literal/);
+    assert.match(p, /\(deny process-exec\*\)/);              // blanket deny still present
+    // no allow entries beyond the floor:
+    const allowLine = p.split("\n").find((l) => l.startsWith("(allow process-exec*"))!;
+    assert.doesNotMatch(allowLine, /Users\/test/);
+  });
+
+  test("an unsafe path Grant is dropped fail-closed", () => {
+    const p = generateProfile([proc("/"), proc("a/../b")], withOpts({ homeDir: HOME }));
+    const allowLine = p.split("\n").find((l) => l.startsWith("(allow process-exec*"))!;
+    assert.doesNotMatch(allowLine, /subpath "\/"\)/);
+    assert.doesNotMatch(allowLine, /a\/\.\.\/b/);
+  });
+
+  test("process Grants do not disturb the write or read sections", () => {
+    const a = generateProfile([], withOpts({ homeDir: HOME }));
+    const b = generateProfile([proc("curl")], withOpts({ homeDir: HOME }));
+    const writeAndRead = (s: string) => s.split("\n").filter((l) => l.includes("file-write") || l.includes("file-read")).join("\n");
+    assert.equal(writeAndRead(a), writeAndRead(b));
+  });
+});
