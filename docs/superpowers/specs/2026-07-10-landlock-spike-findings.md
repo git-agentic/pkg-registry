@@ -71,11 +71,24 @@ since the payload was invoked via `/bin/sh -c "$STASH/payload"`), not a kernel-l
 printed directly by the Landlock helper. The wording is `Permission denied`, prefixed with the
 dash line-number convention (`/bin/sh: 1: <path>: Permission denied`), and the shell's own exit
 code is **126** — the standard shell convention for "found but not executable / permission
-denied". This is the **same denial shape** Phase 29's existing Linux carve-out classifier already
-matches (`/bin/sh: 1: <path>: Permission denied`, exit 126), so Phase 2's `classifyViolation` can
-reuse that same regex path for Landlock-denied execs rather than adding a new pattern.
+denied". The **regex** is reusable: this is the same shape Phase 29's `LINUX_EXEC_PATH` /
+`firstLinuxExecLine` matcher already handles (`/bin/sh: 1: <path>: Permission denied`, exit 126).
+
+**But Phase 2 needs classifier branch-logic changes, not just regex reuse — do not understate
+this.** Phase 29's Linux exec branch only fires inside `linuxCarveMode`, which is gated on
+`execAllowedPaths.length === 0` (`packages/sandbox/src/violation.ts`). Phase 2 will *populate*
+`execAllowedPaths` from the Landlock floor — which flips `linuxCarveMode` to false, so a Landlock
+denial's stderr line would fall through to the macOS exec branch (which matches
+`OPERATION_NOT_PERMITTED`, i.e. macOS's "Operation not permitted" wording, **not** dash's
+"Permission denied") and then through the quoted-path fs branch, ultimately returning `null`
+(ambient) instead of `confirmed`. So Phase 2 must add a **Landlock-floor mode** to
+`classifyViolation` that applies the "Permission denied"/`LINUX_EXEC_PATH` matcher *with* a
+populated floor (confirm on a denied floor-outside exec), rather than reusing the existing
+carve-out-only branch. Scope this in the Phase 2 spec.
 
 ## Any surprises
+
+- **Phase 2 note (helper):** `landlock-exec` silently `continue`s past a missing `--allow` path (open() failure), unlike the `add_rule` failure path which logs. Intentional for merged-usr symlink tolerance, but Phase 2 should add a debug-only diagnostic so a typo'd floor entry isn't silent when wiring for real.
 
 - **Static-vs-dynamic linking:** not directly tested (the payload and `/bin/sh` are both
   dynamically linked in this environment), but the lib-dir floor finding below is a direct
