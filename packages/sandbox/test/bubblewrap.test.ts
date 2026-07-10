@@ -4,11 +4,17 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, test } from "node:test";
 import { BubblewrapSandbox } from "../src/bubblewrap.js";
 import { runLifecycleScripts } from "../src/runner.js";
 import { scrubEnv } from "../src/env.js";
 import type { Capability } from "@sentinel/core";
+
+// dist sibling of the compiled bubblewrap.js; in the source tree the helper lands in
+// packages/sandbox/dist/landlock-exec after `npm run build`.
+const HELPER_BUILT = existsSync(fileURLToPath(new URL("../dist/landlock-exec", import.meta.url)));
+const skipNoHelper = HELPER_BUILT ? false : "requires the built landlock-exec helper (cc on Linux)";
 
 const bwrapWorks = (() => {
   if (process.platform !== "linux") return false;
@@ -193,6 +199,31 @@ describe("BubblewrapSandbox enforcement", { skip }, () => {
     writeFileSync(shim, "#!/bin/sh\necho SHIM-OK\n", { mode: 0o755 });
     const res = new BubblewrapSandbox().run(`node -e "console.log('NODE-OK')" && "${shim}"`,
       { cwd: proj, approved: [], homeDir: home, projectRoot: proj });
+    assert.equal(res.exitCode, 0, res.stderr);
+    assert.match(res.stdout, /NODE-OK/);
+    assert.match(res.stdout, /SHIM-OK/);
+  });
+
+  test("Landlock floor: a dropped /tmp binary is denied and surfaces a confirmed process violation", { skip: skipNoHelper }, () => {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "bw-ll-home-")));
+    const proj = join(home, "proj"); mkdirSync(proj);
+    const stash = realpathSync(mkdtempSync(join(tmpdir(), "bw-ll-stash-")));
+    const marker = join(stash, "marker.txt");
+    const cmd = `printf '#!/bin/sh\\necho PWNED > "${marker}"\\n' > "${stash}/payload" && chmod +x "${stash}/payload" && "${stash}/payload"`;
+    const res = new BubblewrapSandbox().run(cmd, { cwd: proj, approved: [], homeDir: home, projectRoot: proj });
+    assert.ok(existsSync(join(stash, "payload")), "payload write must succeed (writable location)");
+    assert.ok(!existsSync(marker), "the dropped binary must NOT have executed (Landlock floor)");
+    assert.notEqual(res.exitCode, 0);
+    assert.equal(res.violation?.kind, "process");
+    assert.equal(res.violation?.confidence, "confirmed");
+  });
+
+  test("Landlock floor: a floor binary (node) and a node_modules/.bin shim still run", { skip: skipNoHelper }, () => {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "bw-ll-pos-")));
+    const proj = join(home, "proj"); mkdirSync(join(proj, "node_modules", ".bin"), { recursive: true });
+    const shim = join(proj, "node_modules", ".bin", "hello");
+    writeFileSync(shim, "#!/bin/sh\necho SHIM-OK\n", { mode: 0o755 });
+    const res = new BubblewrapSandbox().run(`node -e "console.log('NODE-OK')" && "${shim}"`, { cwd: proj, approved: [], homeDir: home, projectRoot: proj });
     assert.equal(res.exitCode, 0, res.stderr);
     assert.match(res.stdout, /NODE-OK/);
     assert.match(res.stdout, /SHIM-OK/);
