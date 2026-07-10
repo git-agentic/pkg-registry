@@ -82,3 +82,82 @@ describe("classifyViolation", () => {
     );
   });
 });
+
+// Phase 28: exec-denial shapes, probe-verified (task-2-report.md). Real macOS Seatbelt
+// denials of a process-exec* deny come through /bin/sh in TWO distinct shapes — a
+// shebang/interpreter-resolution wrapper (payload has a #!/bin/sh line) vs. a direct
+// binary exec — plus a separate node spawnSync/execFileSync EPERM shape. All three
+// carry the UNRESOLVED /var/folders/... form of a temp path on this host (never the
+// resolved /private/var/... realpath).
+const EXEC_DS: DenySet = {
+  deniedPaths: ["/Users/test/.ssh"],
+  networkDenied: true,
+  execDenied: true,
+  execAllowedPaths: ["/bin", "/usr/bin", "/usr/local", "/work/pkg", "/Library/Developer"],
+  execDeniedPaths: ["/usr/bin/curl", "/opt/homebrew/bin/curl"],
+  writeAllowedPaths: ["/work/pkg", "/var/folders/vl/tmp.S6oZE9G04A", "/private/tmp", "/dev"],
+};
+const fail = (stderr: string): SandboxResult => ok({ exitCode: 126, stderr });
+
+describe("classifyViolation — exec (Phase 28)", () => {
+  test("a denied carve-out exec (direct binary shape) is a confirmed process violation", () => {
+    // Probe (c): direct binary exec, no shebang indirection.
+    const v = classifyViolation(fail("/bin/sh: /usr/bin/curl: Operation not permitted"), EXEC_DS);
+    assert.equal(v?.kind, "process");
+    assert.equal(v?.confidence, "confirmed");
+    assert.equal(v?.deniedResource, "/usr/bin/curl");
+  });
+
+  test("a shebang-script exec denial (bad interpreter shape) in a WRITABLE location is confirmed exec-default-deny", () => {
+    // Probe (b): shebang script exec denied — the "bad interpreter" wrapper sits
+    // BETWEEN the path and "Operation not permitted", which is exactly why the
+    // plan's naive "path immediately followed by : Operation not permitted" regex
+    // fails here. This is the shape Task 8's dropped-executable effect test relies on.
+    const v = classifyViolation(
+      fail("/bin/sh: /var/folders/vl/tmp.S6oZE9G04A/payload: /bin/sh: bad interpreter: Operation not permitted"),
+      EXEC_DS,
+    );
+    assert.equal(v?.kind, "process");
+    assert.equal(v?.confidence, "confirmed");
+    assert.equal(v?.deniedResource, "exec-default-deny");
+    assert.equal(v?.target, "/var/folders/vl/tmp.S6oZE9G04A/payload");
+  });
+
+  test("a perm error outside both the exec floor and the write floor is only suspected (exec/write ambiguity)", () => {
+    const v = classifyViolation(fail("/bin/sh: /usr/share/thing: Operation not permitted"), EXEC_DS);
+    assert.equal(v?.kind, "process");
+    assert.equal(v?.confidence, "suspected");
+  });
+
+  test("an unquoted perm error on a SENSITIVE path is attributed as a filesystem violation (fs precedence)", () => {
+    const v = classifyViolation(fail("/bin/sh: /Users/test/.ssh/id_rsa: Operation not permitted"), EXEC_DS);
+    assert.equal(v?.kind, "filesystem");
+    assert.equal(v?.confidence, "confirmed");
+  });
+
+  test("a perm error where exec IS allowed is ambient — null", () => {
+    assert.equal(classifyViolation(fail("/bin/sh: /usr/bin/some-tool: Operation not permitted"), EXEC_DS), null);
+  });
+
+  test("node's spawnSync EPERM on a non-floor path is a suspected process violation", () => {
+    // Probe (d): label is spawnSync (execFileSync reports through it), not spawn.
+    // Uses a different temp dir than the WRITABLE-location test above, so this path
+    // falls outside both the exec-allow and write-allow floors (genuine ambiguity).
+    const v = classifyViolation(fail("spawnSync /var/folders/vl/other-tmp.XYZ/payload EPERM"), EXEC_DS);
+    assert.equal(v?.kind, "process");
+    assert.equal(v?.confidence, "suspected");
+    assert.equal(v?.target, "/var/folders/vl/other-tmp.XYZ/payload");
+  });
+
+  test("node's pathless spawn EPERM is a suspected process violation with no target", () => {
+    const v = classifyViolation(fail("Error: spawn EPERM"), EXEC_DS);
+    assert.equal(v?.kind, "process");
+    assert.equal(v?.confidence, "suspected");
+    assert.equal(v?.target, null);
+  });
+
+  test("without execDenied (legacy DenySet / linux) the exec branch never fires", () => {
+    const legacy: DenySet = { deniedPaths: [], networkDenied: true };
+    assert.equal(classifyViolation(fail("/bin/sh: /private/tmp/x: Operation not permitted"), legacy), null);
+  });
+});

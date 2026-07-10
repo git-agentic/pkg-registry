@@ -13,6 +13,29 @@ const NET_ERROR = /connect (?:EPERM|EACCES) ([0-9.]+):(\d+)/;
 const NET_CLASS = /connect (?:EPERM|EACCES)/;
 const PERM_SIGNATURE = /EPERM|EACCES|operation not permitted|permission denied/i;
 
+// Exec-denial shapes (Phase 28, probe-verified — task-2-report.md). A denied
+// process-exec* surfaces through /bin/sh in an UNQUOTED "<shell>: <path>: ..."
+// line ending in "Operation not permitted" — but the plan's naive assumption that
+// "Operation not permitted" sits immediately after the path is only true for a
+// direct-binary exec (probe c: "sh: /usr/bin/curl: Operation not permitted"). A
+// shebang-script exec (probe b) instead shows an interpreter-resolution wrapper
+// BETWEEN the path and the final "Operation not permitted"
+// ("sh: <path>: /bin/sh: bad interpreter: Operation not permitted") — so
+// SH_EXEC_LINE only requires the shell prefix AND "Operation not permitted"
+// somewhere on the line (checked as two separate linear tests, mirroring the
+// FS_CODE + QUOTED_PATH split above — no capture group precedes an unbounded
+// greedy run before a literal, avoiding the polynomial-ReDoS shape CodeQL flags),
+// and SH_EXEC_PATH separately extracts the FIRST "/…" token after the prefix,
+// bounded by the next colon (works for both shapes since the path itself never
+// contains a colon). Node's execFileSync/spawnSync reports a denied exec as
+// "spawnSync <path> EPERM" (probe d — note the label is spawnSync, not spawn).
+const SH_EXEC_PREFIX = /(?:^|[/\s])(?:sh|bash|zsh): /;
+const OPERATION_NOT_PERMITTED = /Operation not permitted/i;
+const SH_EXEC_PATH = /(?:^|[/\s])(?:sh|bash|zsh): (\/[^:\n]+):/;
+const SPAWN_EXEC_PREFIX = /(?:^|\s)spawn(?:Sync)?\s/;
+const SPAWN_EXEC_CODE = /EPERM|EACCES/;
+const SPAWN_EXEC_PATH = /spawn(?:Sync)?\s+(\/\S+)\s+(?:EPERM|EACCES)/;
+
 function firstMatchingLine(stderr: string, re: RegExp): string | null {
   for (const line of stderr.split(/\r?\n/)) if (re.test(line)) return line.trim();
   return null;
@@ -22,6 +45,22 @@ function firstMatchingLine(stderr: string, re: RegExp): string | null {
 function firstFsErrorLine(stderr: string): string | null {
   for (const line of stderr.split(/\r?\n/)) {
     if (FS_CODE.test(line) && QUOTED_PATH.test(line)) return line.trim();
+  }
+  return null;
+}
+
+/** First stderr line carrying BOTH a shell exec-denial prefix and "Operation not permitted". */
+function firstShExecLine(stderr: string): string | null {
+  for (const line of stderr.split(/\r?\n/)) {
+    if (SH_EXEC_PREFIX.test(line) && OPERATION_NOT_PERMITTED.test(line)) return line.trim();
+  }
+  return null;
+}
+
+/** First stderr line carrying BOTH a spawn(Sync) prefix and an EPERM/EACCES code. */
+function firstSpawnExecLine(stderr: string): string | null {
+  for (const line of stderr.split(/\r?\n/)) {
+    if (SPAWN_EXEC_PREFIX.test(line) && SPAWN_EXEC_CODE.test(line)) return line.trim();
   }
   return null;
 }
@@ -53,6 +92,41 @@ export function classifyViolation(result: SandboxResult, denySet: DenySet): Sand
       confidence: target ? "confirmed" : "suspected",
       deniedResource: target ? "network" : null,
       evidence: { exitCode: result.exitCode, stderrExcerpt: excerpt(netLine) },
+    };
+  }
+
+  // Process/exec (Phase 28): a bare "sh: /path: ... Operation not permitted" line is
+  // ambiguous between a denied exec and a denied write-redirect — disambiguate via
+  // the deny/allow sets. A SENSITIVE-path hit is attributed as filesystem (fs takes
+  // precedence, mirroring the fs branch below); a hit on an execDeniedPaths carve-out
+  // literal is a confirmed process violation; a hit in a location where exec IS
+  // allowed is ambient (null); a hit in a WRITABLE location must be the exec gate
+  // (a write can't fail there), so it's confirmed; outside both floors exec-vs-write
+  // is genuinely ambiguous → suspected. Only when the profile actually denies exec
+  // (execDenied) — legacy/linux DenySets skip this branch entirely.
+  const execLine = firstShExecLine(stderr) ?? firstSpawnExecLine(stderr);
+  if (execLine && denySet.execDenied) {
+    const target = SH_EXEC_PATH.exec(execLine)?.[1] ?? SPAWN_EXEC_PATH.exec(execLine)?.[1] ?? null;
+    const evidence = { exitCode: result.exitCode, stderrExcerpt: excerpt(execLine) };
+    if (!target) {
+      return { kind: "process", target: null, confidence: "suspected", deniedResource: null, evidence };
+    }
+    const sensitive = (denySet.deniedPaths ?? []).find((dp) => pathCovers(dp, target));
+    if (sensitive) {
+      return { kind: "filesystem", target, confidence: "confirmed", deniedResource: sensitive, evidence };
+    }
+    const carved = (denySet.execDeniedPaths ?? []).find((p) => p === target || pathCovers(p, target));
+    if (carved) {
+      return { kind: "process", target, confidence: "confirmed", deniedResource: carved, evidence };
+    }
+    if ((denySet.execAllowedPaths ?? []).some((p) => pathCovers(p, target))) return null; // exec allowed there → ambient
+    const writable = (denySet.writeAllowedPaths ?? []).some((p) => pathCovers(p, target));
+    return {
+      kind: "process",
+      target,
+      confidence: writable ? "confirmed" : "suspected",
+      deniedResource: writable ? "exec-default-deny" : null,
+      evidence,
     };
   }
 
