@@ -231,4 +231,18 @@ describe("task 3: unscanned-content finding", () => {
     const report = await auditTarball({ meta: metaFor("c"), tarball: tgz });
     assert.ok(!report.findings.some((x) => x.ruleId === "unscanned-content"));
   });
+
+  test("a native binary + packument-only install-script signal (no scripts in package.json) still escalates to MEDIUM", async () => {
+    // package.json declares no scripts at all, so detectInstallScripts(files) is
+    // false; the ONLY install-script signal is the packument-derived
+    // meta.hasInstallScripts. The escalation must use the combined signal
+    // (review fix), not re-derive from the scanned files alone.
+    const tgz = await makeTgz({
+      "package/package.json": '{"name":"d","version":"1.0.0"}',
+      "package/addon.node": "\0\0binary",
+    });
+    const report = await auditTarball({ meta: { ...metaFor("d"), hasInstallScripts: true }, tarball: tgz });
+    const f = report.findings.find((x) => x.ruleId === "unscanned-content");
+    assert.ok(f && f.severity === "medium", "native + packument-only install-script signal should still escalate to medium");
+  });
 });

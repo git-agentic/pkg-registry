@@ -31,6 +31,14 @@ export interface ExtractResult {
   truncated: boolean;
   /** Counted-but-unscanned executable-looking files: large code + native binaries (#11). */
   unscanned: UnscannedEntry[];
+  /**
+   * Complete, never-capped running totals over every unscanned executable-looking
+   * entry — including any beyond the `unscanned` list's `MAX_UNSCANNED` cap. Use
+   * these (not `unscanned.length`/a filter over it) for counts/bytes/native-count,
+   * so an attacker padding the list past the cap can't hide a native binary or
+   * undercount bytes (#11 review fix).
+   */
+  unscannedTotals: { count: number; native: number; bytes: number };
 }
 
 /**
@@ -64,6 +72,7 @@ export async function extractTarball(
   const maxFiles = opts.maxFileCount ?? DEFAULT_MAX_FILE_COUNT;
   const files: PackageFile[] = [];
   const unscanned: UnscannedEntry[] = [];
+  const unscannedTotals = { count: 0, native: 0, bytes: 0 };
   let unpackedSize = 0;
   let fileCount = 0;
   let entryCount = 0;
@@ -107,9 +116,18 @@ export async function extractTarball(
         return;
       }
       // Not scanned — record executable-looking content so the blind spot isn't silent (#11).
-      if (unscanned.length < MAX_UNSCANNED) {
-        if (bytes > MAX_FILE_BYTES && CODE_EXT.test(path)) unscanned.push({ path, size: bytes, kind: "large-code" });
-        else if (NATIVE_EXT.test(path)) unscanned.push({ path, size: bytes, kind: "native" });
+      const isLargeCode = bytes > MAX_FILE_BYTES && CODE_EXT.test(path);
+      const isNative = NATIVE_EXT.test(path);
+      if (isLargeCode || isNative) {
+        // Totals are COMPLETE and never capped — an attacker padding the list
+        // past MAX_UNSCANNED must not be able to hide a native binary or
+        // undercount bytes/count (#11 review fix).
+        unscannedTotals.count += 1;
+        unscannedTotals.bytes += bytes;
+        if (isNative) unscannedTotals.native += 1;
+        if (unscanned.length < MAX_UNSCANNED) {
+          unscanned.push({ path, size: bytes, kind: isLargeCode ? "large-code" : "native" });
+        }
       }
     });
     entry.on("error", (e: unknown) => { failure = e instanceof Error ? e : new Error(String(e)); });
@@ -172,7 +190,7 @@ export async function extractTarball(
     await done;
   }
   if (failure) throw failure;
-  return { files, unpackedSize, fileCount, truncated, unscanned };
+  return { files, unpackedSize, fileCount, truncated, unscanned, unscannedTotals };
 }
 
 /** Build a `path -> content` baseline map from a previously extracted set. */
