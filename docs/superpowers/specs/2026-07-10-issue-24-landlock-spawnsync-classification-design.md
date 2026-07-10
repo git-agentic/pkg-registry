@@ -17,13 +17,14 @@ Landlock mode while `execAllowedPaths` is populated — it returns
 `confidence: "suspected"` rather than `confirmed` with
 `deniedResource: "exec-floor-deny"`.
 
-Two mislabels, both fixed by the same change:
+One mislabel, fixed by the change:
 
 - **Floor-outside** spawnSync denial (the dropped-binary case, the issue):
   reported `suspected` — should be `confirmed` / `exec-floor-deny`.
-- **Floor-inside** spawnSync EACCES (a genuinely ambient error the floor
-  allows): the fall-through also reports `suspected` — should be `null`,
-  exactly as the dash shape already is.
+- (**Floor-inside** spawnSync EACCES is already correct: the macOS
+  fall-through checks `execAllowedPaths` before its writable guess, so it
+  returns `null` today. After the fix it returns `null` via the Landlock
+  branch instead — same result, pinned by a test.)
 
 Phase 29 carve-out mode (no floor) is **not** affected: a spawnSync denial on
 a masked literal already attributes `confirmed` via the macOS-branch
