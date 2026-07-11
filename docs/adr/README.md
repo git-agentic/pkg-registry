@@ -109,6 +109,16 @@ not yet built · `Superseded` / `Deprecated` — replaced; see the linked succes
 | [0043](./0043-linux-exec-carveout-advisory-floor.md) | Linux exec carve-out, advisory floor (Phase 29) | bwrap masks exfil-tool literals with `/dev/null` binds; no bwrap `noexec` primitive exists, so the floor stays advisory |
 | [0044](./0044-landlock-linux-exec-floor.md) | Landlock Linux exec floor | A from-source `landlock-exec` helper enforces the exec floor where kernel + toolchain allow; fail-open pre-checked detection, advisory fallback otherwise |
 
+## Phase 30+ — registry evolution (Proposed, design only)
+
+Design bundle for the proxy → first-class registry evolution
+([roadmap](../product/registry-roadmap.md), wayfinder map
+[#33](https://github.com/git-agentic/pkg-registry/issues/33)). No implementation yet.
+
+| ADR | Title | Decision in one line |
+|-----|-------|----------------------|
+| [0045](./0045-registry-write-path-resolution-merge.md) | Registry write path & deterministic resolution merge (Phase 30) | Name-level partition (policy → claim → mirror, first match); publish requires a claim; `publishGate` policy data; sync fail-closed gate, p50 ≤ 1 s / p99 ≤ 15 s |
+
 ## Conventions
 
 - One decision per record; number sequentially; never renumber.
