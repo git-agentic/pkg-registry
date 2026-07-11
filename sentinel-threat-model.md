@@ -288,7 +288,7 @@ under an allowed dir). `native` is advisory-only on both platforms by decision.
 A spawned child inherits the filesystem/network confinement on both platforms.
 A cross-platform exec floor now exists (macOS Seatbelt, Linux Landlock where
 available); [issue #8](https://github.com/git-agentic/pkg-registry/issues/8)
-is closable on merge, with the Landlock-availability caveat documented here.
+is closed, with the Landlock-availability caveat documented here.
 
 ## 4. Accepted limitations
 
@@ -316,8 +316,8 @@ Stated plainly. Each is a deliberate, recorded trade-off, not an oversight.
   confined as before, no availability regression. `native` loading is not
   distinguishable from reading at the path level and stays a scoring signal. A
   cross-platform floor now exists; see §3.9;
-  [issue #8](https://github.com/git-agentic/pkg-registry/issues/8) is closable
-  on merge with the availability caveat documented above.
+  [issue #8](https://github.com/git-agentic/pkg-registry/issues/8) is closed
+  with the availability caveat documented above.
 - **A swallowed denial evades telemetry, not containment.** The runtime
   violation sensor only sees denials that surface as process failure. A
   script that catches the sandbox's denial and exits 0 is invisible to
