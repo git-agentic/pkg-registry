@@ -377,3 +377,120 @@ Stated plainly. Each is a deliberate, recorded trade-off, not an oversight.
   responsibility. Sentinel verifies signatures fail-closed
   (ADR-0012/0014/0025/0032) but cannot detect a signature made with a stolen
   key.
+
+## 6. DRAFT — proposed registry write path (not implemented)
+
+> **DRAFT / PROPOSAL — this section is exempt from this document's "nothing
+> here is aspirational" contract.** Everything below analyzes a *design*:
+> the registry evolution recorded in ADR-0045–0048 (all **Proposed**, no
+> implementation exists) and phased as Phases 30–33 in
+> [docs/product/registry-roadmap.md](./docs/product/registry-roadmap.md).
+> Controls described here are design commitments to be verified at
+> implementation time, not shipped behavior. Sections 1–5 above remain
+> accurate for the implemented system and are unchanged.
+
+Accepting writes adds attacker goals a read-only proxy never faced. The
+design's load-bearing property, stated once: resolution is a name-level
+partition — `source(name)` is a pure function of the signed policy and the
+signed claim corpus, ordered policy-private → verified-claim → public-mirror,
+with no per-version merging (ADR-0045). Most of the new surface concentrates
+on the *inputs* to that function and on the write path itself.
+
+### 6.1 Publisher-credential and trusted-publisher takeover
+
+An attacker steals a publisher role token (ADR-0025) or compromises the CI
+identity enrolled as a trusted publisher (ADR-0046) and publishes to a
+claimed namespace. Two design controls bound the damage. First, **credentials
+never bypass the audit engine**: every publish gates synchronously on
+`runAudit` + `score(policy)` against the policy-data `publishGate`, with no
+timeout-fallback-to-allow (ADR-0045) — a stolen credential ships malware only
+if the payload also scores clean, which is the same heuristics-are-signal
+residual as §4, not a new one. Second, the retraction window (ADR-0047)
+gives the legitimate owner an operator-side recovery path that does not
+require re-taking the compromised credential — retraction is an instance-side
+act, deliberately unlike Go's publish-a-new-version model. Residuals: a
+clean-scoring backdoor published with valid credentials (unchanged from §4),
+and provenance that *validly* attests a compromised CI run — the TanStack
+May-2026 pattern; the design treats OIDC as publish-auth precisely because it
+cannot prove more than build origin.
+
+### 6.2 Steward and claim-corpus compromise
+
+The claim corpus is signed, versioned, distributed offline, and verified
+fail-closed at boot (ADR-0046) — so *tampering* in distribution is detected,
+and the meaningful attack is upstream: compromise of the steward's corpus
+signing key, or a hostile/coerced steward issuing a corpus that re-routes
+names (a forged claim over a popular namespace would eclipse public npm
+fleet-wide, by the same partition mechanism that protects legitimate claims).
+Design mitigations: the corpus key is operator-trust-material of the same
+class as the policy key (§4 key-hygiene stance applies); **local policy
+sovereignty** — policy-private outranks every claim, so an operator can pin
+any name against a hostile corpus; **30-day timelocked corpus entries** for
+transfers, dispute rulings, and Tier-2 grants make the dangerous mutations
+visible in corpus diffs before they take effect; and claims are
+non-overlapping by construction, so a forged claim cannot silently shadow an
+existing one. Residual, stated plainly: the steward is a deliberate trust
+chokepoint — corpus-key compromise is in the same catastrophic class as
+policy-key compromise, and the timelock is the detection window.
+
+### 6.3 Claim forgery
+
+An attacker attempts to acquire a claim they are not entitled to: a lookalike
+domain (`tanstack-js.dev`, homograph variants) passes its own DNS TXT
+challenge trivially, so **domain control alone never grants a contested
+name**. The design's control is the three-tier grandfathering rule
+(ADR-0046): Tier-1 auto-grant requires the *upstream package's own metadata*
+to corroborate the claimant's domain — a pure function the attacker cannot
+satisfy without already controlling the upstream package; Tier-2 (an active
+unlinked upstream publisher — the squatting-dispute tier) is refused by
+default and requires PEP-541-grade evidence plus the 30-day timelocked entry;
+brand-dispute adjudication is categorically refused, closing the
+social-engineering-via-mediation channel crates.io documented. Renewal
+failure freezes a claim rather than releasing it, so domain expiry is not a
+takeover path (ADR-0046). Residuals: DNS takeover of the *legitimate* domain
+during a challenge or renewal window defeats the mechanism by satisfying it
+(upstream of Sentinel, like npm account security in §5); and Tier-2 evidence
+review is a human judgment — the steward's narrow adjudication question is
+the control, not a proof.
+
+### 6.4 Retraction abuse
+
+An attacker (hostile maintainer, compromised publisher, or coerced org)
+tries to grief a dependency out of existence — the left-pad goal. The dual
+window bounds this **structurally**: a version past 72 hours *or* 1,000
+cumulative downloads cannot be retracted by anyone, ever (ADR-0047), so the
+packages whose disappearance would cascade are exactly the ones that cannot
+disappear. Inside the window: damage is bounded to young, low-adoption
+versions; every retraction emits an attributed advisory (synchronously
+local, corpus-cadence fleet-wide); tombstones are permanent and identifiers
+spent, so retract-then-republish substitution is rejected by construction;
+and history — audits, attestations, history-DB rows — survives retraction
+byte-identically, so the record of what was served cannot be erased by the
+mechanism (ADR-0047). Residuals: churn-griefing of young releases is an
+annoyance the advisory trail makes visible but does not prevent; and the
+window means Sentinel **cannot** serve as a takedown mechanism for
+widely-adopted content — legal takedowns are an operator/steward process
+outside this design, recorded as a boundary, not a gap.
+
+### 6.5 Resolution-merge downgrade attacks
+
+The classic attack — steer an installer's semver range to an
+attacker-supplied higher version on the attacker-writable side — is
+**inexpressible** under the partition rule: no packument ever unions native
+and upstream versions, so there is no race for a resolver to lose
+(ADR-0045). The attack therefore moves to changing `source(name)` itself,
+and each input is separately defended: the policy is signed fail-closed
+(ADR-0012/0014, implemented today); the corpus is §6.2; and the remaining
+path is **mode-revert resurrection** — disabling registry mode flips
+previously-claimed names back to public-mirror, handing their resolution to
+whatever squats them upstream. The design makes that flip loud rather than
+silent: with native content present it is a startup FATAL without an
+explicit acknowledgment, and the revert manifest enumerates every name whose
+resolution class changes, with the safe migration path stated (ADR-0048).
+Residual: an operator who acknowledges the manifest without reading it has
+accepted the resurrection knowingly — the control is auditability, not
+prevention. The mirrored path's behavior — packument transparency, byte
+caps, SSRF pinning, never-rate-limited install gates (§1, §3.5–3.7) — is
+unchanged by the write path; publish-path resource abuse rides the existing
+caps and rate-limiter design (ADR-0037), with the publish gate's latency
+budget enforced as a benchmark, never by fail-open (ADR-0045).
