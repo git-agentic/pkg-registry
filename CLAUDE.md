@@ -20,6 +20,13 @@ control plane.
 We are the Socket/Chainguard wedge: **do not** try to replace npm. Resolve and
 serve real packages transparently; only attach signal.
 
+A **Proposed, design-only registry-evolution bundle** exists (Phases 30–33:
+write path, verified namespace claiming, time-locked retraction,
+migration/compat) — see [docs/product/registry-roadmap.md](./docs/product/registry-roadmap.md),
+ADR-0045–0048, and threat-model DRAFT §6. **No implementation exists**; don't
+treat those ADRs as shipped behavior, and flip each to Accepted only when its
+phase's implementation starts.
+
 ### Current state by subsystem
 
 **Scoring & rules (`@sentinel/core`)** — 9 registered pure rules
