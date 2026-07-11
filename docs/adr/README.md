@@ -118,6 +118,7 @@ Design bundle for the proxy → first-class registry evolution
 | ADR | Title | Decision in one line |
 |-----|-------|----------------------|
 | [0045](./0045-registry-write-path-resolution-merge.md) | Registry write path & deterministic resolution merge (Phase 30) | Name-level partition (policy → claim → mirror, first match); publish requires a claim; `publishGate` policy data; sync fail-closed gate, p50 ≤ 1 s / p99 ≤ 15 s |
+| [0046](./0046-verified-namespace-claiming.md) | Verified namespace claiming (Phase 31) | Offline signed claim corpus; DNS TXT constitutive, OIDC = trusted publishing only; 12-month renewal, freeze-not-fallthrough; 30-day timelocked transfers/disputes; three-tier grandfathering |
 
 ## Conventions
 
