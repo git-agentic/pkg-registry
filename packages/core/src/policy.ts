@@ -28,6 +28,8 @@ export interface EnterprisePolicy {
    *  `repository`/`workflowRef`/`builder` are anchored globs (matchPackage);
    *  `issuer` is exact. `workflowRef` matches the full signing identity (cert SAN). */
   provenanceIdentities?: ProvenanceIdentityRequirement[];
+  /** Serve-time new-release cooldown (ADR-0050). Absent ⇒ disabled. Enforced in the proxy only. */
+  releaseCooldown?: { hours: number; exempt?: string[] };
 }
 
 export interface ProvenanceIdentityRequirement {
@@ -225,6 +227,20 @@ export function parsePolicy(raw: Buffer): EnterprisePolicy {
     }
   }
 
+  // Validate releaseCooldown if present.
+  const rc = (p as { releaseCooldown?: unknown }).releaseCooldown;
+  if (rc !== undefined) {
+    if (!rc || typeof rc !== "object") throw new Error("invalid policy: releaseCooldown must be an object");
+    const h = (rc as { hours?: unknown }).hours;
+    if (typeof h !== "number" || !Number.isFinite(h) || h <= 0 || h > 8760) {
+      throw new Error("invalid policy: releaseCooldown.hours must be a finite number in (0, 8760]");
+    }
+    const ex = (rc as { exempt?: unknown }).exempt;
+    if (ex !== undefined && (!Array.isArray(ex) || !ex.every((x) => typeof x === "string"))) {
+      throw new Error("invalid policy: releaseCooldown.exempt must be an array of strings");
+    }
+  }
+
   return {
     schema: 1,
     version: p.version,
@@ -237,6 +253,7 @@ export function parsePolicy(raw: Buffer): EnterprisePolicy {
     ...((p as { requireSignature?: string[] }).requireSignature !== undefined ? { requireSignature: (p as { requireSignature: string[] }).requireSignature } : {}),
     ...((p as { requireProvenance?: string[] }).requireProvenance !== undefined ? { requireProvenance: (p as { requireProvenance: string[] }).requireProvenance } : {}),
     ...(pi !== undefined ? { provenanceIdentities: pi as ProvenanceIdentityRequirement[] } : {}),
+    ...(rc !== undefined ? { releaseCooldown: rc as EnterprisePolicy["releaseCooldown"] } : {}),
   };
 }
 
