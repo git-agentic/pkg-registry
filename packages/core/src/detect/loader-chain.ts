@@ -87,10 +87,33 @@ export function analyzeLoaderChain(source: string, opts: { moduleLoadReachable?:
       if (node.init.type === "CallExpression") {
         const fn = calleeName(node.init.callee);
         const args = node.init.arguments ?? [];
-        if (fn && READ_FNS.has(fn)) { record("read", node.init); addTag(name, "read"); }
-        else if (fn && DECODE_FNS.has(fn)) {
-          if (args.some((a: any) => hasTag(idsIn(a), "read"))) { record("decode", node.init); sawDecode = true; addTag(name, "decoded"); }
-          else { record("decode", node.init); sawDecode = true; }
+        if (fn && READ_FNS.has(fn)) {
+          if (!primitives.some((p) => p.stage === "read" && p.line === lineOf(source, node.init.start))) record("read", node.init);
+          addTag(name, "read");
+        } else if (fn && DECODE_FNS.has(fn)) {
+          if (!primitives.some((p) => p.stage === "decode" && p.line === lineOf(source, node.init.start))) record("decode", node.init);
+          sawDecode = true;
+          if (args.some((a: any) => hasTag(idsIn(a), "read"))) addTag(name, "decoded");
+        }
+      }
+    },
+    AssignmentExpression(node: any) {
+      if (node.left.type !== "Identifier" || node.operator !== "=") return;
+      const name = node.left.name;
+      if (node.right.type === "Identifier") {
+        for (const t of taint.get(node.right.name) ?? []) addTag(name, t);
+        return;
+      }
+      if (node.right.type === "CallExpression") {
+        const fn = calleeName(node.right.callee);
+        const args = node.right.arguments ?? [];
+        if (fn && READ_FNS.has(fn)) {
+          if (!primitives.some((p) => p.stage === "read" && p.line === lineOf(source, node.right.start))) record("read", node.right);
+          addTag(name, "read");
+        } else if (fn && DECODE_FNS.has(fn)) {
+          if (!primitives.some((p) => p.stage === "decode" && p.line === lineOf(source, node.right.start))) record("decode", node.right);
+          sawDecode = true;
+          if (args.some((a: any) => hasTag(idsIn(a), "read"))) addTag(name, "decoded");
         }
       }
     },
@@ -109,9 +132,8 @@ export function analyzeLoaderChain(source: string, opts: { moduleLoadReachable?:
         const [pathArg, dataArg] = args;
         record("write", node);
         const dataTainted = dataArg ? (hasTag(idsIn(dataArg), "decoded") || hasTag(idsIn(dataArg), "read")) : false;
-        if (pathArg && sawDecode && dataTainted) {
-          if (pathArg.type === "Identifier") addTag(pathArg.name, "written-path");
-          for (const id of idsIn(pathArg)) addTag(id, "written-path");
+        if (pathArg && sawDecode && dataTainted && pathArg.type === "Identifier") {
+          addTag(pathArg.name, "written-path");
         }
         if (pathArg && isTempOrHidden(pathArg)) boosters.tempOrHidden = true;
       } else if (fn === "chmod" || fn === "chmodSync") {

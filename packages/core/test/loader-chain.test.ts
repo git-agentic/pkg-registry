@@ -66,4 +66,39 @@ describe("analyzeLoaderChain", () => {
     // read→write→launch present but no DECODE stage between → correlated stays false
     assert.equal(a.correlated, false);
   });
+
+  test("F1: reassignment (let bin; bin = gunzipSync(...)) still tracks taint → correlated true", () => {
+    const src = `
+      const fs=require('fs'); const zlib=require('zlib'); const cp=require('child_process');
+      const os=require('os'); const path=require('path');
+      const container = fs.readFileSync(path.join(__dirname,'x'));
+      let bin;
+      bin = zlib.gunzipSync(container);
+      const out = path.join(os.tmpdir(),'x');
+      fs.writeFileSync(out, bin);
+      fs.chmodSync(out, 0o755);
+      cp.spawn(out, [], { detached: true });
+    `;
+    const a = analyzeLoaderChain(src);
+    assert.equal(a.correlated, true);
+  });
+
+  test("F2: write path built inline from a directory identifier does not taint the directory → correlated false", () => {
+    const src = `
+      const fs=require('fs'); const zlib=require('zlib'); const cp=require('child_process'); const path=require('path');
+      const dir = '/tmp/somedir';
+      const p = 'input.bin';
+      const raw = fs.readFileSync(p);
+      const bin = zlib.gunzipSync(raw);
+      fs.writeFileSync(path.join(dir,'payload'), bin);
+      cp.spawn(dir);
+    `;
+    const a = analyzeLoaderChain(src);
+    assert.equal(a.correlated, false, "dir is only a path component, not the written file itself");
+  });
+
+  test("F3: read captured into a variable is recorded only once (no duplicate primitives)", () => {
+    const a = analyzeLoaderChain(LOADER, { moduleLoadReachable: true });
+    assert.equal(a.primitives.filter((p) => p.stage === "read").length, 1);
+  });
 });
