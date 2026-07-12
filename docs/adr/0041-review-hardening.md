@@ -201,3 +201,5 @@ same extraction boundary `extractTarball` already owns) and ADR-0022
 `verified` means without changing the status model, gate, or identity-
 extraction logic it defined). Notes #10 (Action SHA pinning) as CI hygiene
 shipped in the same branch. Supersedes nothing.
+
+> Extended by [ADR-0049](0049-native-payload-loader-detection.md): raw-byte magic classification closes the disguised-container blind spot noted here.

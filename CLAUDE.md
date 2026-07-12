@@ -29,16 +29,20 @@ phase's implementation starts.
 
 ### Current state by subsystem
 
-**Scoring & rules (`@sentinel/core`)** — 9 registered pure rules
+**Scoring & rules (`@sentinel/core`)** — 10 registered pure rules
 (`packages/core/src/rules/index.ts`): install-scripts, secret-exfil,
 network-egress, obfuscation, provenance (ADR-0021/0022), typosquat (ADR-0026),
 release-anomaly (ADR-0029), known-advisory (ADR-0034), known-vulnerability
-(semver-range CVEs, ADR-0035). Four more finding kinds are synthesized *outside*
-the rule pipeline — don't count them as rules: `resource-abuse`
-(decompression-bomb caps in `extractTarball`, ADR-0039) and `unscanned-content`
-(>2 MB / native-binary blind-spot flag, ADR-0041) inline in `runAudit`;
-`capability-novelty` from `buildAudit` (needs the post-rules delta, ADR-0029);
-`dependencyConfusion` at score time in `score.ts` (ADR-0026). Registry-signature
+(semver-range CVEs, ADR-0035), native-payload-loader (dataflow-correlated
+packaged-payload materialization-and-execution chain, ADR-0049). Five more
+finding kinds are synthesized *outside* the rule pipeline — don't count them
+as rules: `resource-abuse` (decompression-bomb caps in `extractTarball`,
+ADR-0039), `unscanned-content` (>2 MB / native-binary blind-spot flag,
+ADR-0041), and `content-mismatch` (raw-byte magic classification catching a
+binary/compressed/archive signature behind a text-looking extension,
+ADR-0049) inline in `runAudit`; `capability-novelty` from `buildAudit` (needs
+the post-rules delta, ADR-0029); `dependencyConfusion` at score time in
+`score.ts` (ADR-0026). Registry-signature
 verification is offline against configured `NPM_SIGNING_KEYS` (ADR-0021);
 provenance deep-verify binds the attestation to the *actual served bytes* and
 requires a SLSA v1 predicate for `verified` (ADR-0022, tightened by ADR-0041).
@@ -121,6 +125,13 @@ enforcement is tested with benign probe packages.
 7. **Claimed names are authoritative, not passthrough.** Names matching the signed
    policy's `privateNamespaces` are served only from the private store and never from
    public npm (fail-closed). Everything else still passes through (ADR-0010/0015).
+8. **Native-payload loader chains are critically flagged independent of
+   lifecycle scripts, baseline, or known indicators.** Sentinel must critically
+   flag a **dataflow-correlated** packaged-payload materialization-and-execution
+   chain in any scanned package code, independent of lifecycle scripts, baseline
+   availability, advisories, filenames, or known indicators; and separately
+   expose raw-content/extension mismatches for every file, including oversized
+   ones (ADR-0049).
 
 ## How to extend
 

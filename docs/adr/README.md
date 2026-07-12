@@ -122,6 +122,12 @@ Design bundle for the proxy → first-class registry evolution
 | [0047](./0047-time-locked-retraction.md) | Time-locked retraction (Phase 32) | Retract only while age < 72 h AND downloads < 1,000 (policy data); tombstones + spent identifiers, history retained; two-speed advisory emission; default serve-time quarantine overlay |
 | [0048](./0048-migration-compatibility-surface.md) | Migration & compatibility surface (Phase 33) | Small MUST-implement route contract (unpublish = retraction UI); fail-closed escape hatch with acknowledgment + revert manifest, retention + export; derived source class, integrity-preserving imports |
 
+## Phase 34 — native-payload-loader detection (Accepted, implemented)
+
+| ADR | Title | Decision in one line |
+|-----|-------|----------------------|
+| [0049](./0049-native-payload-loader-detection.md) | Native-payload-loader detection | Raw-byte magic classification (`content-mismatch`) + a dataflow-correlated `native-payload-loader` rule critically flag a disguised packaged-payload materialization-and-execution chain, independent of lifecycle scripts |
+
 ## Conventions
 
 - One decision per record; number sequentially; never renumber.

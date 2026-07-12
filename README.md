@@ -728,11 +728,38 @@ composition analysis (SCA), not just malware detection.
 
 See [ADR-0035](./docs/adr/0035-known-vulnerability-sca.md).
 
+## Concealed native-payload detection (Phase 34)
+
+A supply-chain incident shipped a compromised package whose loader unpacked
+and launched a concealed native binary — first from an npm `preinstall`
+hook, then, in a second generation, inlined directly into the package's
+entry point and CLI with no lifecycle script at all. Phase 34 closes both
+the classification gap and the detection gap:
+
+- **Raw-byte magic classification** — every packaged file is classified by a
+  bounded 512-byte sniff of its actual bytes (ELF/Mach-O/PE/WASM/gzip/xz/
+  zstd/bzip2/ZIP), not by its declared extension or size. A binary,
+  compressed, or archive signature hiding behind a text-looking extension
+  (e.g. a `.js` file that's really an ELF binary) surfaces as a
+  `content-mismatch` finding; a correctly-declared native/compressed/archive
+  asset produces no finding at all.
+- **`native-payload-loader` rule** — an AST-based (acorn) rule that flags a
+  **dataflow-correlated** chain: a packaged file is read, decoded, written
+  to disk, and the written file is launched. It's `critical` only when the
+  values/paths are actually linked end to end (not merely present in the
+  same file); a matching TypeScript/JSX file that acorn can't parse falls
+  back to an independent regex scan capped below critical.
+
+Both signals are **static and deterministic** — no lifecycle script needs to
+run, no baseline/previous version is required, and no advisory feed or known
+indicator list is consulted. See
+[ADR-0049](./docs/adr/0049-native-payload-loader-detection.md).
+
 ## Phase log
 
 The build history lives in the [ADR index](./docs/adr/README.md) — one decision
-record per phase, from the auditing-proxy wedge (ADR-0001) through the Landlock
-Linux exec floor (ADR-0044). See [ARCHITECTURE.md](./ARCHITECTURE.md) for the
+record per phase, from the auditing-proxy wedge (ADR-0001) through native-payload-
+loader detection (ADR-0049). See [ARCHITECTURE.md](./ARCHITECTURE.md) for the
 current design as a whole; the old narrative phase log is archived in
 [docs/archive/](./docs/archive/).
 

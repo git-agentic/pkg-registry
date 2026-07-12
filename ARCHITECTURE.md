@@ -1154,6 +1154,55 @@ Scoring, the deny-set's read-side attribution model, and the
 approval/manifest model are untouched (invariants #1–#6) — see
 [ADR-0038](./docs/adr/0038-sandbox-default-deny.md).
 
+### 3.25 Native-payload-loader detection & content-mismatch classification (Phase 34, ADR-0049)
+
+A two-generation supply-chain incident (a compromised `jscrambler`: a Gen-1
+`preinstall` loader, then the same loader inlined into the package entry
+point/CLI with no lifecycle script at all) exposed two gaps: the disguised
+native container evaded classification entirely (`extractTarball` classified
+by *file extension only*), and nothing scored the Gen-2 shape — a chain that
+materializes and launches a packaged payload with no install script to catch
+it.
+
+- **Raw-byte magic classification (`packages/core/src/detect/magic.ts`).**
+  `extractTarball` now classifies every file entry by a **bounded 512-byte
+  prefix** of its raw bytes, before UTF-8 conversion and regardless of
+  declared size: ELF/Mach-O/WASM/gzip/xz/zstd/bzip2 signatures, a **fully
+  in-bounds-validated** ZIP local-file-header or PE (`MZ` + `e_lfanew`-offset
+  `PE\0\0`, asserted only when the 4-byte read stays within the actual bytes
+  read), and two explicitly **ambiguous** signatures (`cafebabe` — fat Mach-O
+  vs. Java `.class` — and bare `mz`, a PE stub that didn't validate in-prefix).
+  A file whose sniff is non-`text` is never retained as a text `PackageFile`
+  even at ≤2 MB — closing the sub-2 MB disguise hole `unscanned-content`
+  (ADR-0041) couldn't see, since that boundary only ever looked at declared
+  extension and size.
+- **`content-mismatch` finding.** `ExtractResult` gains `contentMismatch`
+  (capped evidence) and `contentMismatchTotals` (complete, by detected kind),
+  populated only when a binary/compressed/archive/ambiguous signature hides
+  behind a text-looking extension — a correctly-declared native/compressed/
+  archive asset produces no finding, preserving today's false-positive-free
+  posture for genuine `.node` addons and bundled compressed assets.
+  `runAudit` synthesizes it (`metadata` category): **medium** when any
+  mismatched file's detected kind is executable (elf/macho/pe/wasm), **low**
+  otherwise. Synthesized inline in `runAudit`, next to `resource-abuse` and
+  `unscanned-content` — **not** a registered `Rule`; the registered-rule count
+  is unaffected by this finding.
+- **`ExtractionObservations` channel.** Rules run inside `buildAudit`, before
+  the `runAudit` synthesis site that has the `ExtractResult` — so a rule that
+  wants mismatch facts needs them threaded in. `AuditInput` gains a typed,
+  policy-independent `extractionObservations?: ExtractionObservations` field
+  (`contentMismatch`, `contentMismatchTotals`, `unscannedTotals`), populated
+  in `runAudit` and passed through `buildAudit`. This keeps byte-level facts
+  in one place (extraction) and rules pure.
+- **`native-payload-loader` rule** (§4.1, rule 10) consumes
+  `extractionObservations.contentMismatch` as a booster only — it never
+  re-sniffs raw bytes itself.
+
+No wall-clock, no network call, and no LLM involvement enter this path;
+scoring stays deterministic and the LLM/enrich-phase invariants (#1, #2) are
+untouched. See [ADR-0049](./docs/adr/0049-native-payload-loader-detection.md),
+which explicitly extends [ADR-0041](./docs/adr/0041-review-hardening.md).
+
 ---
 
 ## 4. The audit engine (`@sentinel/core`)
@@ -1220,6 +1269,21 @@ Phase 22 adds a ninth rule (§3.21, ADR-0035):
    any operator-supplied `SENTINEL_VULNERABILITIES`, at the advisory's
    faithful severity (a `critical` CVE hard-blocks under the default
    policy).
+
+Phase 34 adds a tenth rule (§3.25, ADR-0049):
+
+10. **`native-payload-loader`** (`install-script` category) — an AST-based
+    (acorn) rule that flags a **dataflow-correlated** chain of *read a
+    packaged file → decode it → write the decoded material to disk → launch
+    the written file*. `critical` only when the values/paths are actually
+    linked (aliases and simple assignments followed); `high` when all four
+    stages are present but unlinked, or on the regex parse-failure fallback
+    (TS/JSX, which acorn can't parse); `medium` for a partial chain. Boosters
+    (content-mismatch on the read file, a temp/hidden output path, `chmod
+    +x`, detached/`unref()` spawn, module-load reachability from
+    `main`/`bin`/`exports`) strengthen confidence but never substitute for
+    the dataflow link. See §3.25 for the raw-byte classification this rule
+    consumes as a booster.
 
 Rules are registered in a list, so adding a rule (typosquat detection, license
 risk, provenance) is additive and never touches scoring or the proxy.
