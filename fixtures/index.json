@@ -6,7 +6,7 @@
       "expect": { "verdict": "allow" },
       "versions": {
         "1.0.0": { "signature": "valid", "provenance": false },
-        "1.0.1": { "signature": "valid", "provenance": false }
+        "1.0.1": { "signature": "valid", "provenance": false, "time": "2026-07-10T00:00:00.000Z" }
       }
     },
     "net-fetch-lite": {
