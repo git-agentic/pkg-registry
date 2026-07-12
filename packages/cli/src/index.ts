@@ -19,7 +19,7 @@ import {
   signToken, verifyToken, type Role,
   buildAuditStatement, signAttestation, verifyAttestation, attestationKeyid,
 } from "@sentinel/core";
-import { createSandbox, runLifecycleScripts } from "@sentinel/sandbox";
+import { createSandbox, runLifecycleScripts, scrubEnv } from "@sentinel/sandbox";
 import { formatReport, formatManifest, verdictExitCode, formatTree, treeExitCode, formatViolations, formatStats, formatHistory, formatExplain, formatLint, formatPreview, type Manifest, type ViolationRow, type ExplainResult, type PreviewResult } from "./format.js";
 
 const DEFAULT_PROXY = process.env.SENTINEL_PROXY ?? "http://localhost:4873";
@@ -511,6 +511,27 @@ program
       process.exit(1);
     }
     console.log(`Ran ${results.length} lifecycle script(s) under enforcement; no denied capability needed.`);
+  });
+
+program
+  .command("exec")
+  .description("Run a command under the Sentinel sandbox (no shell; args after -- are passed verbatim). Protects Sentinel-mediated execution only — a raw require()/import outside this command, or `npx foo` run directly, is NOT contained.")
+  .option("--approve <cap...>", "capabilities to approve for the command (kind:target)", [])
+  .argument("<command>", "the executable to run")
+  .argument("[args...]", "arguments passed verbatim to the command")
+  .action((command: string, args: string[], opts: { approve: string[] }) => {
+    let sandbox;
+    try { sandbox = createSandbox(); } catch (e) {
+      console.error(`\x1b[31msentinel: exec unavailable: ${(e as Error).message}\x1b[0m`);
+      process.exit(2);
+    }
+    const approved = parseApprovals(opts.approve);
+    const env = scrubEnv(process.env, approved);
+    const cwd = process.cwd();
+    const r = sandbox.runArgv(command, args, { cwd, approved, homeDir: homedir(), env, projectRoot: cwd });
+    if (r.stdout) process.stdout.write(r.stdout);
+    if (r.stderr) process.stderr.write(r.stderr);
+    process.exit(r.exitCode);
   });
 
 if (process.argv[1]?.endsWith("index.ts") || process.argv[1]?.endsWith("index.js")) program.parseAsync();
