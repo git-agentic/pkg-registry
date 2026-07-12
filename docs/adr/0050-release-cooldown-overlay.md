@@ -37,11 +37,12 @@ signed, per-enterprise data, not code or ops config.
   (up to one year); `exempt`, if present, must be a string array. A
   malformed `releaseCooldown` block is a load-time error, the same posture as
   every other policy field — never a silently-ignored one.
-- **Serve-time overlay, not a rule.** There is **no wall-clock read anywhere
-  in `@sentinel/core`.** `runRules`/`score` stay pure and deterministic
-  (invariant #1) — the same bytes audited under the same policy produce the
-  same `AuditReport` regardless of when the audit runs. The cooldown decision
-  is computed and applied entirely in the proxy (`packages/proxy/src/
+- **Serve-time overlay, not a rule.** **No wall-clock feeds the score or
+  verdict** — the rule pipeline and `score()` are clock-free. `runRules`/`score`
+  stay pure and deterministic (invariant #1) — the same bytes audited under the
+  same policy produce the same `AuditReport` regardless of when the audit runs.
+  The cooldown's time comparison lives only in the proxy's serve-time overlay,
+  computed and applied entirely in the proxy (`packages/proxy/src/
   cooldown.ts`): `resolvePublishTime` picks the authoritative publish
   timestamp for the resolution origin, `cooldownDecision` compares it against
   an injected `now` to decide block/allow, and `applyCooldown` — mirroring

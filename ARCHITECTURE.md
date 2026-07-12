@@ -414,9 +414,10 @@ A second, independent serve-time overlay holds freshly-published versions:
 `EnterprisePolicy.releaseCooldown?: { hours: number; exempt?: string[] }`
 (`packages/core/src/policy.ts`), validated fail-closed by `parsePolicy`
 (`hours` finite in `(0, 8760]`; `exempt` a string array). Like quarantine,
-**this is a serve-time overlay, never a core rule** — there is no wall-clock
-read anywhere in `@sentinel/core`; `runRules`/`score` stay pure, so invariant
-#1 (deterministic scoring) is unaffected. The decision lives entirely in the
+**this is a serve-time overlay, never a core rule** — no wall-clock feeds the
+score or verdict; `runRules`/`score` stay clock-free and pure, so invariant #1
+(deterministic scoring) is unaffected. The cooldown's time comparison lives
+only in the proxy's serve-time overlay; the decision lives entirely in the
 proxy (`packages/proxy/src/cooldown.ts`): `resolvePublishTime` picks the
 authoritative publish timestamp for the resolution origin — the public
 packument's `time[version]` for an unclaimed name, `PrivatePackageStore`'s

@@ -764,12 +764,15 @@ time to catch and pull a bad release before it reaches an installer. This is
 signed **policy data**, not an environment variable, so it's configured in
 the enterprise policy alongside weights and thresholds:
 
-```yaml
-# sentinel-policy.yaml
-releaseCooldown:
-  hours: 72          # hold any version published less than 72h ago
-  exempt:
-    - "@my-org/*"     # narrow: fast-moving internal packages only
+```json
+{
+  "schema": 1,
+  "version": "2026-07-acme",
+  "releaseCooldown": {
+    "hours": 72,
+    "exempt": ["@my-org/*"]
+  }
+}
 ```
 
 - **Fail-closed by default.** A version inside the cooldown window is served
