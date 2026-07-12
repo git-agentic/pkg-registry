@@ -30,7 +30,9 @@ stdio; and calls `unref()`.
   local file referenced by a lifecycle command via `referencedFiles()` and scans
   it for `child_process|spawn(` etc., producing a **critical** → `block`. This
   must be **empirically confirmed** with a synthetic fixture before writing any
-  new rule; if confirmed, the new rule does not re-cover preinstall.
+  new rule. The new rule adds **no install-script-specific logic**, but may
+  **independently report the correlated chain** when the loader body exhibits it
+  (see §4 "Redundancy with install-scripts").
 - **Gen-2 is the real gap.** The loader's network/secret behavior lives in the
   *unscanned binary container*, so `network-egress`, `secret-exfil`, and
   `obfuscation` all miss it. `capability-novelty` fires only in **diff mode** and
@@ -71,32 +73,70 @@ stdio; and calls `unref()`.
 In `extractTarball` (`packages/core/src/extract.ts`), classify **raw bytes
 before UTF-8 conversion**, for **every** file entry regardless of size.
 
-- **Bounded prefix sniff** (~64 bytes) against an extensible signature table,
-  validated **as far as the bounded prefix permits**:
-  - ELF `7f 45 4c 46`; PE — `4d 5a` (`MZ`), and where the prefix reaches it,
-    validate the PE header offset at `0x3C` (bare `MZ` is a *weaker* signal than
-    a validated PE); Mach-O `fe ed fa ce/cf` + byte-reversed; **`ca fe ba be`
+- **Bounded prefix sniff** against an extensible signature table, validated **as
+  far as the bounded prefix permits**. Read a **hard-capped prefix of 512 bytes**
+  (one buffered read; not the whole file) — large enough to resolve the PE header
+  in the common case while staying bounded.
+  - ELF `7f 45 4c 46`; Mach-O `fe ed fa ce/cf` + byte-reversed; **`ca fe ba be`
     flagged ambiguous** (fat Mach-O vs Java class); gzip `1f 8b`; WASM
-    `00 61 73 6d` (treated as executable content); containers/archives — zip
-    `50 4b`, xz `fd 37 7a`, zstd `28 b5 2f fd`, bzip2 `42 5a 68`.
-- **Content/extension mismatch**: when a sniffed signature is
-  binary/executable/compressed but the path has a text-looking extension
-  (`.js/.json/.ts/.map/...`), record a mismatch.
+    `00 61 73 6d` (treated as executable content); xz `fd 37 7a`, zstd
+    `28 b5 2f fd`, bzip2 `42 5a 68`.
+  - **ZIP** requires the **complete 4-byte local-file-header signature**
+    `50 4b 03 04` (or the empty/spanned variants `50 4b 05 06` / `50 4b 07 08`),
+    not the bare `50 4b` prefix.
+  - **PE**: `4d 5a` (`MZ`) at offset 0, then read the 4-byte `e_lfanew` at `0x3C`
+    and, **when that offset falls within the 512-byte prefix**, validate the
+    `50 45 00 00` (`PE\0\0`) signature there → `detectedKind: "pe"`. When
+    `e_lfanew` points **beyond** the prefix, the header is not validated within
+    the bounded read: record the weaker `detectedKind: "mz"` (DOS/MZ stub) rather
+    than asserting PE. Bare `MZ` is a weaker signal than a validated PE and is
+    scored one step lower (see §3 mapping).
+- **Detected-kind classes** (drive all downstream behavior):
+  - `executable` — ELF, Mach-O, validated `pe`, WASM.
+  - `compressed` — gzip, xz, zstd, bzip2.
+  - `archive` — validated ZIP.
+  - `ambiguous` — `ca fe ba be` (fat Mach-O vs Java class), `mz` (MZ stub, PE not
+    validated within the prefix).
+  - `text` — no binary signature matched (the normal case).
+- **Retention, accounting, and severity by class** — the sniff result is combined
+  with the declared extension. A "text-looking extension" is one in the existing
+  `TEXT_EXT` set (`.js/.json/.ts/.map/...`):
+
+  | Sniffed class | Declared ext | Retain as text `PackageFile`? | Unscanned accounting | Mismatch totals | Extraction-finding severity |
+  |---|---|---|---|---|---|
+  | `text` | any | yes if ≤2 MB & code/text ext (unchanged) | large-code/native as today | — | — |
+  | `executable` | binary (`.node/.wasm/.so/...`) — **correctly declared** | no | counted `native` (unchanged) | — | — (existing unscanned flag) |
+  | `executable` | **text-looking** — mismatch | **no** (never retained as text) | counted (native/large-code) | +1, `byKind[<elf\|macho\|pe\|wasm>]` | **medium** |
+  | `compressed` | archive/compressed ext — correctly declared | no | counted as unscanned | — | — |
+  | `compressed` (gzip) | **text-looking** (`.js`) — mismatch | **no** | counted | +1, `byKind.gzip` | **low** (gzip-alone-behind-text) |
+  | `archive` | **text-looking** — mismatch | **no** | counted | +1, `byKind.zip` | **low** |
+  | `ambiguous` | **text-looking** — mismatch | **no** | counted | +1, `byKind[<cafebabe\|mz>]` | **low** (weaker signal; `mz` sits one step below validated `pe`) |
+  | any binary/compressed/archive/ambiguous | binary ext — correctly declared | no | counted as unscanned | — | — |
+
+  Key rule: **correctly-declared** binaries/archives/compressed files produce **no
+  mismatch finding** — they flow through the existing unscanned accounting
+  unchanged (this is what keeps genuine native-binary and compressed-asset
+  packages false-positive-free, acceptance #7). A mismatch finding fires **only**
+  when a binary/compressed/archive/ambiguous signature hides behind a
+  **text-looking** extension.
 - **Memory discipline**: only the bounded prefix is retained for classification.
-  A file whose sniff says "binary" is **never retained as a text `PackageFile`**
-  even if ≤2 MB — it goes to mismatch/unscanned accounting instead. This fixes
-  the sub-2 MB disguise hole and avoids retaining concealed binaries as text.
+  Any file whose sniff is non-`text` is **never retained as a text
+  `PackageFile`** even if ≤2 MB — it goes to mismatch/unscanned accounting
+  instead. This fixes the sub-2 MB disguise hole and avoids retaining concealed
+  binaries as text.
 - `ExtractResult` gains, following the existing `unscanned`/`unscannedTotals`
   pattern:
   - `contentMismatch: ContentMismatchEntry[]` — **capped** evidence list
     (`{ path, declaredExt, detectedKind, size }`).
   - `contentMismatchTotals` — **complete, never-capped** totals: overall count +
-    **counts-by-detected-kind**, so facts stay complete past the evidence cap.
-- `runAudit` synthesizes an extraction finding from the mismatch totals:
-  **medium** for executable magic (ELF/PE/Mach-O/WASM) behind a text extension;
-  **low** for gzip-alone-behind-`.js`. This is an independent transparency signal
-  and a confidence booster — **never a standalone critical**.
-- ADR-0041 gets an addendum documenting magic-byte sniffing.
+    **counts-by-detected-kind** (`byKind`), so facts stay complete past the
+    evidence cap.
+- `runAudit` synthesizes the extraction finding per the severity column above.
+  This is an independent transparency signal and a confidence booster — **never a
+  standalone critical**.
+- **ADR**: a **single new ADR** documents magic-byte sniffing and **explicitly
+  extends ADR-0041**. ADR-0041 (Accepted) is not modified beyond, at most, a
+  one-line pointer to the superseding extension (see §10).
 
 ## 4. Deliverable B — `native-payload-loader` rule (the critical trigger)
 
@@ -205,10 +245,29 @@ Policy gains optional `releaseCooldown?: { hours: number; exempt?: string[] }`.
 - At serve time, compare the version's packument publish-time to request-time
   (injectable clock for tests). If the version is younger than `hours` and the
   package is not exempt, overlay the served verdict to `block`.
+- **Surface coverage — the overlay is applied consistently on every surface that
+  serves or reports a verdict for a specific version, so no preflight surface
+  reports `allow` for a version whose tarball request will be blocked:**
+  - **tarball serving** — the install-gate path; overlay → block (403 under
+    `SENTINEL_POLICY=block`).
+  - **`/-/audit`** (single-version audit) — reported verdict carries the overlay.
+  - **tree audit** (`POST /-/audit-tree`) — each version node's verdict carries
+    the overlay; the tree gate trips accordingly.
+  - **`/-/explain`** and **remediation** — walk-back/fix output reflects the
+    overlaid verdict, not the cached score.
+  - **private-package routes** — cooldown applies the same way; a fresh private
+    version is held identically (fail-closed on missing publish-time still
+    applies).
+  - The overlay is computed from `(policy.releaseCooldown, packument publish-time,
+    request-time)` at each surface; the cached `Audit`/score is never mutated, so
+    the same version outside the window serves normally with no re-audit.
 - **Enforcement semantics (explicit):**
-  - Cooldown overlays the served verdict to `block`.
-  - `SENTINEL_POLICY=block` → 403.
-  - Observe mode reports the overlaid `block` but still serves.
+  - Cooldown overlays the served/reported verdict to `block` with its **own
+    finding/reason** (distinct from a runtime violation and from a static
+    finding).
+  - `SENTINEL_POLICY=block` → 403 on the tarball path.
+  - Observe mode reports the overlaid `block` on every surface above but still
+    serves the tarball.
 - **Metadata failure = fail closed.** For a matching (non-exempt) package,
   **absent or malformed publish time ⇒ block** (cooldown is an explicitly enabled
   security gate). Exempt packages bypass.
@@ -249,25 +308,42 @@ prevention acceptance criteria**. New ADR.
 
 ## 8. Fixtures (synthetic, inert)
 
-All carry a `SYNTHETIC FIXTURE` header, use RFC-5737 documentation IPs, are
-scored as text / never executed, and are regenerated via `npm run fixtures`.
+All fixtures use RFC-5737 documentation IPs, are never executed, and are
+regenerated via `npm run fixtures`. Two fixture kinds need **distinct** safety
+marking, because the existing "`SYNTHETIC FIXTURE` header + scored as text"
+contract is **impossible** for a file that must begin with exact binary magic
+bytes:
+
+- **Loader source files** (`.js` package code — the entry/bin/preinstall
+  loaders): retain the standard **`SYNTHETIC FIXTURE` header** and are scored as
+  text, exactly as today.
+- **Exact-signature assets** (the disguised container files): are **inert raw
+  test data** that genuinely begin with real ELF/Mach-O/gzip/etc. header bytes
+  (harmless on their own) followed by inert synthetic filler. They **cannot carry
+  an in-band text header** and are **not "scored as text."** They are marked
+  **out-of-band** via a repository-approved marker — an **adjacent
+  `SYNTHETIC-FIXTURE.txt` manifest** in the same fixture directory naming each
+  asset, its purpose, and its signature family. `scripts/make-fixtures.ts` and
+  the fixture invariant in CLAUDE.md are updated to recognize this out-of-band
+  marking for signature assets. The assets contain no runnable payload and cannot
+  execute.
+
+Fixtures:
 
 - `malicious/payload-loader-preinstall` (Gen-1) — used **first** to confirm
-  install-scripts already blocks it.
+  install-scripts already blocks it. Loader source carries the header.
 - `malicious/payload-loader-entry` (Gen-2, `main` entry, no install script).
 - `malicious/payload-loader-bin` (Gen-2, CLI `bin` entry).
-- **Disguised-content fixtures contain the *exact* signature bytes** required to
-  exercise the classifier (real ELF/Mach-O/gzip header bytes — harmless on their
-  own — followed by inert synthetic data), behind a text-looking extension. They
-  cannot execute and are clearly marked. Not "fake magic": they genuinely match
-  the detector.
+- A disguised-container **exact-signature asset** behind a text-looking
+  extension, referenced by the loader fixture(s), marked out-of-band per above.
 - Benign controls for false-positive proof: a build tool that
   reads+decompresses+writes+spawns **without** the dataflow link; a
-  `child_process`-only CLI; a gzip-only util; a genuine native-binary package; a
-  large generated bundle.
+  `child_process`-only CLI; a gzip-only util; a genuine **correctly-declared**
+  native-binary package (`.node`); a large generated bundle.
 
 **Signature coverage split:** test **each signature family at the classifier-
-unit level**; only a **representative subset** needs full tarball fixtures.
+unit level** (raw byte buffers, no tarball needed); only a **representative
+subset** needs full tarball fixtures.
 
 ## 9. Tests (map to the 10 acceptance criteria + guards)
 
@@ -302,9 +378,15 @@ green.
   cooldown overlay, exec.
 - **README.md**: observe-vs-block distinction, cooldown config + narrow-exemption
   caveat, `sentinel exec` usage and its scope limit.
-- **ADRs**: (a) loader-chain detection + extraction-observation channel;
-  (b) cooldown serve-time overlay; (c) sandboxed exec. Addendum to ADR-0041 for
-  magic-byte sniffing. No Accepted ADR is rewritten to reverse it.
+- **ADRs** (three new; no Accepted ADR is rewritten to reverse it):
+  - (a) **loader-chain detection + magic-byte content classification +
+    extraction-observation channel** — one ADR covering Deliverables A/B/C. It
+    **explicitly extends ADR-0041** (review-hardening / unscanned-content blind
+    spot). ADR-0041 itself is left Accepted and unmodified beyond, at most, a
+    one-line pointer to this superseding extension — **no separate addendum to the
+    Accepted ADR**.
+  - (b) cooldown serve-time overlay.
+  - (c) sandboxed `sentinel exec`.
 
 ## 11. Sequencing (each independently green before the next)
 
