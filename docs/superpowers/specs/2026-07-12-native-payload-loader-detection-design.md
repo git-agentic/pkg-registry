@@ -84,13 +84,15 @@ before UTF-8 conversion**, for **every** file entry regardless of size.
   - **ZIP** requires the **complete 4-byte local-file-header signature**
     `50 4b 03 04` (or the empty/spanned variants `50 4b 05 06` / `50 4b 07 08`),
     not the bare `50 4b` prefix.
-  - **PE**: `4d 5a` (`MZ`) at offset 0, then read the 4-byte `e_lfanew` at `0x3C`
-    and, **when that offset falls within the 512-byte prefix**, validate the
-    `50 45 00 00` (`PE\0\0`) signature there → `detectedKind: "pe"`. When
-    `e_lfanew` points **beyond** the prefix, the header is not validated within
-    the bounded read: record the weaker `detectedKind: "mz"` (DOS/MZ stub) rather
-    than asserting PE. Bare `MZ` is a weaker signal than a validated PE and is
-    scored one step lower (see §3 mapping).
+  - **PE**: `4d 5a` (`MZ`) at offset 0, then read the little-endian 4-byte
+    `e_lfanew` at `0x3C`. Validate `50 45 00 00` (`PE\0\0`) **only when `e_lfanew`
+    is a valid non-negative offset AND `e_lfanew + 4 <= actualPrefixLength`**
+    (the real bytes read, which may be <512 for a short file) — so the 4-byte
+    signature read is fully in-bounds → `detectedKind: "pe"`. Otherwise (offset
+    invalid, or the `PE\0\0` bytes would fall at or beyond the end of the buffered
+    prefix) record the weaker `detectedKind: "mz"` (DOS/MZ stub) rather than
+    asserting PE or performing an out-of-bounds read. Bare `MZ` is a weaker signal
+    than a validated PE and is scored one step lower (see §3 mapping).
 - **Detected-kind classes** (drive all downstream behavior):
   - `executable` — ELF, Mach-O, validated `pe`, WASM.
   - `compressed` — gzip, xz, zstd, bzip2.
@@ -102,20 +104,30 @@ before UTF-8 conversion**, for **every** file entry regardless of size.
   with the declared extension. A "text-looking extension" is one in the existing
   `TEXT_EXT` set (`.js/.json/.ts/.map/...`):
 
-  | Sniffed class | Declared ext | Retain as text `PackageFile`? | Unscanned accounting | Mismatch totals | Extraction-finding severity |
+  | Sniffed class | Declared ext | Retain as text `PackageFile`? | `unscanned` list/totals | Mismatch totals | Extraction-finding severity |
   |---|---|---|---|---|---|
   | `text` | any | yes if ≤2 MB & code/text ext (unchanged) | large-code/native as today | — | — |
   | `executable` | binary (`.node/.wasm/.so/...`) — **correctly declared** | no | counted `native` (unchanged) | — | — (existing unscanned flag) |
-  | `executable` | **text-looking** — mismatch | **no** (never retained as text) | counted (native/large-code) | +1, `byKind[<elf\|macho\|pe\|wasm>]` | **medium** |
-  | `compressed` | archive/compressed ext — correctly declared | no | counted as unscanned | — | — |
-  | `compressed` (gzip) | **text-looking** (`.js`) — mismatch | **no** | counted | +1, `byKind.gzip` | **low** (gzip-alone-behind-text) |
-  | `archive` | **text-looking** — mismatch | **no** | counted | +1, `byKind.zip` | **low** |
-  | `ambiguous` | **text-looking** — mismatch | **no** | counted | +1, `byKind[<cafebabe\|mz>]` | **low** (weaker signal; `mz` sits one step below validated `pe`) |
-  | any binary/compressed/archive/ambiguous | binary ext — correctly declared | no | counted as unscanned | — | — |
+  | `executable` | **text-looking** — mismatch | **no** (never retained as text) | not added to `unscanned` (see note) | +1, `byKind[<elf\|macho\|pe\|wasm>]` | **medium** |
+  | `compressed` (gzip/xz/zstd/bzip2) | compressed/archive ext — correctly declared | no | not counted (unchanged; `unscanned` tracks only native + large-code today) | — | — |
+  | `compressed` (gzip/xz/zstd/bzip2) | **text-looking** (e.g. `.js`) — mismatch | **no** | not added to `unscanned` (see note) | +1, `byKind[<gzip\|xz\|zstd\|bzip2>]` | **low** (compressed-alone-behind-text) |
+  | `archive` (zip) | **text-looking** — mismatch | **no** | not added to `unscanned` (see note) | +1, `byKind.zip` | **low** |
+  | `ambiguous` | **text-looking** — mismatch | **no** | not added to `unscanned` (see note) | +1, `byKind[<cafebabe\|mz>]` | **low** (weaker signal; `mz` sits one step below validated `pe`) |
+  | any binary/compressed/archive/ambiguous | binary ext — correctly declared | no | native counted; compressed/archive not counted (unchanged) | — | — |
+
+  **`unscanned` accounting note.** `UnscannedEntry.kind` stays `large-code |
+  native` — it is **not** extended for this work. Content-mismatch files are
+  tracked **only** in the new `contentMismatch` / `contentMismatchTotals`
+  structures (their bytes still count toward `unpackedSize`); they are not forced
+  into the `unscanned` union with an inaccurate kind, and are not double-counted.
+  A mismatched file that *also* independently qualifies as `native` by extension
+  cannot occur (mismatch requires a **text-looking** extension), so the two
+  structures never overlap. Correctly-declared compressed/archive assets are not
+  counted by `unscanned` today and that is unchanged.
 
   Key rule: **correctly-declared** binaries/archives/compressed files produce **no
-  mismatch finding** — they flow through the existing unscanned accounting
-  unchanged (this is what keeps genuine native-binary and compressed-asset
+  mismatch finding** — accounting is unchanged (this is what keeps genuine
+  native-binary and compressed-asset
   packages false-positive-free, acceptance #7). A mismatch finding fires **only**
   when a binary/compressed/archive/ambiguous signature hides behind a
   **text-looking** extension.
@@ -256,9 +268,21 @@ Policy gains optional `releaseCooldown?: { hours: number; exempt?: string[] }`.
   - **`/-/explain`** and **remediation** — walk-back/fix output reflects the
     overlaid verdict, not the cached score.
   - **private-package routes** — cooldown applies the same way; a fresh private
-    version is held identically (fail-closed on missing publish-time still
-    applies).
-  - The overlay is computed from `(policy.releaseCooldown, packument publish-time,
+    version is held identically.
+- **Publish-time source (per resolution origin).** The overlay needs an
+  authoritative publish timestamp for the specific version:
+  - **Public packages** — `packument.time[version]` from the upstream packument.
+  - **Private packages** — the private store's authoritative
+    `StoredVersion.publishedAt`, **not** a packument `time` map. Private packuments
+    need not carry a `time` map at all; sourcing from `StoredVersion.publishedAt`
+    prevents a private version from being **blocked indefinitely** by a missing
+    `time` entry.
+  - **Fail-closed** (block a matching, non-exempt version) applies when the
+    *authoritative* source for that origin is absent or malformed — e.g. a public
+    packument missing `time[version]`, or a private `StoredVersion` with no
+    parseable `publishedAt` — not merely when a public-style `time` map is absent
+    from a private packument.
+  - The overlay is computed from `(policy.releaseCooldown, resolved publish-time,
     request-time)` at each surface; the cached `Audit`/score is never mutated, so
     the same version outside the window serves normally with no re-audit.
 - **Enforcement semantics (explicit):**
