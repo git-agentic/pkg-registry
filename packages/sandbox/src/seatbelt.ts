@@ -12,6 +12,16 @@ import { nodeInstallPrefix } from "./read-allow.js";
 /** Enforces an SBPL profile via macOS `sandbox-exec`. Fails closed on non-darwin. */
 export class SeatbeltSandbox implements Sandbox {
   run(cmd: string, opts: { cwd: string; approved: Capability[]; homeDir: string; env?: NodeJS.ProcessEnv; projectRoot?: string }): SandboxResult {
+    return this.execWithTail(["/bin/sh", "-c", cmd], opts);
+  }
+
+  runArgv(file: string, args: string[], opts: { cwd: string; approved: Capability[]; homeDir: string; env?: NodeJS.ProcessEnv; projectRoot?: string }): SandboxResult {
+    return this.execWithTail([file, ...args], opts);
+  }
+
+  /** Shared by `run` and `runArgv`: build the profile, invoke `sandbox-exec` with the given
+   * argv tail (either `/bin/sh -c cmd` or `file ...args`), and classify the result. */
+  private execWithTail(tail: string[], opts: { cwd: string; approved: Capability[]; homeDir: string; env?: NodeJS.ProcessEnv; projectRoot?: string }): SandboxResult {
     if (process.platform !== "darwin") {
       throw new Error(`sandbox enforcement unavailable on ${process.platform} (macOS Seatbelt required)`);
     }
@@ -24,7 +34,7 @@ export class SeatbeltSandbox implements Sandbox {
     const profileFile = join(dir, "profile.sb");
     writeFileSync(profileFile, profile);
     try {
-      const res = spawnSync("/usr/bin/sandbox-exec", ["-f", profileFile, "/bin/sh", "-c", cmd], {
+      const res = spawnSync("/usr/bin/sandbox-exec", ["-f", profileFile, ...tail], {
         cwd: opts.cwd,
         env: opts.env ?? process.env,
         encoding: "utf8",

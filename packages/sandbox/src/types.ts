@@ -24,4 +24,6 @@ export interface SandboxResult {
 export interface Sandbox {
   /** Run `cmd` (via `sh -c`) under a sandbox compiled from the APPROVED capabilities, in `cwd`. */
   run(cmd: string, opts: { cwd: string; approved: Capability[]; homeDir: string; env?: NodeJS.ProcessEnv; projectRoot?: string }): SandboxResult;
+  /** Run `file` with `args` under the sandbox WITHOUT a shell (execFile-style; boundaries preserved). */
+  runArgv(file: string, args: string[], opts: { cwd: string; approved: Capability[]; homeDir: string; env?: NodeJS.ProcessEnv; projectRoot?: string }): SandboxResult;
 }
