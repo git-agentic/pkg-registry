@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { Buffer } from "node:buffer";
 import { createGunzip } from "node:zlib";
 import * as tar from "tar";
-import type { PackageFile } from "./types.js";
+import type { PackageFile, ContentMismatchEntry } from "./types.js";
+import { classifyContent, MAGIC_PREFIX_BYTES } from "./detect/magic.js";
 
 const MAX_FILE_BYTES = 2 * 1024 * 1024; // skip very large files from text scanning
 const TEXT_EXT = /\.(c?js|mjs|cjs|ts|mts|cts|jsx|tsx|json|map|sh|txt|md|yml|yaml)$/i;
@@ -39,6 +40,10 @@ export interface ExtractResult {
    * undercount bytes (#11 review fix).
    */
   unscannedTotals: { count: number; native: number; bytes: number };
+  /** Files whose raw-byte signature disagrees with a text-looking extension. Capped list. */
+  contentMismatch: ContentMismatchEntry[];
+  /** Complete, never-capped mismatch totals: overall count + counts by detected kind. */
+  contentMismatchTotals: { count: number; byKind: Record<string, number> };
 }
 
 /**
@@ -73,6 +78,8 @@ export async function extractTarball(
   const files: PackageFile[] = [];
   const unscanned: UnscannedEntry[] = [];
   const unscannedTotals = { count: 0, native: 0, bytes: 0 };
+  const contentMismatch: ContentMismatchEntry[] = [];
+  const contentMismatchTotals = { count: 0, byKind: {} as Record<string, number> };
   let unpackedSize = 0;
   let fileCount = 0;
   let entryCount = 0;
@@ -100,15 +107,35 @@ export async function extractTarball(
     if (isFile) fileCount += 1;
     const chunks: Buffer[] = [];
     let bytes = 0;
+    const prefixChunks: Buffer[] = [];
+    let prefixLen = 0;
     entry.on("data", (c: Buffer) => {
       if (isFile) {
         bytes += c.length;
+        if (prefixLen < MAGIC_PREFIX_BYTES) {
+          const need = MAGIC_PREFIX_BYTES - prefixLen;
+          prefixChunks.push(c.subarray(0, need));
+          prefixLen += Math.min(need, c.length);
+        }
         if (!truncated && bytes <= MAX_FILE_BYTES) chunks.push(c);
       }
     });
     entry.on("end", () => {
       if (truncated || !isFile) return;
       const path = normalize(entry.path);
+      const cls = classifyContent(Buffer.concat(prefixChunks));
+      const declaredExt = extOf(path);
+      const textLooking = TEXT_EXT.test(path);
+      if (cls.class !== "text" && textLooking) {
+        // Binary/compressed/archive/ambiguous signature hiding behind a text-looking
+        // extension → mismatch. Never retained as text; tracked only here.
+        contentMismatchTotals.count += 1;
+        contentMismatchTotals.byKind[cls.kind] = (contentMismatchTotals.byKind[cls.kind] ?? 0) + 1;
+        if (contentMismatch.length < MAX_UNSCANNED) {
+          contentMismatch.push({ path, declaredExt, detectedKind: cls.kind, size: bytes });
+        }
+        return;
+      }
       if (bytes <= MAX_FILE_BYTES && TEXT_EXT.test(path)) {
         const content = Buffer.concat(chunks).toString("utf8");
         const prev = baseline?.get(path);
@@ -190,7 +217,7 @@ export async function extractTarball(
     await done;
   }
   if (failure) throw failure;
-  return { files, unpackedSize, fileCount, truncated, unscanned, unscannedTotals };
+  return { files, unpackedSize, fileCount, truncated, unscanned, unscannedTotals, contentMismatch, contentMismatchTotals };
 }
 
 /** Build a `path -> content` baseline map from a previously extracted set. */
@@ -215,4 +242,9 @@ export function integrityOf(tgz: Buffer): string {
 function normalize(p: string): string {
   // npm tarballs prefix everything with `package/`.
   return p.replace(/^\.\//, "");
+}
+
+function extOf(p: string): string {
+  const m = /(\.[a-z0-9]+)$/i.exec(p);
+  return m ? m[1]!.toLowerCase() : "";
 }
