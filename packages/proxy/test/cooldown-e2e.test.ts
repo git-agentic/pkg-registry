@@ -86,6 +86,24 @@ describe("release-cooldown e2e", () => {
     } finally { server.close(); }
   });
 
+  test("preflight /-/manifest matches the gate (no allow when tarball will block)", async () => {
+    const { server, base } = await startServer({ policy: "block", enterprisePolicy: cooldownPolicy(), now: inWindow });
+    try {
+      const body = await (await fetch(`${base}/-/manifest/leftpad-lite/1.0.1`)).json();
+      assert.equal(body.verdict, "block");
+      assert.ok(body.findings.some((f: any) => f.ruleId === "release-cooldown"));
+    } finally { server.close(); }
+  });
+
+  test("preflight /-/manifest past the window → normal verdict", async () => {
+    const { server, base } = await startServer({ policy: "block", enterprisePolicy: cooldownPolicy(), now: pastWindow });
+    try {
+      const body = await (await fetch(`${base}/-/manifest/leftpad-lite/1.0.1`)).json();
+      assert.notEqual(body.verdict, "block");
+      assert.ok(!body.findings.some((f: any) => f.ruleId === "release-cooldown"));
+    } finally { server.close(); }
+  });
+
   test("exempt pattern bypasses even when fresh", async () => {
     const { server, base } = await startServer({ policy: "block", enterprisePolicy: cooldownPolicy(["leftpad-lite"]), now: inWindow });
     try {

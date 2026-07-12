@@ -532,11 +532,13 @@ export function createServer(opts: ServerOptions) {
     const version = req.params[1] ?? "";
     try {
       const { report } = await auditVersion(pkg, version);
-      const rec = reconcile(report);
+      const cd = await cooldownFor(pkg, version);
+      const overlaid = applyCooldown(report, cd);
+      const rec = reconcile(overlaid);
       res.json({
-        meta: report.meta, score: report.score, verdict: report.verdict,
-        findings: report.findings, capabilities: report.capabilities,
-        capabilityDelta: report.capabilityDelta,
+        meta: overlaid.meta, score: overlaid.score, verdict: overlaid.verdict,
+        findings: overlaid.findings, capabilities: overlaid.capabilities,
+        capabilityDelta: overlaid.capabilityDelta,
         approvalRequired: rec.approvalRequired, approvalState: rec.state,
         inheritedFrom: rec.inheritedFrom,
       });
