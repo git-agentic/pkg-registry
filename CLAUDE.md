@@ -61,6 +61,12 @@ dry-run replay over stored history (ADR-0033). Violations are recorded
 integrity-keyed and quarantine is a **serve-time overlay** that never mutates the
 cached score; auto-quarantine is opt-in (`SENTINEL_AUTO_QUARANTINE=1`, requires
 auth configured, else startup FATAL) — default is record-only (ADR-0023/0040).
+A second serve-time overlay, `releaseCooldown?: { hours, exempt }` (policy
+data, `packages/core/src/policy.ts`, ADR-0050), holds freshly-published
+versions for a configured window; fail-closed on a missing/unparseable
+publish time, `matchPackage`-exempt bypasses, no wall-clock in the engine
+(the proxy injects `now` via `ServerOptions.now`), overlaid across the
+tarball gate, `/-/audit`, `/-/explain`, `/-/audit-tree`, and `/-/manifest`.
 Opt-in Ed25519 role-token auth gates the mutating routes; reads stay open
 (ADR-0025). Opt-in `node:sqlite` history DB + `/-/metrics`, `/-/history`,
 `/-/violations/timeline` (ADR-0028). Outbound tarball fetches are pinned to the

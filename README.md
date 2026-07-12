@@ -755,11 +755,50 @@ run, no baseline/previous version is required, and no advisory feed or known
 indicator list is consulted. See
 [ADR-0049](./docs/adr/0049-native-payload-loader-detection.md).
 
+## Release cooldown (Phase 35)
+
+The same jscrambler incident published all five malicious versions within
+hours of each other — a cheap, shape-independent mitigant for that pattern is
+simply holding freshly-published versions for a window, giving the ecosystem
+time to catch and pull a bad release before it reaches an installer. This is
+signed **policy data**, not an environment variable, so it's configured in
+the enterprise policy alongside weights and thresholds:
+
+```yaml
+# sentinel-policy.yaml
+releaseCooldown:
+  hours: 72          # hold any version published less than 72h ago
+  exempt:
+    - "@my-org/*"     # narrow: fast-moving internal packages only
+```
+
+- **Fail-closed by default.** A version inside the cooldown window is served
+  a `block` verdict, regardless of its score — and so is any version whose
+  publish time can't be resolved or parsed at all, so an attacker can't
+  defeat the cooldown by omitting the timestamp.
+- **`exempt` is a real hole, kept narrow on purpose.** Anything matching an
+  exempt glob (`matchPackage`, the same anchored-glob matcher
+  `privateNamespaces` uses) bypasses the window from the moment it's
+  published — useful for a fast emergency-fix release, but a standing risk
+  decision per entry. Prefer specific package names or a tight internal
+  namespace over a broad wildcard.
+- **`SENTINEL_POLICY=block` vs `observe`.** Under `block` (non-default), a
+  cooldown-held version 403s at the tarball route exactly like any other
+  blocked verdict. Under `observe` (default), the held verdict is reported
+  everywhere — headers, `/-/audit`, `/-/explain`, `/-/audit-tree`,
+  `/-/manifest` — but the tarball is still served, same as any other
+  observe-mode block reason.
+- **Serve-time overlay, like quarantine** — no wall-clock read happens
+  inside the scoring engine; the cached audit score is never mutated, and a
+  request past the window re-derives `allow` from the same unchanged report.
+
+See [ADR-0050](./docs/adr/0050-release-cooldown-overlay.md).
+
 ## Phase log
 
 The build history lives in the [ADR index](./docs/adr/README.md) — one decision
-record per phase, from the auditing-proxy wedge (ADR-0001) through native-payload-
-loader detection (ADR-0049). See [ARCHITECTURE.md](./ARCHITECTURE.md) for the
+record per phase, from the auditing-proxy wedge (ADR-0001) through the
+release-cooldown overlay (ADR-0050). See [ARCHITECTURE.md](./ARCHITECTURE.md) for the
 current design as a whole; the old narrative phase log is archived in
 [docs/archive/](./docs/archive/).
 

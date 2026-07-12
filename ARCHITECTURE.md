@@ -408,6 +408,50 @@ turning on token auth. ADR-0040 supersedes only ADR-0023's auto-quarantine
 default; sensing, classification, the deny-set non-drift guarantee, and the
 serve-time overlay are as described above.
 
+### 3.11a Release-cooldown overlay (Phase 35, ADR-0050)
+
+A second, independent serve-time overlay holds freshly-published versions:
+`EnterprisePolicy.releaseCooldown?: { hours: number; exempt?: string[] }`
+(`packages/core/src/policy.ts`), validated fail-closed by `parsePolicy`
+(`hours` finite in `(0, 8760]`; `exempt` a string array). Like quarantine,
+**this is a serve-time overlay, never a core rule** — there is no wall-clock
+read anywhere in `@sentinel/core`; `runRules`/`score` stay pure, so invariant
+#1 (deterministic scoring) is unaffected. The decision lives entirely in the
+proxy (`packages/proxy/src/cooldown.ts`): `resolvePublishTime` picks the
+authoritative publish timestamp for the resolution origin — the public
+packument's `time[version]` for an unclaimed name, `PrivatePackageStore`'s
+`StoredVersion.publishedAt` for a claimed one (never the public packument's
+attacker-writable time map, mirroring invariant #7) — `cooldownDecision`
+compares it against an **injected** clock (`ServerOptions.now`, default
+`Date.now`, threaded through so tests can assert transitions
+deterministically) to decide block/allow, and `applyCooldown` — the same
+shallow-copy-with-prepended-finding shape as `applyQuarantine` — returns a
+new `AuditReport` with `verdict: "block"` when the window hasn't elapsed,
+or the input unchanged otherwise. The cached `AuditReport` in `AuditStore`
+is never mutated.
+
+Fail-closed on missing or unparseable data: a matching, non-exempt package
+with no resolvable publish time or an unparseable one is **blocked**, not
+allowed through — a cooldown an attacker could defeat by omitting the
+timestamp would be worse than none. `cd.exempt` is evaluated with the same
+anchored-glob `matchPackage` used for `privateNamespaces`; a package matching
+an exempt pattern bypasses the window entirely from the moment it's
+published — a deliberate hole for fast remediation releases, and one that
+should be kept narrow since it weakens a time-based control per-entry.
+
+Unlike quarantine (tarball gate + `audit-tree` only), the cooldown overlay is
+applied everywhere a verdict is served or reported, so no read surface can
+report `allow` for a coordinate the tarball gate is about to block: the
+tarball serve gate (composed with quarantine —
+`applyCooldown(applyQuarantine(report), cooldown)`), `GET /-/audit`,
+`GET /-/explain` (overlaid *before* `remediate()` runs), `POST /-/audit-tree`
+per-row, and `GET /-/manifest`. Under `SENTINEL_POLICY=block` a
+cooldown-forced verdict 403s at the tarball route like any other block;
+under `observe` (default) it's reported but still served, the same as any
+other overlaid block reason. `releaseCooldown` is policy data, not an
+environment variable — it's signed per-enterprise config, consistent with
+every other scoring/verdict knob in `DEFAULT_POLICY`.
+
 ### 3.12 Control-plane auth (Phase 12, ADR-0025)
 
 Phases 2–11 left every mutating control-plane endpoint unauthenticated;

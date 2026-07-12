@@ -128,6 +128,12 @@ Design bundle for the proxy → first-class registry evolution
 |-----|-------|----------------------|
 | [0049](./0049-native-payload-loader-detection.md) | Native-payload-loader detection | Raw-byte magic classification (`content-mismatch`) + a dataflow-correlated `native-payload-loader` rule critically flag a disguised packaged-payload materialization-and-execution chain, independent of lifecycle scripts |
 
+## Phase 35 — release-cooldown overlay (Accepted, implemented)
+
+| ADR | Title | Decision in one line |
+|-----|-------|----------------------|
+| [0050](./0050-release-cooldown-overlay.md) | Release-cooldown overlay | Policy-data `releaseCooldown` (`hours` + `exempt` globs) holds freshly-published versions via a serve-time proxy overlay (no core wall-clock, cached score untouched); per-origin publish-time source; fail-closed on missing/unparseable time; overlaid across the tarball gate, `/-/audit`, `/-/explain`, `/-/audit-tree`, `/-/manifest` |
+
 ## Conventions
 
 - One decision per record; number sequentially; never renumber.
