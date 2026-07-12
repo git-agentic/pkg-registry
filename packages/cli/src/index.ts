@@ -531,7 +531,7 @@ program
     const r = sandbox.runArgv(command, args, { cwd, approved, homeDir: homedir(), env, projectRoot: cwd });
     if (r.stdout) process.stdout.write(r.stdout);
     if (r.stderr) process.stderr.write(r.stderr);
-    process.exit(r.exitCode);
+    process.exitCode = r.exitCode;
   });
 
 if (process.argv[1]?.endsWith("index.ts") || process.argv[1]?.endsWith("index.js")) program.parseAsync();

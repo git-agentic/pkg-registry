@@ -17,4 +17,11 @@ describe("sentinel exec", { skip: !darwin }, () => {
   test("exits non-zero when the sandboxed command fails", async () => {
     await assert.rejects(pexec("node", [CLI, "exec", "--", "/usr/bin/false"]));
   });
+  test("does not truncate large stdout when piped to a downstream reader", async () => {
+    const { stdout } = await pexec("/bin/sh", [
+      "-c",
+      `node ${CLI} exec -- node -e "process.stdout.write('x'.repeat(2000000))" | wc -c`,
+    ]);
+    assert.equal(Number(stdout.trim()), 2000000);
+  });
 });
