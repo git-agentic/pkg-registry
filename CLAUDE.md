@@ -94,11 +94,14 @@ advisory-only on both platforms by decision. The sandbox is also a sensor:
 reported best-effort to `POST /-/violations` — a swallowed denial evades
 telemetry, not containment (ADR-0023). Enforced installs run every lifecycle
 script under the sandbox via `npm_config_script_shell` interposition
-(`sentinel install --enforce`, ADR-0019).
+(`sentinel install --enforce`, ADR-0019). `runArgv` (no-shell, execFile-style,
+shared profile/deny-set/telemetry with `run`) backs `sentinel exec`, extending
+containment to Sentinel-mediated command execution — imports/`npx` run
+outside `exec` remain uncontained (ADR-0051).
 
 **CLI / CI / MCP** — `sentinel` CLI: `audit-tree`, `explain`, `stats`/`history`,
 `policy init|validate|preview|keygen|sign|verify`, `attest-keygen`/`attest`/
-`verify-attestation`, `run-scripts`, `install --enforce`. `@sentinel/action`
+`verify-attestation`, `run-scripts`, `install --enforce`, `exec`. `@sentinel/action`
 (bin `sentinel-ci`) self-boots the proxy in-process for CI, writes SBOM +
 GitHub-native outputs, idempotent PR comment (ADR-0030). `sentinel-mcp` exposes
 read tools plus a single write tool that only ever *requests* approval — a human

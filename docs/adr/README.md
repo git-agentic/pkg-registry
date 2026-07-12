@@ -134,6 +134,12 @@ Design bundle for the proxy → first-class registry evolution
 |-----|-------|----------------------|
 | [0050](./0050-release-cooldown-overlay.md) | Release-cooldown overlay | Policy-data `releaseCooldown` (`hours` + `exempt` globs) holds freshly-published versions via a serve-time proxy overlay (no core wall-clock, cached score untouched); per-origin publish-time source; fail-closed on missing/unparseable time; overlaid across the tarball gate, `/-/audit`, `/-/explain`, `/-/audit-tree`, `/-/manifest` |
 
+## Phase 36 — sandboxed exec (Accepted, implemented)
+
+| ADR | Title | Decision in one line |
+|-----|-------|----------------------|
+| [0051](./0051-sandboxed-exec.md) | Sandboxed `sentinel exec` | `Sandbox.runArgv` (no-shell, execFile-style) + `sentinel exec -- <cmd>` reuse the approved-capability model, scrubbed env, and violation telemetry to contain Sentinel-mediated command execution; scoped to explicit invocations only — raw `require()`/`npx` outside it stay uncontained, defense-in-depth behind the ADR-0049 registry gate |
+
 ## Conventions
 
 - One decision per record; number sequentially; never renumber.

@@ -135,6 +135,7 @@ sentinel audit-tree [lockfile]   audit an entire resolved tree (npm/yarn/pnpm); 
   --omit <type>                    omit a dependency group (only 'dev' is supported)
 sentinel install [args…]         npm install routed through the proxy
 sentinel npx     [args…]         npx routed through the proxy
+sentinel exec [--approve <cap...>] -- <command> [args...]   run one command under the sandbox (no shell)
 sentinel violations              list runtime violations recorded by the proxy (quarantined builds)
 sentinel stats                    durable audit/violation metrics (requires SENTINEL_HISTORY_DB on the proxy)
 sentinel history [--verdict --name --limit]   list recorded audits (requires SENTINEL_HISTORY_DB)
@@ -308,6 +309,39 @@ a true subcommand impractical). See
   (ADR-0043, ADR-0044).
 
 A denied credential read surfaces as a confirmed runtime violation on Seatbelt (EPERM); on bubblewrap the read is *contained* (a `--tmpfs` mask yields `ENOENT`) but not classified — an accepted telemetry asymmetry (ADR-0023). Both backends contain; only the telemetry differs.
+
+### `sentinel exec` (Phase 36, ADR-0051)
+
+```
+sentinel exec [--approve <cap...>] -- <command> [args...]
+```
+
+Runs one command under the same sandbox enforced installs use —
+`createSandbox()` picks Seatbelt/bubblewrap, `--approve kind:target` approves
+capabilities via the same parser `run-scripts`/`install --enforce` use
+(`network:host`, `process:curl`, `env:NAME`, `filesystem:/path`), the
+environment is scrubbed fail-closed the same way, and `cwd`/`projectRoot` are
+both the current directory. The command runs **without a shell**
+(`execFile`-style — `Sandbox.runArgv`, not `run`'s `/bin/sh -c`), so argument
+boundaries are preserved exactly as given after `--`. Exit code and
+stdout/stderr are passed through; the exit code is set via `process.exitCode`
+(not `process.exit()`) so buffered output finishes draining before the
+process exits, avoiding truncation of piped output.
+
+```bash
+sentinel exec -- node -e "console.log(1)"
+sentinel exec --approve network:api.example.com -- node fetch-thing.js
+```
+
+**Scope limitation, stated plainly:** `sentinel exec` protects only
+Sentinel-mediated execution — the exact command run through this CLI. A raw
+`require()`/`import` performed outside `sentinel exec`, and `npx foo` run
+directly (not through this command), are **not** contained. This is
+defense-in-depth *behind* the registry-gate static detection (rules,
+magic-byte classification, `native-payload-loader`, ADR-0049), which is the
+primary and independently-sufficient control — a package that should be
+blocked is blocked at audit time regardless of whether anything downstream is
+sandboxed. See [ADR-0051](./docs/adr/0051-sandboxed-exec.md).
 
 ### Runtime violation telemetry (Phase 10)
 
