@@ -1,0 +1,9 @@
+# Fixture package/ trees legitimately contain a dist/ directory as fixture
+# content (not build output) — the root .gitignore's blanket `dist/` rule would
+# otherwise swallow it, so un-ignore dist/ dirs under fixtures/ here.
+!**/dist/
+
+# ...except the generated disguised-container asset materialized by
+# make-fixtures from a committed *.asset family descriptor: it is regenerated
+# at build time, so only the descriptor (*.asset) + manifest are committed.
+**/dist/intro.js

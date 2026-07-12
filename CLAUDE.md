@@ -146,6 +146,13 @@ enforcement is tested with benign probe packages.
   `npm run fixtures` after editing fixtures.
 - Tests must stay hermetic: use `LocalFixtureUpstream`, never hit live npm in
   `npm test`.
+- **Signature assets** (files that must begin with real magic bytes to exercise
+  content classification) cannot carry an in-band `SYNTHETIC FIXTURE` text header.
+  They are inert raw data — magic header + zero filler — generated at build time
+  by `scripts/make-fixtures.ts` from a committed `*.asset` family descriptor, and
+  marked **out-of-band** by an adjacent `SYNTHETIC-FIXTURE.txt` manifest. The
+  materialized binary (e.g. `dist/intro.js`) is gitignored; only the descriptor +
+  manifest are committed. These assets contain no runnable payload.
 
 ## Stack & versions (July 2026)
 

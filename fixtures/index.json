@@ -103,6 +103,10 @@
       "versions": {
         "1.0.0": { "signature": "valid", "provenance": false, "time": "2025-03-01T00:00:00.000Z", "maintainers": ["newdev"] }
       }
-    }
+    },
+    "payload-loader-preinstall": { "class": "malicious", "expect": { "1.0.0": "block" }, "versions": { "1.0.0": { "signature": "valid", "provenance": false } } },
+    "payload-loader-entry": { "class": "malicious", "expect": { "1.0.0": "block" }, "versions": { "1.0.0": { "signature": "valid", "provenance": false } } },
+    "payload-loader-bin": { "class": "malicious", "expect": { "1.0.0": "block" }, "versions": { "1.0.0": { "signature": "valid", "provenance": false } } },
+    "loader-lookalike": { "class": "benign", "expect": { "verdict": "allow" }, "versions": { "1.0.0": { "signature": "valid", "provenance": false } } }
   }
 }

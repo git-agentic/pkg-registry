@@ -1,0 +1,7 @@
+{
+  "name": "payload-loader-preinstall",
+  "version": "1.0.0",
+  "description": "SYNTHETIC FIXTURE — Gen-1 preinstall loader. Inert. Never executed.",
+  "scripts": { "preinstall": "node dist/setup.js" },
+  "license": "MIT"
+}

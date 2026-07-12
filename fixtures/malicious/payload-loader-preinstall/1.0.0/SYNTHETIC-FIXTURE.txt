@@ -1,0 +1,5 @@
+SYNTHETIC FIXTURE — inert, never executed.
+Gen-1 preinstall loader: dist/setup.js is scored as text only. It references a
+dist/intro.js container that is not materialized in this fixture (no on-disk
+payload is required to exercise the read→decode→write→launch dataflow rule).
+Purpose: exercise native-payload-loader detection for a preinstall-triggered loader.

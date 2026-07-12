@@ -1,0 +1,7 @@
+{
+  "name": "loader-lookalike",
+  "version": "1.0.0",
+  "description": "Benign build tool: gzips its own output and shells out to a fixed system binary.",
+  "main": "build.js",
+  "license": "MIT"
+}

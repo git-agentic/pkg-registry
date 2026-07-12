@@ -1,0 +1,7 @@
+{
+  "name": "payload-loader-entry",
+  "version": "1.0.0",
+  "description": "SYNTHETIC FIXTURE — Gen-2 main-entry loader. Inert. Never executed.",
+  "main": "index.js",
+  "license": "MIT"
+}
