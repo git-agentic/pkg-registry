@@ -129,6 +129,43 @@ describe("private serve routing", () => {
 });
 
 describe("Phase 30 packument source isolation", () => {
+  test("legacy uppercase public names remain transparent on packument and tarball GETs", async () => {
+    ensure();
+    const tgz = readFileSync(join(FIXTURES, ".tarballs", "leftpad-lite-1.0.1.tgz"));
+    const calls: string[] = [];
+    const upstream: Upstream = {
+      name: "legacy-uppercase",
+      async getPackument(name) {
+        calls.push(`packument:${name}`);
+        return {
+          doc: {
+            name,
+            "dist-tags": { latest: "1.0.0" },
+            versions: { "1.0.0": { name, version: "1.0.0", dist: { tarball: `https://registry.example/${name}-1.0.0.tgz` } } },
+          },
+          versions: { "1.0.0": { version: "1.0.0", author: null, maintainers: [], license: null,
+            signatures: null, hasProvenance: false, integrity: null, hasInstallScripts: false } },
+        };
+      },
+      async getTarball(name) { calls.push(`tarball:${name}`); return tgz; },
+      async getAttestations() { return null; },
+    };
+    const app = createServer({ upstream, store: new AuditStore(), approvals: new ApprovalStore(),
+      privateStore: new PrivatePackageStore(), enterprisePolicy: policy([]), policy: "observe",
+      violations: new ViolationStore(), approvalRequests: new ApprovalRequestStore() });
+    const server = await new Promise<Server>((resolve) => { const s = app.listen(0, () => resolve(s)); });
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    try {
+      const packument = await fetch(`${base}/JSONStream`);
+      assert.equal(packument.status, 200);
+      assert.equal((await packument.json()).name, "JSONStream");
+      const tarball = await fetch(`${base}/JSONStream/-/JSONStream-1.0.0.tgz`);
+      assert.equal(tarball.status, 200);
+      assert.ok(calls.includes("packument:JSONStream"));
+      assert.ok(calls.includes("tarball:JSONStream"));
+    } finally { server.close(); }
+  });
+
   test("native source never merges upstream versions or tarball URLs", async () => {
     ensure();
     const tgz = readFileSync(join(FIXTURES, ".tarballs", "leftpad-lite-1.0.1.tgz"));

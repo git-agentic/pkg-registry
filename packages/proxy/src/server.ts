@@ -44,6 +44,7 @@ import {
   EMPTY_CLAIM_CORPUS,
   isNativeSource,
   normalizePackageName,
+  normalizeRegistryReadName,
   source,
   validateClaimCorpus,
   type ClaimCorpus,
@@ -204,7 +205,7 @@ export function createServer(opts: ServerOptions) {
     version: string,
     providedTarball?: Buffer,
   ): Promise<{ report: AuditReport; tarball: Buffer }> {
-    pkg = normalizePackageName(pkg);
+    pkg = normalizeRegistryReadName(pkg);
     // Native names are authoritative — NEVER consult public upstream.
     if (isNativeName(pkg)) {
       const cachedAudit = privateStore.getAudit(pkg, version);
@@ -768,7 +769,7 @@ export function createServer(opts: ServerOptions) {
     const tar = TARBALL_RE.exec(path);
     if (tar) {
       let pkg: string;
-      try { pkg = normalizePackageName(tar[1] ?? ""); }
+      try { pkg = normalizeRegistryReadName(tar[1] ?? ""); }
       catch (err) { return res.status(400).json({ error: (err as Error).message }); }
       const version = versionFromFilename(pkg, tar[2] ?? "");
       if (!version) return res.status(400).json({ error: "cannot parse version from tarball name" });
@@ -784,7 +785,7 @@ export function createServer(opts: ServerOptions) {
 
     // Packument
     try {
-      const name = normalizePackageName(path);
+      const name = normalizeRegistryReadName(path);
       const base = baseUrlFor(req, publicBaseUrl);
       if (isNativeName(name)) {
         const pm = privateStore.packument(name);

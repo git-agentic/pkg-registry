@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { DEFAULT_POLICY, type EnterprisePolicy } from "@sentinel/core";
-import { EMPTY_CLAIM_CORPUS, normalizePackageName, source, validateClaimCorpus, type ClaimCorpus } from "../src/resolution.js";
+import {
+  EMPTY_CLAIM_CORPUS,
+  normalizePackageName,
+  normalizeRegistryReadName,
+  source,
+  validateClaimCorpus,
+  type ClaimCorpus,
+} from "../src/resolution.js";
 
 function policy(privateNamespaces: string[]): EnterprisePolicy {
   return { ...DEFAULT_POLICY, privateNamespaces };
@@ -52,5 +59,11 @@ describe("deterministic registry source selection", () => {
     assert.throws(() => normalizePackageName(" pkg"), /invalid package name/);
     assert.throws(() => validateClaimCorpus({ claims: [{ namespace: "pkg*" }] }), /claim corpus/);
     assert.doesNotThrow(() => validateClaimCorpus({ claims: [{ namespace: "@acme/*" }, { namespace: "pkg" }] }));
+  });
+
+  test("legacy uppercase spelling is read-only compatibility, not valid for publication", () => {
+    assert.equal(normalizeRegistryReadName("JSONStream"), "JSONStream");
+    assert.throws(() => normalizePackageName("JSONStream"), /invalid package name/);
+    assert.throws(() => normalizeRegistryReadName("../JSONStream"), /invalid package name/);
   });
 });

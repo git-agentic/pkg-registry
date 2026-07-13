@@ -8,7 +8,8 @@ import { fileURLToPath } from "node:url";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
-import { c as createTar, x as extractTar } from "tar";
+import { gzipSync } from "node:zlib";
+import { c as createTar, r as replaceTar, x as extractTar } from "tar";
 import { createServer } from "../src/server.js";
 import { AuditStore } from "../src/store.js";
 import { ApprovalStore } from "../src/approvals.js";
@@ -40,6 +41,22 @@ function bindPackageIdentity(tgz: Buffer, name: string, version: string): Buffer
     writeFileSync(manifestPath, JSON.stringify({ ...manifest, name, version }));
     createTar({ cwd: extracted, file: output, gzip: true, sync: true }, ["package"]);
     return readFileSync(output);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function duplicateManifestTarball(name: string, version: string): Buffer {
+  const dir = mkdtempSync(join(tmpdir(), "sentinel-publish-duplicate-manifest-"));
+  const manifestPath = join(dir, "package", "package.json");
+  const archive = join(dir, "package.tar");
+  try {
+    mkdirSync(dirname(manifestPath), { recursive: true });
+    writeFileSync(manifestPath, JSON.stringify({ name, version }));
+    createTar({ cwd: dir, file: archive, sync: true }, ["package/package.json"]);
+    writeFileSync(manifestPath, JSON.stringify({ name: "attacker-decoy", version: "9.9.9" }));
+    replaceTar({ cwd: dir, file: archive, sync: true }, ["package/package.json"]);
+    return gzipSync(readFileSync(archive));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -132,6 +149,19 @@ describe("publish route (PUT /:pkg)", () => {
     assert.equal(res.status, 400);
     assert.match((await res.json()).error, /does not match publish target/);
     assert.equal(priv.has("@acme/tarball-mismatch"), false);
+  });
+
+  test("400 when the tarball contains duplicate package manifests", async () => {
+    const name = "@acme/duplicate-manifest";
+    const version = "1.0.0";
+    const res = await put(
+      name,
+      publishPayload(name, version, duplicateManifestTarball(name, version), false),
+      { authorization: "Bearer tok-1" },
+    );
+    assert.equal(res.status, 400);
+    assert.match((await res.json()).error, /duplicate package\/package\.json/);
+    assert.equal(priv.has(name), false);
   });
 });
 

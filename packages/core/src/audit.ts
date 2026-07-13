@@ -118,6 +118,9 @@ export async function runAudit(input: AuditTarballInput): Promise<Audit> {
   // not replace that complete report with a secondary "missing manifest" parse
   // error caused by the intentionally-truncated extraction.
   if (input.requirePackageManifest && !extracted.truncated) {
+    if (extracted.packageManifestEntryCount > 1) {
+      throw new Error("malformed npm tarball: duplicate package/package.json entries");
+    }
     const file = extracted.files.find((f) => f.path === "package/package.json");
     if (!file) throw new Error("malformed npm tarball: missing readable package/package.json");
     let manifest: { name?: unknown; version?: unknown };
