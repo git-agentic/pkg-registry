@@ -478,8 +478,9 @@ mechanism (ADR-0047). Successful native tarball serves count toward adoption;
 SQLite deduplicates a repeated coordinate within one `npm-session`, while
 headerless requests count individually. Residuals: churn-griefing of young
 releases is an annoyance the advisory trail makes visible but does not prevent;
-an unauthenticated downloader can deliberately exhaust the download window and
-freeze a release into immutability (a denial of maintainer control, never a
+an unauthenticated downloader — including a hostile or compromised publisher
+self-inflating through anonymous fetches — can deliberately exhaust the download
+window and freeze a release into immutability (a denial of maintainer control, never a
 substitution or availability bypass); and the window means Sentinel **cannot** serve as a takedown mechanism for
 widely-adopted content — legal takedowns are an operator/steward process
 outside this design, recorded as a boundary, not a gap.

@@ -366,8 +366,9 @@ export function createServer(opts: ServerOptions) {
       engine: { version: report.engine.version, rules: report.engine.rules, mode: report.engine.mode },
       auditedAt: report.auditedAt, durationMs: report.durationMs,
     });
-    // A security retraction is an authoritative unavailability fact and remains
-    // fail-closed even where the numeric high-severity weight would only warn.
+    // A security retraction blocks by default even where its numeric weight would
+    // only warn. An explicit policy waiver may relax the audit verdict; availability
+    // remains fail-closed because the tarball path returns 410 independently below.
     const scoredRetraction = rescored.findings.find((candidate) =>
       candidate.ruleId === "known-advisory" && candidate.message.includes(advisory.id));
     const overlaid = scoredRetraction?.waived
