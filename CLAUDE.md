@@ -137,7 +137,9 @@ enforcement is tested with benign probe packages.
 8. **Native-payload loader chains are critically flagged independent of
    lifecycle scripts, baseline, or known indicators.** Sentinel must critically
    flag a **dataflow-correlated** packaged-payload materialization-and-execution
-   chain in any scanned package code, independent of lifecycle scripts, baseline
+   chain — its correlation established by require/import **binding-resolved**
+   primitives, **lexically-scoped** (kill-on-reassign) taint, and a
+   **package-relative READ origin** — independent of lifecycle scripts, baseline
    availability, advisories, filenames, or known indicators; and separately
    expose raw-content/extension mismatches for every file, including oversized
    ones (ADR-0049).

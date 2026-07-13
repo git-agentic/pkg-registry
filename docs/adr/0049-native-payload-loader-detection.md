@@ -169,10 +169,15 @@ keeping the byte-level facts in one place (extraction) and the rule pure.
 ## New non-negotiable invariant
 
 > Sentinel must critically flag a **dataflow-correlated** packaged-payload
-> materialization-and-execution chain in any scanned package code, independent of
-> lifecycle scripts, baseline availability, advisories, filenames, or known
-> indicators; and separately expose raw-content/extension mismatches for every
-> file, including oversized ones.
+> materialization-and-execution chain — its correlation established by
+> require/import **binding-resolved** primitives, **lexically-scoped**
+> (kill-on-reassign) taint, and a **package-relative READ origin** —
+> independent of lifecycle scripts, baseline availability, advisories,
+> filenames, or known indicators; and separately expose raw-content/extension
+> mismatches for every file, including oversized ones.
+>
+> (Tightened by the v2 remediation below — see "Residual evasions (v2
+> scope)" for what this invariant does not claim to cover.)
 
 ## Consequences
 
@@ -237,3 +242,118 @@ ADR-0041 is not modified beyond a one-line pointer to this ADR.
 - **Presentation-level dedup** between `native-payload-loader` and
   `install-scripts` findings that cite the same file — noted above as a
   separate design, not introduced here.
+
+## v2 remediation (2026-07-13)
+
+A sharp adversarial review of the merged v1 analyzer (`packages/core/src/detect/loader-chain.ts`)
+found it was **name-based and unscoped**: primitives were recognized by the
+callee's final property name alone (any `obj.readFileSync()` counted as a
+READ), taint was keyed by bare identifier spelling globally (surviving
+shadowing and reassignment), and *every* file read seeded payload taint
+regardless of where the path came from. That produced both false positives
+(a decode on unrelated data satisfied "correlation") and false negatives
+(literal/`path.join(...)` write paths, base64 payloads, and native-`require`
+loaders all evaded the v1 chain). Full remediation contract:
+[`docs/superpowers/specs/2026-07-13-loader-chain-analyzer-v2-remediation.md`](../superpowers/specs/2026-07-13-loader-chain-analyzer-v2-remediation.md).
+
+### What v2 changed
+
+- **Binding tracking.** `require`/`import` bindings are resolved to the
+  actual Node module and function they refer to (`fs`, `zlib`,
+  `child_process`, `path`, destructured members, aliases, and
+  `promisify`-wrapped forms). A call is a recognized primitive only when its
+  callee resolves to a tracked module function — an arbitrary
+  `obj.readFileSync()` on an untracked object is not a primitive at all.
+- **Lexically-scoped taint with kill-on-reassign.** Taint tags are stored per
+  lexical binding, not per identifier string. A reassignment **replaces**
+  the variable's tag set (a `decoded` var reassigned from an untainted read
+  becomes `read`, never both), and taint does not leak into a shadowing
+  inner-scope declaration of the same name.
+- **Package-relative READ origin (the keystone).** A READ only originates
+  packaged-payload taint when its path argument is package-relative —
+  `__dirname`/`__filename`, `require.resolve(...)`, a relative string
+  literal, or `path.join(__dirname, ...)`. A read of an absolute path, an
+  external variable, or a CLI-supplied path does not seed taint, however far
+  downstream it's decoded/written/launched. This constraint at the source is
+  what lets the rest of the chain (write-path ↔ launch matching) be liberal
+  without reintroducing false criticals.
+- **Structural write-path ↔ launch matching.** The written path is tracked
+  either as a tainted identifier or as a structurally-recorded path
+  expression, and a launch is `correlated` when its target is the same
+  identifier or a structurally-equal expression (bounded recursive equality
+  over Identifier/Literal/MemberExpression/CallExpression/TemplateLiteral) —
+  covering both the `const out = ...; write(out, bin); spawn(out)` shape and
+  the inline-repeat `write(path.join(tmpdir(),'x'), bin);
+  spawn(path.join(tmpdir(),'x'))` shape.
+- **Additional forms.** DECODE now also recognizes `Buffer.from(<tainted>,
+  'base64')` / `atob(...)`, and promisified/`await`ed `zlib` functions
+  (`promisify(zlib.gunzip)`, `zlib.promises.gunzip`) matched by resolved
+  function binding rather than the `await` wrapper syntax. LAUNCH now also
+  recognizes native `require(<writtenPath>)` and
+  `process.dlopen(_, <writtenPath>)` when the referenced path carries
+  written-path taint, and `require()` of a non-JS packaged asset counts as
+  a combined READ+LAUNCH of that asset.
+- **READ↔asset booster link.** The content-mismatch booster in
+  `native-payload-loader.ts` now fires only when the loader's own READ
+  target resolves to a file with a content-mismatch observation, not when a
+  mismatch exists anywhere in the package.
+
+These are genuine detection improvements over the v1 analyzer described in
+Deliverable B above; the acceptance criteria (benign false-positive controls
+and malicious evasion-closure fixtures) are enumerated in the remediation
+spec linked above.
+
+### Correction to Deliverable B
+
+Deliverable B's DECODE list above includes "a read past a known magic-header
+offset" as a decode signal. **This was not carried into the shipped v2
+detector** — `classifyCall`/`MODULE_FNS` in `loader-chain.ts` recognize only
+`zlib` decompression functions, `Buffer.from(<tainted>, 'base64')`, and
+`atob(...)`. Header-offset byte reads as a decode step are not implemented.
+This is not left as a silent gap — see the residual-evasions list below,
+where it is documented as an accepted, known limitation of v2's scope.
+
+### Residual evasions (v2 scope)
+
+Static "does this materialize-and-execute a payload" is undecidable in
+general. v2 sets the bar at *correct within a stated scope*, documented
+honestly, rather than chasing full generality. The following forms are
+**known and accepted** as not correlated to `critical` by v2 — they are not
+silent gaps:
+
+- **Header-offset byte reads used as the decode step.** A loader that reads
+  raw bytes and manually skips past a magic-header offset to locate the
+  payload (rather than calling a recognized `zlib`/base64 decode primitive)
+  is not recognized as a DECODE stage. (This is the form removed from
+  Deliverable B above — never implemented, now explicitly out of scope.)
+- **Semantically-equal but non-structurally-equal write/launch paths.** A
+  loader that computes the write path one way and an equivalent-but-
+  differently-shaped expression at launch (e.g. via an intermediate helper
+  function, a different `path` call sequence that resolves to the same
+  string, or string concatenation vs. `path.join`) will not satisfy
+  `structEq` and so will not correlate, even though the two paths are the
+  same file at runtime.
+- **Cross-file / bundler-split loader chains.** The analyzer runs per-file;
+  a chain whose READ lives in one module and whose LAUNCH lives in another
+  (with the payload passed across an import boundary) is not connected.
+  Deferred above as a future per-package aggregation over the existing
+  per-file primitive representation.
+- **Dataflow laundered through arbitrary higher-order functions.** Taint
+  propagation understands direct assignment, declaration, and a fixed
+  passthrough-method allowlist (`subarray`/`slice`/`toString`/`valueOf`/
+  `at`) — not arbitrary function calls. A loader that routes tainted data
+  through a user-defined helper (`function id(x) { return x; }`) or a
+  generic higher-order combinator loses the taint at that call.
+- **Stream-`pipe()` loaders.** `createReadStream().pipe(createGunzip()).pipe(createWriteStream())`
+  is not modeled — the analyzer's DECODE/WRITE recognition is call-based
+  (function-call primitives with argument dataflow), not stream-topology-based.
+
+These residual forms are not undetected entirely: they still surface as
+lower-severity primitives/boosters (e.g. an unlinked READ+WRITE+LAUNCH still
+caps at `high`, a partial chain at `medium`), and they are covered
+defense-in-depth by other layers independent of this rule — the install-time
+capability sandbox (deny-by-default writes/exec, `@sentinel/sandbox`) and the
+known-advisory/known-vulnerability static corpora, per the
+non-negotiable-invariant framing above ("independent of... known
+indicators" describes what this *rule* does not depend on, not a claim that
+no other layer exists).

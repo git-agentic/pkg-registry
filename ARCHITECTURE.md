@@ -1320,7 +1320,12 @@ Phase 34 adds a tenth rule (§3.25, ADR-0049):
 10. **`native-payload-loader`** (`install-script` category) — an AST-based
     (acorn) rule that flags a **dataflow-correlated** chain of *read a
     packaged file → decode it → write the decoded material to disk → launch
-    the written file*. `critical` only when the values/paths are actually
+    the written file*. Correlation is established via require/import
+    **binding-resolved** primitives (not name-matching), **lexically-scoped**
+    taint (kill-on-reassign, no shadow leakage), and a **package-relative
+    READ origin** (`__dirname`, `require.resolve`, a relative literal, or
+    `path.join(__dirname, …)` — an absolute/external/CLI-arg read does not
+    seed taint). `critical` only when the values/paths are actually
     linked (aliases and simple assignments followed); `high` when all four
     stages are present but unlinked, or on the regex parse-failure fallback
     (TS/JSX, which acorn can't parse); `medium` for a partial chain. Boosters
