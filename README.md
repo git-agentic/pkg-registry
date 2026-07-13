@@ -108,6 +108,9 @@ node packages/cli/dist/index.js install lodash
 | `SENTINEL_STORE` | _(memory only)_ | path to a JSON file to persist the audit log |
 | `SENTINEL_PRIVATE_STORE` | _(memory only)_ | directory for authoritative native tarballs + metadata; each version commits atomically |
 | `SENTINEL_PUBLISH_TOKENS` | _(unset ⇒ publishing disabled in open-auth mode)_ | comma-separated legacy bearer tokens accepted by `PUT /:pkg`; with role auth enabled, a `publisher` token is required instead |
+| `SENTINEL_CLAIM_CORPUS_FILE` | _(verified empty corpus)_ | versioned claim-corpus JSON; when set, `SENTINEL_CLAIM_CORPUS_PUBKEY` is required and any read/schema/signature failure is fatal |
+| `SENTINEL_CLAIM_CORPUS_SIG` | `<corpus-file>.sig` | detached Ed25519 signature over the exact corpus bytes |
+| `SENTINEL_CLAIM_CORPUS_PUBKEY` | _(required with corpus file)_ | pinned steward public-key PEM |
 | `SENTINEL_VIOLATIONS` | _(memory only)_ | path to a JSON file to persist runtime-violation records (quarantine state) |
 | `SENTINEL_AUTO_QUARANTINE` | _(unset ⇒ record-only)_ | set to exactly `1` (any other value is treated as off) to let a confirmed runtime-violation report quarantine its integrity (force `block` at serve time); requires `SENTINEL_AUTH_PUBKEY` to also be set — a fatal error at startup otherwise, so auto-quarantine is only ever attributable to an authenticated caller (ADR-0040) |
 | `SENTINEL_APPROVAL_REQUESTS` | _(memory only)_ | path to a JSON file to persist pending approval requests (MCP `sentinel_request_approval` and any other caller) |
@@ -127,16 +130,16 @@ node packages/cli/dist/index.js install lodash
 | `SENTINEL_MAX_UNPACKED_BYTES` | `1 GiB` | cap on total decompressed bytes when extracting a tarball's contents; over-cap aborts extraction mid-stream and the current tarball's audit gets a critical `resource-abuse` finding (BLOCK) |
 | `SENTINEL_MAX_FILE_COUNT` | `100000` | cap on the number of files unpacked from a tarball; over-cap aborts extraction mid-stream the same way as the byte cap |
 
-## Authoritative registry write path (Phase 30)
+## Authoritative registry and verified claims (Phases 30–31)
 
 Every package name resolves to one source class through the pure function
 `source(name, signedPolicy, claimCorpus)`: `policy-private`, then
 `verified-claim`, then `public-mirror`, first match wins. Native and mirrored
 version maps, dist-tags, and tarball URLs are never merged. A native name with
-no publication returns 404 and never touches public npm. The executable starts
-with an empty claim corpus, so signed-policy `privateNamespaces` provide the
-complete publish path today; Phase 31's signed corpus loader and steward service
-are not implemented.
+no publication returns 404 and never touches public npm. With no corpus file the
+executable uses an explicit empty corpus; otherwise it verifies the detached
+Ed25519 signature and strict corpus schema before listening. Every report and
+tree result identifies the active corpus version/hash beside the policy hash.
 
 Add `"privateNamespaces": ["@acme/*"]` and `"publishGate": "block"` to a
 full policy created by `sentinel policy init`, sign it, then publish with npm:
@@ -153,17 +156,34 @@ npm publish --registry http://localhost:4873 \
 `publishGate` is `allow | warn | block`; a report at or above the configured
 level is rejected, and omission defaults to `block`. `PUT /:pkg` authenticates
 before its 64 MiB body parser, accepts one npm version + one canonical-base64
-attachment, audits synchronously with no LLM or external request in the
+tarball and an optional npm `.sigstore` attachment, audits synchronously with no LLM or external request in the
 decision, and exposes bytes only after an atomic tarball+metadata commit.
 Unclaimed names return 403 with no storage or audit side effects. A gated
 response is `{ error, package, report }` with the complete `AuditReport`.
 Malformed archives, extraction-limit findings, scanner errors, and persistence
 errors all fail closed.
 
-Programmatic embedders may pass `claimCorpus: { claims: [{ namespace:
-"@scope/*" }, { namespace: "exact-unscoped" }] }` to `createServer`. Phase 30
-assumes these entries were already verified; this is not Phase 31's signed
-distribution or ownership-verification flow.
+Claim entries carry their namespace, organizational domain, passed DNS challenge,
+renewal deadline, lifecycle status, and optional trusted-publisher identities.
+Frozen/disputed claims keep serving stored bytes but reject new publishes;
+trusted-publisher claims require a matching offline-verified SLSA identity.
+
+Run the separate steward control plane with durable state and a corpus-signing
+key (all four variables are required):
+
+```bash
+SENTINEL_STEWARD_TOKEN=operator-secret \
+SENTINEL_STEWARD_STATE=./steward/state.json \
+SENTINEL_CLAIM_CORPUS_PRIVATE_KEY=./steward/private.pem \
+SENTINEL_CLAIM_CORPUS_RELEASE_DIR=./steward/release \
+npm run steward
+```
+
+The authenticated `/-/claims/*` API issues and verifies exact-apex DNS TXT
+challenges, approves the three grandfather tiers, tracks renewal/freeze, announces
+transfers/dispute rulings for 30 days, and atomically writes `claims.json` plus
+`claims.json.sig`. Point the proxy's three claim-corpus variables at that release
+and the corresponding pinned public key.
 
 ## CLI
 

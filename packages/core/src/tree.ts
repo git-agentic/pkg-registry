@@ -38,6 +38,8 @@ export interface TreeAuditResult {
   packages: TreePackageRow[];
   /** Hash of the policy the tree was scored under (Phase 19 attestation); set by the proxy route. */
   policyHash?: string;
+  /** Verified claim-corpus identity used for source partitioning (Phase 31). */
+  claimCorpus?: { version: string; hash: string };
 }
 
 const VERDICT_RANK: Record<Verdict, number> = { allow: 0, warn: 1, block: 2 };

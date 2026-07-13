@@ -385,15 +385,15 @@ Stated plainly. Each is a deliberate, recorded trade-off, not an oversight.
 
 ## 6. Registry write path and future registry controls
 
-> Phase 30 / ADR-0045 is implemented. Sections explicitly labeled Phase 31,
-> 32, or 33 remain proposed design and are not shipped.
+> Phases 30–31 / ADR-0045–0046 are implemented. Sections explicitly labeled
+> Phase 32 or 33 remain proposed design and are not shipped.
 
 Accepting writes adds attacker goals a read-only proxy never faced. The
 implemented load-bearing property is a name-level
 partition — `source(name)` is a pure function of the signed policy and the
 claim-corpus input, ordered policy-private → verified-claim → public-mirror,
-with no per-version merging (ADR-0045). Phase 30 defaults that corpus empty;
-Phase 31 will add signed loading and steward semantics. Most of the new surface concentrates
+with no per-version merging (ADR-0045). Phase 31 adds signed loading and steward
+semantics while retaining an explicit empty default. Most of the new surface concentrates
 on the *inputs* to that function and on the write path itself.
 
 ### 6.1 Publisher-credential and trusted-publisher takeover
@@ -415,7 +415,7 @@ and provenance that *validly* attests a compromised CI run — the TanStack
 May-2026 pattern; the design treats OIDC as publish-auth precisely because it
 cannot prove more than build origin.
 
-### 6.2 Steward and signed claim-corpus compromise (Phase 31 — proposed)
+### 6.2 Steward and signed claim-corpus compromise (Phase 31 — implemented)
 
 The claim corpus is signed, versioned, distributed offline, and verified
 fail-closed at boot (ADR-0046) — so *tampering* in distribution is detected,
@@ -434,7 +434,7 @@ existing one. Residual, stated plainly: the steward is a deliberate trust
 chokepoint — corpus-key compromise is in the same catastrophic class as
 policy-key compromise, and the timelock is the detection window.
 
-### 6.3 Claim forgery (Phase 31 — proposed)
+### 6.3 Claim forgery (Phase 31 — implemented)
 
 An attacker attempts to acquire a claim they are not entitled to: a lookalike
 domain (`tanstack-js.dev`, homograph variants) passes its own DNS TXT
@@ -480,9 +480,8 @@ attacker-supplied higher version on the attacker-writable side — is
 **inexpressible** under the partition rule: no packument ever unions native
 and upstream versions, so there is no race for a resolver to lose
 (ADR-0045). The attack therefore moves to changing `source(name)` itself.
-The policy input is signed fail-closed (ADR-0012/0014). Phase 30's supplied
-claim data is an embedding trust input; Phase 31's signed distribution and
-steward controls in §6.2 are not shipped yet. Another future path is
+The policy input is signed fail-closed (ADR-0012/0014). Phase 31's claim data
+is a signature-verified trust input with the steward controls in §6.2. Another future path is
 **mode-revert resurrection** (Phase 33) — disabling registry mode flips
 previously-claimed names back to public-mirror, handing their resolution to
 whatever squats them upstream. Phase 33 proposes making that flip loud rather than

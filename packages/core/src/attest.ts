@@ -11,6 +11,7 @@ const PAYLOAD_TYPE = "application/vnd.in-toto+json";
 export interface AuditPredicate {
   verifier: { name: string; version: string };
   policyHash: string | null;
+  claimCorpus: { version: string; hash: string } | null;
   verdict: Verdict;
   gated: boolean;
   counts: { allow: number; warn: number; block: number; error: number };
@@ -57,6 +58,7 @@ export function buildAuditStatement(tree: TreeAuditResult, opts: { sbomDigest: s
     predicate: {
       verifier: { name: "sentinel", version: ENGINE_VERSION },
       policyHash: tree.policyHash ?? null,
+      claimCorpus: tree.claimCorpus ?? null,
       verdict: a.verdict,
       gated: a.gated,
       counts: { allow: a.counts.allow, warn: a.counts.warn, block: a.counts.block, error: a.counts.error },

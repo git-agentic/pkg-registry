@@ -14,9 +14,18 @@ function policy(privateNamespaces: string[]): EnterprisePolicy {
   return { ...DEFAULT_POLICY, privateNamespaces };
 }
 
+function corpus(namespaces: string[]): ClaimCorpus {
+  return {
+    schema: 1, version: "test", issuedAt: "2026-07-02T00:00:00.000Z",
+    claims: namespaces.map((namespace, i) => ({ namespace, domain: `org${i}.example`, status: "active",
+      challenge: { method: "dns-txt", id: `c-${i}`, verifiedAt: "2026-07-01T00:00:00.000Z" },
+      renewalDueAt: "2027-07-01T00:00:00.000Z" })),
+  };
+}
+
 describe("deterministic registry source selection", () => {
   test("precedence is policy-private → verified-claim → public-mirror", () => {
-    const claims: ClaimCorpus = { claims: [{ namespace: "@both/*" }, { namespace: "claimed-name" }] };
+    const claims = corpus(["@both/*", "claimed-name"]);
     assert.equal(source("@both/pkg", policy(["@both/*"]), claims), "policy-private");
     assert.equal(source("claimed-name", policy([]), claims), "verified-claim");
     assert.equal(source("unclaimed", policy([]), claims), "public-mirror");
@@ -29,11 +38,19 @@ describe("deterministic registry source selection", () => {
 
   test("source selection is repeatable and does not mutate its inputs", () => {
     const p = policy(["@local/*"]);
-    const corpus: ClaimCorpus = { claims: [{ namespace: "@global/*" }] };
-    const before = JSON.stringify({ p, corpus });
-    const results = Array.from({ length: 100 }, () => source("@global/pkg", p, corpus));
+    const claims = corpus(["@global/*"]);
+    const before = JSON.stringify({ p, claims });
+    const results = Array.from({ length: 100 }, () => source("@global/pkg", p, claims));
     assert.deepEqual(new Set(results), new Set(["verified-claim"]));
-    assert.equal(JSON.stringify({ p, corpus }), before);
+    assert.equal(JSON.stringify({ p, claims }), before);
+  });
+
+  test("freeze or dispute never changes source selection or falls through", () => {
+    for (const status of ["frozen", "disputed"] as const) {
+      const claims = corpus(["claimed-name"]);
+      const lifecycleCorpus: ClaimCorpus = { ...claims, claims: claims.claims.map((claim) => ({ ...claim, status })) };
+      assert.equal(source("claimed-name", policy([]), lifecycleCorpus), "verified-claim");
+    }
   });
 
   test("generated policy/claim/name combinations obey first-match precedence", () => {
@@ -47,7 +64,7 @@ describe("deterministic registry source selection", () => {
       const policyMatch = (next() & 1) === 1;
       const claimMatch = (next() & 1) === 1;
       const privateNamespaces = policyMatch ? [name.includes("/") ? `${name.split("/")[0]}/*` : name] : ["@other/*"];
-      const claims: ClaimCorpus = { claims: claimMatch ? [{ namespace: name.includes("/") ? `${name.split("/")[0]}/*` : name }] : [{ namespace: "other-name" }] };
+      const claims = corpus(claimMatch ? [name.includes("/") ? `${name.split("/")[0]}/*` : name] : ["other-name"]);
       const expected = policyMatch ? "policy-private" : claimMatch ? "verified-claim" : "public-mirror";
       assert.equal(source(name, policy(privateNamespaces), claims), expected, `case ${i}: ${name}`);
     }
@@ -57,8 +74,8 @@ describe("deterministic registry source selection", () => {
     assert.equal(normalizePackageName("@acme/pkg"), "@acme/pkg");
     assert.throws(() => normalizePackageName("@acme/../pkg"), /invalid package name/);
     assert.throws(() => normalizePackageName(" pkg"), /invalid package name/);
-    assert.throws(() => validateClaimCorpus({ claims: [{ namespace: "pkg*" }] }), /claim corpus/);
-    assert.doesNotThrow(() => validateClaimCorpus({ claims: [{ namespace: "@acme/*" }, { namespace: "pkg" }] }));
+    assert.throws(() => validateClaimCorpus(corpus(["pkg*"])), /claim corpus/);
+    assert.doesNotThrow(() => validateClaimCorpus(corpus(["@acme/*", "pkg"])));
   });
 
   test("legacy uppercase spelling is read-only compatibility, not valid for publication", () => {

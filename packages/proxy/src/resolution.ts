@@ -1,25 +1,20 @@
-import { matchPackage, type EnterprisePolicy } from "@sentinel/core";
+import {
+  EMPTY_CLAIM_CORPUS,
+  matchPackage,
+  parseClaimCorpus,
+  type ClaimCorpus,
+  type EnterprisePolicy,
+  type ProvenanceIdentity,
+  type VerifiedClaim,
+} from "@sentinel/core";
+
+export { EMPTY_CLAIM_CORPUS } from "@sentinel/core";
+export type { ClaimCorpus, VerifiedClaim } from "@sentinel/core";
 
 export type RegistrySource = "policy-private" | "verified-claim" | "public-mirror";
 
-/**
- * Phase 30 consumes already-verified claim data. Signature verification,
- * issuance, lifecycle, and corpus loading belong to Phase 31 (ADR-0046).
- */
-export interface VerifiedClaim {
-  /** `@scope/*` or an exact unscoped package name (ADR-0045 claim grammar). */
-  namespace: string;
-}
-
-export interface ClaimCorpus {
-  claims: readonly VerifiedClaim[];
-}
-
-export const EMPTY_CLAIM_CORPUS: ClaimCorpus = Object.freeze({ claims: Object.freeze([]) });
-
 const UNSCOPED_PACKAGE_NAME_RE = /^[a-z0-9][a-z0-9._~-]*$/;
 const SCOPED_PACKAGE_NAME_RE = /^@[a-z0-9][a-z0-9._~-]*\/[a-z0-9][a-z0-9._~-]*$/;
-const SCOPED_CLAIM_RE = /^@[a-z0-9][a-z0-9._~-]*\/\*$/;
 const LEGACY_UNSCOPED_PACKAGE_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._~-]*$/;
 const LEGACY_SCOPED_PACKAGE_NAME_RE = /^@[A-Za-z0-9][A-Za-z0-9._~-]*\/[A-Za-z0-9][A-Za-z0-9._~-]*$/;
 
@@ -47,13 +42,7 @@ export function normalizeRegistryReadName(input: string): string {
 }
 
 export function validateClaimCorpus(corpus: ClaimCorpus): void {
-  if (!corpus || !Array.isArray(corpus.claims)) throw new Error("invalid claim corpus: claims must be an array");
-  for (let i = 0; i < corpus.claims.length; i++) {
-    const namespace = corpus.claims[i]?.namespace;
-    if (typeof namespace !== "string" || (!SCOPED_CLAIM_RE.test(namespace) && !UNSCOPED_PACKAGE_NAME_RE.test(namespace))) {
-      throw new Error(`invalid claim corpus: claims[${i}].namespace must be @scope/* or an exact unscoped name`);
-    }
-  }
+  parseClaimCorpus(Buffer.from(JSON.stringify(corpus)));
 }
 
 /** Pure, name-level source partition. Store contents and upstream state are deliberately absent. */
@@ -61,6 +50,22 @@ export function source(name: string, signedPolicy: EnterprisePolicy, claimCorpus
   if ((signedPolicy.privateNamespaces ?? []).some((pattern) => matchPackage(pattern, name))) return "policy-private";
   if (claimCorpus.claims.some((claim) => matchPackage(claim.namespace, name))) return "verified-claim";
   return "public-mirror";
+}
+
+/** The verified claim governing a name, independent of its lifecycle state. */
+export function claimForPackage(name: string, claimCorpus: ClaimCorpus): VerifiedClaim | undefined {
+  return claimCorpus.claims.find((claim) => matchPackage(claim.namespace, name));
+}
+
+/** Match a verified SLSA identity against any trusted-publisher enrollment on a claim. */
+export function trustedPublisherAuthorized(claim: VerifiedClaim, identity: ProvenanceIdentity | null | undefined): boolean {
+  if (!identity || !claim.trustedPublishers?.length) return false;
+  return claim.trustedPublishers.some((publisher) =>
+    publisher.issuer === identity.issuer &&
+    (publisher.repository === undefined || (identity.sourceRepository !== null && matchPackage(publisher.repository, identity.sourceRepository))) &&
+    (publisher.workflowRef === undefined || (identity.workflow !== null && matchPackage(publisher.workflowRef, identity.workflow))) &&
+    (publisher.builder === undefined || (identity.builder !== null && matchPackage(publisher.builder, identity.builder)))
+  );
 }
 
 export function isNativeSource(value: RegistrySource): boolean {

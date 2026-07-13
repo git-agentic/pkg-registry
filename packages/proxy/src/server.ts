@@ -5,6 +5,7 @@ import {
   score,
   POLICY_SYNTHESIZED_RULE_IDS,
   policyHashOf,
+  claimCorpusHashOfBytes,
   integrityOf,
   integrityOfAlgo,
   aggregateTree,
@@ -42,10 +43,12 @@ import { PrivatePackageStore, PublicationConflictError } from "./private-store.j
 import { parsePublishBody, publishTokenValid } from "./private.js";
 import {
   EMPTY_CLAIM_CORPUS,
+  claimForPackage,
   isNativeSource,
   normalizePackageName,
   normalizeRegistryReadName,
   source,
+  trustedPublisherAuthorized,
   validateClaimCorpus,
   type ClaimCorpus,
 } from "./resolution.js";
@@ -72,8 +75,10 @@ export interface ServerOptions {
   publicDir?: string;
   /** Authoritative store for published private packages (ADR-0010). */
   privateStore: PrivatePackageStore;
-  /** Already-verified offline claim data. Empty by default; verification/loading ships in Phase 31. */
+  /** Verified offline claim data. The executable loads this from signed bytes; embedders supply parsed data. */
   claimCorpus?: ClaimCorpus;
+  /** Hash of the verified raw corpus bytes; canonical in-memory hash for embedders. */
+  claimCorpusHash?: string;
   /** Valid bearer tokens for publishing; empty ⇒ publishing disabled. */
   publishTokens?: string[];
   /** Trusted npm registry signing keys (default: bundled npm keys). */
@@ -161,6 +166,7 @@ export function createServer(opts: ServerOptions) {
   const privateStore = opts.privateStore;
   const claimCorpus = opts.claimCorpus ?? EMPTY_CLAIM_CORPUS;
   validateClaimCorpus(claimCorpus);
+  const claimCorpusHash = opts.claimCorpusHash ?? claimCorpusHashOfBytes(Buffer.from(JSON.stringify(claimCorpus)));
   const publishTokens = opts.publishTokens ?? [];
   const signingKeys = opts.signingKeys ?? NPM_SIGNING_KEYS;
   const advisories = opts.advisories;
@@ -182,6 +188,12 @@ export function createServer(opts: ServerOptions) {
 
   const registrySource = (name: string) => source(name, enterprisePolicy, claimCorpus);
   const isNativeName = (name: string) => isNativeSource(registrySource(name));
+  const withClaimCorpus = (report: AuditReport): AuditReport => ({
+    ...report,
+    policy: { ...report.policy, claimCorpus: { version: claimCorpus.version, hash: claimCorpusHash } },
+  });
+  const scoreAudit = (audit: Audit, activePolicy = enterprisePolicy, activePolicyHash = policyHash): AuditReport =>
+    withClaimCorpus(score(audit, activePolicy, activePolicyHash));
 
   const rateLimiter = opts.rateLimiter;
   const rateGate: express.RequestHandler = rateLimiter
@@ -211,7 +223,7 @@ export function createServer(opts: ServerOptions) {
       const cachedAudit = privateStore.getAudit(pkg, version);
       const tarball = privateStore.getTarball(pkg, version);
       if (!cachedAudit || !tarball) throw new HttpError(404, `private package not found ${pkg}@${version}`);
-      const report = score(cachedAudit, enterprisePolicy, policyHash);
+      const report = scoreAudit(cachedAudit);
       store.put(report); // populate verdict store so /-/approvals can find the integrity
       return { report, tarball };
     }
@@ -242,7 +254,7 @@ export function createServer(opts: ServerOptions) {
     const actualIntegrity = integrityOf(tarball);
 
     const cached = store.get(actualIntegrity);
-    if (cached) return { report: cached.report, tarball };
+    if (cached) return { report: withClaimCorpus(cached.report), tarball };
 
     const prev = previousVersion(Object.keys(pm.versions), version);
     const baselineTarball = prev ? await upstream.getTarball(pkg, prev) : undefined;
@@ -265,7 +277,7 @@ export function createServer(opts: ServerOptions) {
       attestations, signingKeys, trustMaterial: opts.trustMaterial,
       releaseContext, advisories, vulnerabilities, extractLimits,
     });
-    const report = score(audit, enterprisePolicy, policyHash);
+    const report = scoreAudit(audit);
     store.put(report);
     return { report, tarball };
   }
@@ -313,6 +325,7 @@ export function createServer(opts: ServerOptions) {
     res.setHeader("x-sentinel-capabilities", String(report.capabilities.length));
     res.setHeader("x-sentinel-approval", rec.state);
     res.setHeader("x-sentinel-policy", report.policy.version);
+    res.setHeader("x-sentinel-claim-corpus", report.policy.claimCorpus?.version ?? "empty");
     // legacy persisted audits may predate the provenance field
     res.setHeader("x-sentinel-provenance", report.meta.provenance ?? "unknown");
     if (isPrivate) res.setHeader("x-sentinel-private", "true");
@@ -460,7 +473,7 @@ export function createServer(opts: ServerOptions) {
         // findings already contain them from the original scoring, so strip before
         // the re-score or they double-count (a real weight for dep-confusion).
         const findings = report.findings.filter((f) => !POLICY_SYNTHESIZED_RULE_IDS.has(f.ruleId));
-        to = score({ ...report, findings } as unknown as Audit, candidate);
+        to = scoreAudit({ ...report, findings } as unknown as Audit, candidate, policyHashOf(candidate));
       } catch {
         continue; // skip an un-scoreable stored report (invariant #6)
       }
@@ -550,7 +563,10 @@ export function createServer(opts: ServerOptions) {
     for (const row of distinctRows) rowByKey.set(`${row.name}@${row.version}`, row);
     const rows: TreePackageRow[] = validCoords.map((co) => rowByKey.get(`${co.name}@${co.version}`)!);
     const aggregate = aggregateTree(rows, treeGateOf(enterprisePolicy), { failOnError });
-    const result: TreeAuditResult = { aggregate, packages: rows, policyHash };
+    const result: TreeAuditResult = {
+      aggregate, packages: rows, policyHash,
+      claimCorpus: { version: claimCorpus.version, hash: claimCorpusHash },
+    };
     res.json(result);
   });
 
@@ -671,7 +687,8 @@ export function createServer(opts: ServerOptions) {
   app.get("/-/private", (_req, res) => {
     res.json({
       claims: enterprisePolicy.privateNamespaces ?? [],
-      verifiedClaims: claimCorpus.claims.map((claim) => claim.namespace),
+      claimCorpus: { version: claimCorpus.version, hash: claimCorpusHash },
+      verifiedClaims: claimCorpus.claims.map((claim) => ({ namespace: claim.namespace, domain: claim.domain, status: claim.status })),
       packages: privateStore.names().map((name) => ({ name, versions: privateStore.versions(name) })),
     });
   });
@@ -695,6 +712,13 @@ export function createServer(opts: ServerOptions) {
       if (!isNativeSource(selectedSource)) {
         return res.status(403).json({ error: "claim required before publish", package: name });
       }
+      const verifiedClaim = selectedSource === "verified-claim" ? claimForPackage(name, claimCorpus) : undefined;
+      if (verifiedClaim?.status === "frozen") {
+        return res.status(423).json({ error: "verified claim is frozen; publication is disabled", code: "claim-frozen", package: name });
+      }
+      if (verifiedClaim?.status === "disputed") {
+        return res.status(423).json({ error: "verified claim is disputed; publication is disabled while contested", code: "claim-disputed", package: name });
+      }
       let parsed;
       try { parsed = parsePublishBody(name, req.body); }
       catch (err) { return res.status(400).json({ error: (err as Error).message, package: name }); }
@@ -710,8 +734,8 @@ export function createServer(opts: ServerOptions) {
       let audit: Audit;
       try {
         audit = await publishAudit({
-          meta, tarball: parsed.tarball, signatures: null, hasProvenance: false,
-          attestations: null, signingKeys, extractLimits,
+          meta, tarball: parsed.tarball, signatures: null, hasProvenance: parsed.attestations !== null,
+          attestations: parsed.attestations, signingKeys, trustMaterial: opts.trustMaterial, extractLimits,
           requirePackageManifest: { name, version: parsed.version },
           advisories, vulnerabilities,
         });
@@ -721,7 +745,16 @@ export function createServer(opts: ServerOptions) {
         }
         throw err; // scanner/internal failures remain fail-closed as 500
       }
-      const report = score(audit, enterprisePolicy, policyHash);
+      const report = scoreAudit(audit);
+      if (verifiedClaim?.trustedPublishers?.length &&
+          (audit.meta.provenance !== "verified" || !trustedPublisherAuthorized(verifiedClaim, audit.meta.provenanceIdentity))) {
+        return res.status(403).json({
+          error: "a matching verified trusted-publisher attestation is required",
+          code: "trusted-publisher-required",
+          package: `${name}@${parsed.version}`,
+          report,
+        });
+      }
       if (verdictAtOrAbove(report.verdict, publishGateOf(enterprisePolicy))) {
         return res.status(403).json({
           error: "publish blocked by Sentinel policy", package: `${name}@${parsed.version}`,

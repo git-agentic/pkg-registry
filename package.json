@@ -15,7 +15,8 @@
     "packages/sandbox",
     "packages/cli",
     "packages/mcp",
-    "packages/action"
+    "packages/action",
+    "packages/steward"
   ],
   "scripts": {
     "build": "tsc --build && node packages/sandbox/scripts/build-native.mjs",
@@ -27,6 +28,7 @@
     "proxy": "tsx packages/proxy/src/index.ts",
     "demo": "npm run fixtures && tsx scripts/demo.ts",
     "benchmark:publish": "tsx scripts/benchmark-publish.ts",
+    "steward": "tsx packages/steward/src/index.ts",
     "cli": "tsx packages/cli/src/index.ts",
     "pretest": "npm run fixtures"
   },

@@ -1,6 +1,6 @@
 # Sentinel registry roadmap — Phases 30–33
 
-**Status:** Phase 30 shipped; Phases 31–33 proposed
+**Status:** Phases 30–31 shipped; Phases 32–33 proposed
 **Date:** 2026-07-11
 
 This is the phased plan for Sentinel's evolution from a transparent auditing
@@ -94,9 +94,11 @@ dependency on the Phase 31 steward service.
 Evidence: `packages/proxy/test/resolution.test.ts`, `publish.test.ts`,
 `private-serve.test.ts`, `private-store.test.ts`, and
 `npm run benchmark:publish`. The Phase 30 corpus input is deliberately
-data-only and defaults empty; signed corpus loading remains Phase 31.
+data-only and defaults empty; Phase 31 subsequently added signed loading.
 
 ## Phase 31 — Verified namespace claiming
+
+**Status:** Complete (2026-07-13)
 
 **ADR:** [0046](../adr/0046-verified-namespace-claiming.md) ·
 **Depends on:** Phase 30 exit
@@ -109,7 +111,7 @@ and disputes ride 30-day timelocked corpus entries; grandfathering follows
 the three-tier issuance rule (corroborated auto-grant / evidence-gated /
 free).
 
-**Entry criteria:**
+**Entry criteria** (satisfied):
 - **The steward role + claim service exist operationally**: challenge
   issuance, TXT verification, renewal tracking, and signed corpus release —
   this is a new operational dependency, named here deliberately; the engine
@@ -118,7 +120,7 @@ free).
   (ADR-0012-class trust material).
 - Phase 30's exit criteria hold with a non-empty corpus substituted in.
 
-**Exit criteria:**
+**Exit criteria** (satisfied and pinned by tests):
 - A tampered or malformed claim corpus is a boot-time FATAL; the corpus
   version appears in audit provenance alongside `policyHash`.
 - No corpus entry exists without a passed challenge (claim-service pipeline
@@ -134,6 +136,13 @@ free).
   (upstream packument, claim domain), pinned by fixtures; a Tier-2
   (evidence-gated) grant cannot land without a timelocked corpus entry; an
   unclaimed name's resolution is byte-identical to passthrough.
+
+Evidence: `packages/core/test/claim-corpus.test.ts`,
+`packages/proxy/test/claim-corpus-startup.test.ts`,
+`packages/proxy/test/claim-lifecycle-e2e.test.ts`, and
+`packages/steward/test/steward.test.ts`. The proxy remains an offline consumer;
+the authenticated `@sentinel/steward` service owns DNS verification, durable
+renewal state, timelocked issuance changes, and signed release output.
 
 ## Phase 32 — Time-locked retraction
 

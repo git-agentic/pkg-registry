@@ -13,6 +13,10 @@ import {
   loadTrustMaterial,
   parseAdvisoriesStrict,
   parseVulnAdvisoriesStrict,
+  EMPTY_CLAIM_CORPUS,
+  claimCorpusHashOfBytes,
+  loadClaimCorpus,
+  type ClaimCorpus,
   type EnterprisePolicy,
   type ProvenanceTrustMaterial,
   type Advisory,
@@ -78,6 +82,28 @@ function resolveEnterprisePolicy(): { policy: EnterprisePolicy; hash: string } {
     return { policy, hash };
   } catch (err) {
     console.error(`FATAL: ${(err as Error).message}`);
+    process.exit(1);
+  }
+}
+
+function resolveClaimCorpus(): { corpus: ClaimCorpus; hash: string } {
+  const file = process.env.SENTINEL_CLAIM_CORPUS_FILE;
+  if (!file) {
+    const raw = Buffer.from(JSON.stringify(EMPTY_CLAIM_CORPUS));
+    return { corpus: EMPTY_CLAIM_CORPUS, hash: claimCorpusHashOfBytes(raw) };
+  }
+  const publicKeyPath = process.env.SENTINEL_CLAIM_CORPUS_PUBKEY;
+  if (!publicKeyPath) {
+    console.error("FATAL: SENTINEL_CLAIM_CORPUS_PUBKEY is required when SENTINEL_CLAIM_CORPUS_FILE is set");
+    process.exit(1);
+  }
+  const sig = process.env.SENTINEL_CLAIM_CORPUS_SIG ?? `${file}.sig`;
+  try {
+    const loaded = loadClaimCorpus({ file, sig, publicKeyPem: readFileSync(publicKeyPath, "utf8") });
+    console.log(`  claim corpus: signed ${loaded.corpus.version} (${loaded.hash.slice(0, 22)}…)`);
+    return loaded;
+  } catch (error) {
+    console.error(`FATAL: claim corpus: ${(error as Error).message}`);
     process.exit(1);
   }
 }
@@ -219,6 +245,7 @@ function main(): void {
   const rateLimiter = resolveRateLimiter();
   const upstream = buildUpstream(tarballOrigins, maxTarballBytes, maxPackumentBytes);
   const { policy: enterprisePolicy, hash: policyHash } = resolveEnterprisePolicy();
+  const { corpus: claimCorpus, hash: claimCorpusHash } = resolveClaimCorpus();
   const history = process.env.SENTINEL_HISTORY_DB ? new HistoryDb(process.env.SENTINEL_HISTORY_DB) : undefined;
   const store = new AuditStore(process.env.SENTINEL_STORE, policyHash, history);
   const approvals = new ApprovalStore(process.env.SENTINEL_APPROVALS);
@@ -234,13 +261,14 @@ function main(): void {
   const vulnerabilities = resolveVulnerabilities();
   const autoQuarantine = resolveAutoQuarantine(Boolean(authPublicKey));
 
-  const app = createServer({ upstream, store, approvals, enterprisePolicy, policyHash, policy, publicDir, privateStore, publishTokens, trustMaterial, violations, approvalRequests, authPublicKey, history, advisories, vulnerabilities, publicBaseUrl, maxTreePackages, rateLimiter, extractLimits, autoQuarantine });
+  const app = createServer({ upstream, store, approvals, enterprisePolicy, policyHash, policy, publicDir, privateStore, claimCorpus, claimCorpusHash, publishTokens, trustMaterial, violations, approvalRequests, authPublicKey, history, advisories, vulnerabilities, publicBaseUrl, maxTreePackages, rateLimiter, extractLimits, autoQuarantine });
   app.listen(port, () => {
     console.log(`Sentinel proxy listening on http://localhost:${port}`);
     console.log(`  upstream : ${upstream.name}`);
     console.log(`  tarball-origins: registry origin${tarballOrigins.length ? " + " + tarballOrigins.join(", ") : " only"}`);
     console.log(`  public-url: ${publicBaseUrl ?? "loopback-derived (set SENTINEL_PUBLIC_BASE_URL for network deployments)"}`);
     console.log(`  policy   : ${policy}  (observe = audit+serve, block = 403 on block verdict)`);
+    console.log(`  claims   : ${claimCorpus.version} (${claimCorpus.claims.length} verified namespace${claimCorpus.claims.length === 1 ? "" : "s"})`);
     console.log(`  trust    : ${trustMaterial === undefined ? "bundled Sigstore root" : "operator-supplied root"}`);
     console.log(`  auth     : ${authPublicKey ? "enabled (signed role tokens)" : "disabled (open control plane)"}`);
     console.log(`  limits   : tree ${maxTreePackages ?? 5000} pkgs, tarball ${(maxTarballBytes ?? 256 * 1024 * 1024)} B, packument ${(maxPackumentBytes ?? 128 * 1024 * 1024)} B, unpacked ${(maxUnpackedBytes ?? 1024 * 1024 * 1024)} B, files ${(maxFileCount ?? 100000)}`);

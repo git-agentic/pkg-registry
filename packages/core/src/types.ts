@@ -142,7 +142,7 @@ export interface AuditReport {
   auditedAt: string;
   durationMs: number;
   /** The policy under which this report was scored. */
-  policy: { version: string; hash: string };
+  policy: { version: string; hash: string; claimCorpus?: { version: string; hash: string } };
 }
 
 /** A single file extracted from a package tarball. */

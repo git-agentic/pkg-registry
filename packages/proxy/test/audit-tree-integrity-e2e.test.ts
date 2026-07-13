@@ -89,6 +89,8 @@ describe("audit-tree integrity cross-check + failOnError (e2e)", () => {
     const r = await tree(base, [{ name: "leftpad-lite", version: "1.0.0" }]);
     assert.equal(typeof r.policyHash, "string");
     assert.ok(r.policyHash!.length > 0);
+    assert.equal(r.claimCorpus.version, "empty");
+    assert.equal(typeof r.claimCorpus.hash, "string");
   });
 
   test("failOnError gates a tree containing an unresolvable package", async () => {

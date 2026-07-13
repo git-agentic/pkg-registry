@@ -10,6 +10,7 @@ import type { TreeAuditResult } from "../src/tree.js";
 
 const tree: TreeAuditResult = {
   policyHash: "policy-abc",
+  claimCorpus: { version: "claims-7", hash: "claims-hash" },
   aggregate: { verdict: "block", gated: true, counts: { allow: 1, warn: 0, block: 1, error: 0 }, provenance: { verified: 0, invalid: 0, absent: 2, unknown: 0 }, integrityMismatch: 0 },
   packages: [
     { name: "ok", version: "1.0.0", status: "allow", score: 100, topFinding: null, topFindingRuleId: null, error: null, provenance: "absent", integrityMismatch: false },
@@ -34,6 +35,7 @@ describe("attest", () => {
     if (r.valid) {
       assert.equal(r.predicate.verdict, "block");
       assert.equal(r.predicate.policyHash, "policy-abc");
+      assert.deepEqual(r.predicate.claimCorpus, { version: "claims-7", hash: "claims-hash" });
       assert.equal(r.statement.subject[0]!.digest.sha256, sbomDigest);
       assert.equal(r.statement.predicateType, SENTINEL_PREDICATE_TYPE);
     }

@@ -10,6 +10,8 @@ export interface ParsedPublish {
   manifest: Record<string, unknown>;
   tarball: Buffer;
   declaredIntegrity: string | undefined;
+  /** npm's optional publish-time Sigstore bundle, shaped for verifyProvenance(). */
+  attestations: { attestations: { bundle: unknown }[] } | null;
 }
 
 /**
@@ -28,10 +30,11 @@ export function parsePublishBody(name: string, body: unknown): ParsedPublish {
     throw new Error("publish payload _id/name must match the target package");
   }
   const attachments = b?._attachments ?? {};
-  const keys = Object.keys(attachments);
-  if (keys.length !== 1) throw new Error("publish payload must have exactly one _attachment");
-  const key = keys[0]!;
   const prefix = `${name}-`;
+  const keys = Object.keys(attachments);
+  const tarballKeys = keys.filter((key) => key.startsWith(prefix) && key.endsWith(".tgz"));
+  if (tarballKeys.length !== 1) throw new Error("publish payload must have exactly one tarball _attachment");
+  const key = tarballKeys[0]!;
   if (!key.startsWith(prefix) || !key.endsWith(".tgz")) {
     throw new Error(`unexpected attachment name ${key} for ${name}`);
   }
@@ -50,6 +53,22 @@ export function parsePublishBody(name: string, body: unknown): ParsedPublish {
   if (declaredLength !== undefined && declaredLength !== tarball.length) {
     throw new Error("publish attachment length does not match decoded bytes");
   }
+  const sigstoreKey = `${name}-${version}.sigstore`;
+  const unexpected = keys.filter((candidate) => candidate !== key && candidate !== sigstoreKey);
+  if (unexpected.length > 0) throw new Error(`unexpected publish attachment ${unexpected[0]}`);
+  let attestations: ParsedPublish["attestations"] = null;
+  const sigstore = attachments[sigstoreKey];
+  if (sigstore) {
+    if (typeof sigstore.data !== "string" || sigstore.data.length === 0) throw new Error("publish sigstore attachment has no JSON data");
+    if (sigstore.length !== undefined && sigstore.length !== Buffer.byteLength(sigstore.data)) {
+      throw new Error("publish sigstore attachment length does not match JSON bytes");
+    }
+    let bundle: unknown;
+    try { bundle = JSON.parse(sigstore.data); }
+    catch { throw new Error("publish sigstore attachment is not valid JSON"); }
+    if (!bundle || typeof bundle !== "object" || Array.isArray(bundle)) throw new Error("publish sigstore attachment must contain a bundle object");
+    attestations = { attestations: [{ bundle }] };
+  }
   const versions = b.versions ?? {};
   if (Object.keys(versions).length !== 1) throw new Error("publish payload must have exactly one version");
   const manifest = versions[version];
@@ -67,6 +86,7 @@ export function parsePublishBody(name: string, body: unknown): ParsedPublish {
     manifest,
     tarball,
     declaredIntegrity: dist?.integrity,
+    attestations,
   };
 }
 

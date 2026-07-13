@@ -27,6 +27,14 @@ function ensure() { if (!existsSync(join(FIXTURES, "registry.json")) || !existsS
 
 const policy = (ns: string[]): EnterprisePolicy => ({ ...DEFAULT_POLICY, privateNamespaces: ns });
 
+function verifiedCorpus(namespaces: string[]): ClaimCorpus {
+  return { schema: 1, version: "test", issuedAt: "2026-07-02T00:00:00.000Z", claims: namespaces.map((namespace, i) => ({
+    namespace, domain: `claim${i}.example`, status: "active",
+    challenge: { method: "dns-txt", id: `c-${i}`, verifiedAt: "2026-07-01T00:00:00.000Z" },
+    renewalDueAt: "2027-07-01T00:00:00.000Z",
+  })) };
+}
+
 function bindPackageIdentity(tgz: Buffer, name: string, version: string): Buffer {
   const dir = mkdtempSync(join(tmpdir(), "sentinel-publish-identity-"));
   const extracted = join(dir, "extracted");
@@ -201,7 +209,7 @@ describe("Phase 30 authoritative publish path", () => {
   }
 
   test("unclaimed publish returns 403 with zero storage or audit side effects", async () => {
-    const ctx = await boot({ enterprisePolicy: policy([]), claimCorpus: { claims: [] } });
+    const ctx = await boot({ enterprisePolicy: policy([]), claimCorpus: verifiedCorpus([]) });
     try {
       const res = await ctx.put("unclaimed", "1.0.0");
       assert.equal(res.status, 403);
@@ -211,7 +219,7 @@ describe("Phase 30 authoritative publish path", () => {
   });
 
   test("empty claim corpus still permits policy-private publishing", async () => {
-    const ctx = await boot({ claimCorpus: { claims: [] } });
+    const ctx = await boot({ claimCorpus: verifiedCorpus([]) });
     try {
       assert.equal((await ctx.put("@acme/empty-corpus", "1.0.0")).status, 201);
       assert.equal(ctx.privateStore.has("@acme/empty-corpus"), true);
@@ -219,7 +227,7 @@ describe("Phase 30 authoritative publish path", () => {
   });
 
   test("a supplied verified claim permits native publishing", async () => {
-    const ctx = await boot({ enterprisePolicy: policy([]), claimCorpus: { claims: [{ namespace: "claimed-name" }] } });
+    const ctx = await boot({ enterprisePolicy: policy([]), claimCorpus: verifiedCorpus(["claimed-name"]) });
     try {
       assert.equal((await ctx.put("claimed-name", "1.0.0")).status, 201);
       assert.equal(ctx.privateStore.has("claimed-name"), true);

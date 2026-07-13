@@ -1,0 +1,27 @@
+{
+  "cases": [
+    {
+      "name": "homepage links the challenged apex",
+      "domain": "acme.example",
+      "expected": true,
+      "packument": {
+        "name": "widget",
+        "homepage": "https://acme.example/projects/widget",
+        "repository": { "type": "git", "url": "git+https://github.com/acme/widget.git" },
+        "versions": { "1.0.0": { "name": "widget", "version": "1.0.0" } }
+      }
+    },
+    {
+      "name": "repository organization corroborates the domain label",
+      "domain": "tanstack.com",
+      "expected": true,
+      "packument": { "name": "@tanstack/query", "repository": "https://github.com/TanStack/query" }
+    },
+    {
+      "name": "unlinked active squatter does not corroborate the claimant",
+      "domain": "tanstack.com",
+      "expected": false,
+      "packument": { "name": "tanstack", "repository": "https://github.com/squatter/tanstack" }
+    }
+  ]
+}
