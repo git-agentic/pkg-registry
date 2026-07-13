@@ -185,11 +185,12 @@ describe("Phase 30 authoritative publish path", () => {
     maxPublishBytes?: number;
     extractLimits?: { maxUnpackedBytes?: number; maxFileCount?: number };
     publishAudit?: Parameters<typeof createServer>[0]["publishAudit"];
+    publishRateLimit?: { limit: number; windowMs: number };
   } = {}) {
     ensure();
     const privateStore = opts.privateStore ?? new PrivatePackageStore();
     const store = new AuditStore();
-    const app = createServer({
+    const serverOptions = {
       upstream: new LocalFixtureUpstream(FIXTURES), store,
       approvals: new ApprovalStore(), privateStore,
       enterprisePolicy: opts.enterprisePolicy ?? policy(["@acme/*"]),
@@ -197,7 +198,9 @@ describe("Phase 30 authoritative publish path", () => {
       violations: new ViolationStore(), approvalRequests: new ApprovalRequestStore(),
       maxPublishBytes: opts.maxPublishBytes, extractLimits: opts.extractLimits,
       publishAudit: opts.publishAudit,
-    });
+      publishRateLimit: opts.publishRateLimit,
+    };
+    const app = createServer(serverOptions);
     const server = await new Promise<Server>((resolve) => {
       const s = app.listen(0, () => resolve(s));
     });
@@ -235,6 +238,17 @@ describe("Phase 30 authoritative publish path", () => {
       assert.deepEqual(ctx.privateStore.getVersion("claimed-name", "1.0.0")?.claimAtPublication, {
         namespace: "claimed-name", domain: "claim0.example", claimantPublicKey: CLAIMANT_KEY,
       });
+    } finally { ctx.server.close(); }
+  });
+
+  test("publish is rate-limited even when the optional general limiter is absent", async () => {
+    const ctx = await boot({ enterprisePolicy: policy([]), claimCorpus: verifiedCorpus(["rate-limited"]),
+      publishRateLimit: { limit: 1, windowMs: 60_000 } });
+    try {
+      assert.equal((await ctx.put("rate-limited", "1.0.0")).status, 201);
+      const limited = await ctx.put("rate-limited", "1.0.1");
+      assert.equal(limited.status, 429);
+      assert.ok(Number(limited.headers.get("retry-after")) >= 1);
     } finally { ctx.server.close(); }
   });
 

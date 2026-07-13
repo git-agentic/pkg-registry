@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, test } from "node:test";
 import { generateKeypair, parseClaimCorpus, verifyClaimCorpusBytes } from "@sentinel/core";
@@ -148,7 +148,8 @@ describe("claim steward pipeline", () => {
   test("the authenticated control plane atomically publishes a version directory", async () => {
     const releaseDir = mkdtempSync(join(tmpdir(), "sentinel-steward-release-"));
     const signing = generateKeypair();
-    const app = createStewardServer({ steward: new ClaimSteward({ lookupUpstream: absent }), token: "operator-token",
+    const app = createStewardServer({ steward: new ClaimSteward({ lookupUpstream: absent,
+      now: () => Date.parse("2026-07-01T00:00:00.000Z") }), token: "operator-token",
       resolveTxt: async () => [], privateKeyPem: signing.privateKey, releaseDir });
     const server = await new Promise<Server>((resolve) => { const value = app.listen(0, () => resolve(value)); });
     const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -159,10 +160,31 @@ describe("claim steward pipeline", () => {
         headers: { "content-type": "application/json", authorization: "Bearer operator-token" },
         body: JSON.stringify({ version: "release-1" }) });
       assert.equal(response.status, 200);
-      assert.deepEqual(readdirSync(join(releaseDir, "release-1")).sort(), ["claims.json", "claims.json.sig"]);
+      const body = await response.json() as { releasePath: string };
+      assert.match(basename(body.releasePath), /^[a-f0-9]{64}$/);
+      assert.notEqual(basename(body.releasePath), "release-1");
+      assert.deepEqual(readdirSync(body.releasePath).sort(), ["claims.json", "claims.json.sig"]);
       assert.equal(existsSync(join(releaseDir, "claims.json")), false);
-      assert.equal(verifyClaimCorpusBytes(readFileSync(join(releaseDir, "release-1", "claims.json")),
-        readFileSync(join(releaseDir, "release-1", "claims.json.sig"), "utf8"), signing.publicKey), true);
+      assert.equal(verifyClaimCorpusBytes(readFileSync(join(body.releasePath, "claims.json")),
+        readFileSync(join(body.releasePath, "claims.json.sig"), "utf8"), signing.publicKey), true);
+    } finally { server.close(); }
+  });
+
+  test("the steward control plane rate-limits requests before authentication", async () => {
+    const signing = generateKeypair();
+    const serverOptions = { steward: new ClaimSteward({ lookupUpstream: absent }), token: "operator-token",
+      resolveTxt: async () => [], privateKeyPem: signing.privateKey,
+      controlRateLimit: { limit: 1, windowMs: 60_000 } };
+    const app = createStewardServer(serverOptions);
+    const server = await new Promise<Server>((resolve) => { const value = app.listen(0, () => resolve(value)); });
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/-/claims/releases`;
+    try {
+      const request = () => fetch(url, { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ version: "release-1" }) });
+      assert.equal((await request()).status, 401);
+      const limited = await request();
+      assert.equal(limited.status, 429);
+      assert.ok(Number(limited.headers.get("retry-after")) >= 1);
     } finally { server.close(); }
   });
 });

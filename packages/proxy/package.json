@@ -8,7 +8,8 @@
   "bin": { "sentinel-proxy": "./dist/index.js" },
   "dependencies": {
     "@sentinel/core": "0.1.0",
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.5.2"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",

@@ -1,7 +1,8 @@
-import { createHash, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import express, { type Request, type Response } from "express";
+import { rateLimit } from "express-rate-limit";
 import { ClaimSteward, type ClaimApplicationInput, type TxtResolver } from "./steward.js";
 
 export interface StewardServerOptions {
@@ -10,6 +11,8 @@ export interface StewardServerOptions {
   resolveTxt: TxtResolver;
   privateKeyPem: string;
   releaseDir?: string;
+  /** Mandatory control-plane limiter. Undefined ⇒ 120 requests per source per minute. */
+  controlRateLimit?: { limit: number; windowMs: number };
 }
 
 function digest(value: string): Buffer { return createHash("sha256").update(value).digest(); }
@@ -28,6 +31,13 @@ export function createStewardServer(options: StewardServerOptions) {
   if (!options.token) throw new Error("steward token must be configured");
   const app = express();
   app.disable("x-powered-by");
+  app.use(rateLimit({
+    windowMs: options.controlRateLimit?.windowMs ?? 60_000,
+    limit: options.controlRateLimit?.limit ?? 120,
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+    message: { error: "steward rate limit exceeded — retry later" },
+  }));
   app.use(express.json({ limit: "1mb" }));
   app.use((req, res, next) => {
     if (!bearerValid(req.headers.authorization, options.token)) return res.status(401).json({ error: "steward authentication required" });
@@ -91,7 +101,9 @@ export function createStewardServer(options: StewardServerOptions) {
       if (options.releaseDir) {
         mkdirSync(options.releaseDir, { recursive: true });
         const staging = mkdtempSync(join(options.releaseDir, ".release-"));
-        const finalDir = join(options.releaseDir, version);
+        // The signed corpus carries the operator-supplied version. Filesystem
+        // selection is intentionally independent of request data.
+        const finalDir = join(options.releaseDir, randomBytes(32).toString("hex"));
         try {
           writeFileSync(join(staging, "claims.json"), release.raw, { flag: "wx" });
           writeFileSync(join(staging, "claims.json.sig"), release.signature!, { flag: "wx" });

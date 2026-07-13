@@ -95,7 +95,9 @@ Tier-2 grants/transfers/dispute rulings, durable atomic state, and atomic
 directory-based Ed25519-signed corpus releases. DNS and issuance run only on the
 steward; proxy resolution and auditing remain offline. Native version metadata
 snapshots claim attribution at publication so later transfers never rewrite
-history.
+history. The steward control plane and proxy publish route have mandatory
+per-source rate-limit backstops; release directory names are generated
+independently of request data.
 
 **Sandbox (`@sentinel/sandbox`)** — `createSandbox()` selects Seatbelt (darwin)
 or bubblewrap (linux); one approved-capability model, fail-closed contract
@@ -231,8 +233,8 @@ a tool that guards against exactly that.
 
 ```bash
 npm run build            # tsc --build (project references) + the Linux-only native helper step
-npm test                 # hermetic engine + e2e proxy suite. 928 tests on this darwin host
-                         # as of 2026-07-13 (926 pass, 2 skipped) — but NEVER plan arithmetic
+npm test                 # hermetic engine + e2e proxy suite. 930 tests on this darwin host
+                         # as of 2026-07-13 (928 pass, 2 skipped) — but NEVER plan arithmetic
                          # on a written count; run npm test and use what it prints.
 npm run demo             # offline malware-detection walkthrough
 node packages/proxy/dist/index.js   # run the proxy (see README for env vars)

@@ -181,7 +181,10 @@ claimant key at publication, so an ownership change cannot re-attribute history.
 `@sentinel/steward` performs exact-apex DNS challenges, derives grandfather tiers
 from steward-fetched upstream evidence, verifies claimant-key transfer
 signatures, applies renewal/domain-change freezes, and atomically publishes
-versioned directories after 30-day announced changes (ADR-0046).
+versioned directories after 30-day announced changes (ADR-0046). Mandatory
+per-source rate-limit middleware protects both the steward control plane and
+proxy publish route. Release directory identifiers are generated independently
+of request data; the signed corpus remains the source of the release version.
 
 ### 3.6 Sandbox enforcement (Phases 3–5, ADR-0011/0016/0017/0018)
 

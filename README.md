@@ -183,8 +183,12 @@ npm run steward
 The authenticated `/-/claims/*` API issues and verifies exact-apex DNS TXT
 challenges, derives the grandfather tier from steward-fetched upstream metadata,
 tracks renewal/freeze, and announces signed transfers or dispute rulings for 30
-days. A release atomically publishes
-`<release-dir>/<version>/{claims.json,claims.json.sig}` as one directory. Point
+days. The steward control plane is always rate-limited before authentication;
+the proxy publish route has a separate mandatory 60-requests/minute backstop.
+A release atomically publishes
+`<release-dir>/<release-id>/{claims.json,claims.json.sig}` as one directory; the
+signed corpus inside carries the human release version, while the filesystem
+identifier is generated independently of request data. Point
 the proxy's corpus file/signature variables at that version directory and its
 public-key variable at the corresponding pinned key. Set
 `SENTINEL_STEWARD_REGISTRY` only when the steward should use an npm-compatible

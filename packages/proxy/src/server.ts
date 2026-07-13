@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
 import express, { type Request, type Response } from "express";
+import { rateLimit } from "express-rate-limit";
 import {
   runAudit,
   score,
@@ -103,6 +104,8 @@ export interface ServerOptions {
   maxTreePackages?: number;
   /** Opt-in per-source rate limiter for expensive open endpoints (ADR-0037). Undefined ⇒ unlimited. */
   rateLimiter?: RateLimiter;
+  /** Mandatory publish limiter. Undefined ⇒ 60 requests per source per minute. */
+  publishRateLimit?: { limit: number; windowMs: number };
   /** Opt-in auto-quarantine on confirmed violations (ADR-0040). Requires auth. Default off. */
   autoQuarantine?: boolean;
   /** Decompression-bomb extraction caps (ADR-0039). Undefined ⇒ core defaults. */
@@ -205,6 +208,13 @@ export function createServer(opts: ServerOptions) {
         return res.status(429).json({ error: "rate limit exceeded — retry later or raise SENTINEL_RATE_LIMIT_RPM" });
       }
     : (_req, _res, next) => next();
+  const publishRateGate = rateLimit({
+    windowMs: opts.publishRateLimit?.windowMs ?? 60_000,
+    limit: opts.publishRateLimit?.limit ?? 60,
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+    message: { error: "publish rate limit exceeded — retry later" },
+  });
 
   // Transient concurrency dedupe: concurrent uncached public audits for the same
   // name@version share one pipeline. The integrity-keyed `store` stays the durable
@@ -703,7 +713,7 @@ export function createServer(opts: ServerOptions) {
   }
 
   const publishAuth = authz.enabled ? authz.requireRole(["publisher"]) : requirePublishAuth;
-  app.put(/^\/(.+)$/, rateGate, publishAuth, jsonPublish, async (req, res) => {
+  app.put(/^\/(.+)$/, publishRateGate, rateGate, publishAuth, jsonPublish, async (req, res) => {
     try {
       let name: string;
       try { name = normalizePackageName(decodeURIComponent(req.params[0] ?? "")); }

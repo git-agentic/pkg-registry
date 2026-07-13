@@ -436,6 +436,11 @@ existing one. Residual, stated plainly: the steward is a deliberate trust
 chokepoint — corpus-key compromise is in the same catastrophic class as
 policy-key compromise, and the timelock is the detection window.
 
+The steward control plane and proxy publish route apply mandatory per-source
+rate limits before expensive or authenticated work. Corpus release directories
+use generated identifiers rather than applicant- or operator-supplied path
+components; the human version is data inside the signed corpus.
+
 ### 6.3 Claim forgery (Phase 31 — implemented)
 
 An attacker attempts to acquire a claim they are not entitled to: a lookalike
