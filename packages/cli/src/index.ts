@@ -2,7 +2,7 @@
 import { Buffer } from "node:buffer";
 import { lstatSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, relative } from "node:path";
+import { join, relative, basename } from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { createHash, createPublicKey } from "node:crypto";
@@ -513,9 +513,19 @@ program
     console.log(`Ran ${results.length} lifecycle script(s) under enforcement; no denied capability needed.`);
   });
 
+/** Package managers refused by `sentinel exec` — running them would fetch packages from public
+ * npm, bypassing the Sentinel proxy gate entirely (the exact acquisition bypass the design
+ * forbids). Matched against the command's basename, stripped of directory and a .cmd/.exe
+ * suffix, lowercased — so /usr/local/bin/npm, npx.cmd, etc. are all caught. */
+const REFUSED_PACKAGE_MANAGERS = new Set(["npm", "npx", "yarn", "pnpm", "pnpx", "bun", "bunx"]);
+
+function commandBasename(command: string): string {
+  return basename(command).replace(/\.(cmd|exe)$/i, "").toLowerCase();
+}
+
 program
   .command("exec")
-  .description("Run a command under the Sentinel sandbox (no shell; args after -- are passed verbatim). Protects Sentinel-mediated execution only — a raw require()/import outside this command, or `npx foo` run directly, is NOT contained.")
+  .description("Run a command under the Sentinel sandbox (no shell; args after -- are passed verbatim). Protects Sentinel-mediated execution only — a raw require()/import outside this command is NOT contained. Package managers (npm/npx/yarn/pnpm/...) are refused — use `sentinel install` / `sentinel npx` instead, which route resolution through the proxy.")
   .option("--approve <cap...>", "capabilities to approve for the command (kind:target)", [])
   .argument("<command>", "the executable to run")
   .argument("[args...]", "arguments passed verbatim to the command")
@@ -525,12 +535,27 @@ program
       console.error(`\x1b[31msentinel: exec unavailable: ${(e as Error).message}\x1b[0m`);
       process.exit(2);
     }
+    const base = commandBasename(command);
+    if (REFUSED_PACKAGE_MANAGERS.has(base)) {
+      console.error(
+        `\x1b[31msentinel: exec refuses to run '${base}' — sentinel exec runs a single command under the sandbox and does NOT route package acquisition through the Sentinel proxy. ` +
+        `Running a package manager here would fetch packages directly from public npm, bypassing the audit gate entirely. ` +
+        `Use 'sentinel install' or 'sentinel npx' instead — those route resolution through the proxy.\x1b[0m`,
+      );
+      process.exit(2);
+    }
     const approved = parseApprovals(opts.approve);
     const env = scrubEnv(process.env, approved);
     const cwd = process.cwd();
     const r = sandbox.runArgv(command, args, { cwd, approved, homeDir: homedir(), env, projectRoot: cwd });
     if (r.stdout) process.stdout.write(r.stdout);
     if (r.stderr) process.stderr.write(r.stderr);
+    if (r.violation) {
+      const v = r.violation;
+      console.error(
+        `\x1b[33msentinel: sandbox denied ${v.kind} access to ${v.target ?? v.deniedResource ?? "a denied resource"} (confidence: ${v.confidence})\x1b[0m`,
+      );
+    }
     process.exitCode = r.exitCode;
   });
 

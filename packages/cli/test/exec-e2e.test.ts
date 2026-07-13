@@ -24,4 +24,25 @@ describe("sentinel exec", { skip: !darwin }, () => {
     ]);
     assert.equal(Number(stdout.trim()), 2000000);
   });
+  test("refuses to run npm (package-manager bypass of the Sentinel proxy)", async () => {
+    await assert.rejects(
+      pexec("node", [CLI, "exec", "--", "npm", "install", "foo"]),
+      (err: NodeJS.ErrnoException & { code?: number; stderr?: string }) => {
+        assert.equal(err.code, 2);
+        assert.match(String(err.stderr), /package manager/i);
+        assert.match(String(err.stderr), /npm/);
+        return true;
+      },
+    );
+  });
+  test("refuses to run npx (package-manager bypass of the Sentinel proxy)", async () => {
+    await assert.rejects(
+      pexec("node", [CLI, "exec", "--", "npx", "foo"]),
+      (err: NodeJS.ErrnoException & { code?: number; stderr?: string }) => {
+        assert.equal(err.code, 2);
+        assert.match(String(err.stderr), /package manager/i);
+        return true;
+      },
+    );
+  });
 });
