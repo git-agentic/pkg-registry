@@ -9,6 +9,8 @@ import {
   integrityOfAlgo,
   aggregateTree,
   treeGateOf,
+  publishGateOf,
+  verdictAtOrAbove,
   NPM_SIGNING_KEYS,
   remediate,
   parsePolicy,
@@ -36,8 +38,17 @@ import {
 } from "./upstream.js";
 import { ApprovalStore, type Approval } from "./approvals.js";
 import { reconcileApproval, type ApprovalState } from "./reconcile.js";
-import { PrivatePackageStore } from "./private-store.js";
-import { isClaimed, parsePublishBody, publishTokenValid } from "./private.js";
+import { PrivatePackageStore, PublicationConflictError } from "./private-store.js";
+import { parsePublishBody, publishTokenValid } from "./private.js";
+import {
+  EMPTY_CLAIM_CORPUS,
+  isNativeSource,
+  normalizePackageName,
+  normalizeRegistryReadName,
+  source,
+  validateClaimCorpus,
+  type ClaimCorpus,
+} from "./resolution.js";
 import { ViolationStore, type ViolationInput } from "./violations.js";
 import { ApprovalRequestStore } from "./approval-requests.js";
 import { makeAuthz } from "./authz.js";
@@ -61,6 +72,8 @@ export interface ServerOptions {
   publicDir?: string;
   /** Authoritative store for published private packages (ADR-0010). */
   privateStore: PrivatePackageStore;
+  /** Already-verified offline claim data. Empty by default; verification/loading ships in Phase 31. */
+  claimCorpus?: ClaimCorpus;
   /** Valid bearer tokens for publishing; empty ⇒ publishing disabled. */
   publishTokens?: string[];
   /** Trusted npm registry signing keys (default: bundled npm keys). */
@@ -89,6 +102,10 @@ export interface ServerOptions {
   autoQuarantine?: boolean;
   /** Decompression-bomb extraction caps (ADR-0039). Undefined ⇒ core defaults. */
   extractLimits?: { maxUnpackedBytes?: number; maxFileCount?: number };
+  /** Max buffered npm publish JSON bytes. Default 64 MiB. */
+  maxPublishBytes?: number;
+  /** Test seam for the synchronous publish scanner. Production defaults to core runAudit. */
+  publishAudit?: typeof runAudit;
   /** Injectable clock (ms) for the release-cooldown overlay. Default Date.now. */
   now?: () => number;
 }
@@ -142,6 +159,8 @@ export function createServer(opts: ServerOptions) {
   const policyHash = opts.policyHash ?? policyHashOf(enterprisePolicy);
   const policy: ProxyPolicy = opts.policy ?? "observe";
   const privateStore = opts.privateStore;
+  const claimCorpus = opts.claimCorpus ?? EMPTY_CLAIM_CORPUS;
+  validateClaimCorpus(claimCorpus);
   const publishTokens = opts.publishTokens ?? [];
   const signingKeys = opts.signingKeys ?? NPM_SIGNING_KEYS;
   const advisories = opts.advisories;
@@ -150,6 +169,7 @@ export function createServer(opts: ServerOptions) {
   const maxTreePackages = opts.maxTreePackages ?? 5000;
   const extractLimits = opts.extractLimits;
   const now = opts.now ?? Date.now;
+  const publishAudit = opts.publishAudit ?? runAudit;
   const authz = makeAuthz(opts.authPublicKey);
   // Auto-quarantine only when the operator opted in AND auth is enabled (so every
   // quarantine is attributable to a verified token). Open mode never quarantines.
@@ -158,7 +178,10 @@ export function createServer(opts: ServerOptions) {
   app.disable("x-powered-by");
   const jsonSmall = express.json({ limit: "1mb" });
   app.use((req, res, next) => (req.method === "PUT" ? next() : jsonSmall(req, res, next)));
-  const jsonPublish = express.json({ limit: "64mb" });
+  const jsonPublish = express.json({ limit: opts.maxPublishBytes ?? 64 * 1024 * 1024 });
+
+  const registrySource = (name: string) => source(name, enterprisePolicy, claimCorpus);
+  const isNativeName = (name: string) => isNativeSource(registrySource(name));
 
   const rateLimiter = opts.rateLimiter;
   const rateGate: express.RequestHandler = rateLimiter
@@ -182,8 +205,9 @@ export function createServer(opts: ServerOptions) {
     version: string,
     providedTarball?: Buffer,
   ): Promise<{ report: AuditReport; tarball: Buffer }> {
-    // Claimed names are authoritative private — NEVER consult public upstream.
-    if (isClaimed(pkg, enterprisePolicy)) {
+    pkg = normalizeRegistryReadName(pkg);
+    // Native names are authoritative — NEVER consult public upstream.
+    if (isNativeName(pkg)) {
       const cachedAudit = privateStore.getAudit(pkg, version);
       const tarball = privateStore.getTarball(pkg, version);
       if (!cachedAudit || !tarball) throw new HttpError(404, `private package not found ${pkg}@${version}`);
@@ -266,7 +290,7 @@ export function createServer(opts: ServerOptions) {
   async function cooldownFor(pkg: string, version: string): Promise<{ block: boolean; reason?: string }> {
     if (!enterprisePolicy.releaseCooldown) return { block: false };
     let publishTime: string | null = null;
-    if (isClaimed(pkg, enterprisePolicy)) {
+    if (isNativeName(pkg)) {
       publishTime = resolvePublishTime({ isPrivate: true, privatePublishedAt: privateStore.getVersion(pkg, version)?.publishedAt });
     } else {
       try {
@@ -344,7 +368,7 @@ export function createServer(opts: ServerOptions) {
   async function findLastKnownGood(pkg: string, version: string): Promise<{ version: string; score: number } | null> {
     let priors: string[];
     try {
-      const allVersions = isClaimed(pkg, enterprisePolicy)
+      const allVersions = isNativeName(pkg)
         ? privateStore.versions(pkg)
         : Object.keys((await upstream.getPackument(pkg)).versions);
       priors = allVersions.filter((v) => cmpSemver(v, version) < 0).sort(cmpSemver).reverse().slice(0, 10);
@@ -647,6 +671,7 @@ export function createServer(opts: ServerOptions) {
   app.get("/-/private", (_req, res) => {
     res.json({
       claims: enterprisePolicy.privateNamespaces ?? [],
+      verifiedClaims: claimCorpus.claims.map((claim) => claim.namespace),
       packages: privateStore.names().map((name) => ({ name, versions: privateStore.versions(name) })),
     });
   });
@@ -663,38 +688,70 @@ export function createServer(opts: ServerOptions) {
   const publishAuth = authz.enabled ? authz.requireRole(["publisher"]) : requirePublishAuth;
   app.put(/^\/(.+)$/, rateGate, publishAuth, jsonPublish, async (req, res) => {
     try {
-      const name = decodeURIComponent(req.params[0] ?? "");
-      if (!isClaimed(name, enterprisePolicy)) {
-        return res.status(403).json({ error: "not a private namespace", package: name });
+      let name: string;
+      try { name = normalizePackageName(decodeURIComponent(req.params[0] ?? "")); }
+      catch (err) { return res.status(400).json({ error: (err as Error).message }); }
+      const selectedSource = registrySource(name);
+      if (!isNativeSource(selectedSource)) {
+        return res.status(403).json({ error: "claim required before publish", package: name });
       }
-      const parsed = parsePublishBody(name, req.body);
+      let parsed;
+      try { parsed = parsePublishBody(name, req.body); }
+      catch (err) { return res.status(400).json({ error: (err as Error).message, package: name }); }
       const integrity = integrityOf(parsed.tarball);
       if (parsed.declaredIntegrity && parsed.declaredIntegrity !== integrity) {
         return res.status(400).json({ error: "integrity mismatch", package: `${name}@${parsed.version}` });
-      }
-      if (privateStore.getVersion(name, parsed.version)) {
-        return res.status(409).json({ error: "version already published", package: `${name}@${parsed.version}` });
       }
       const meta = {
         name, version: parsed.version,
         author: null, maintainers: [], license: null,
         hasInstallScripts: false, integrity,
       };
-      const audit = await runAudit({ meta, tarball: parsed.tarball, signatures: null, hasProvenance: false, attestations: null, signingKeys, extractLimits });
+      let audit: Audit;
+      try {
+        audit = await publishAudit({
+          meta, tarball: parsed.tarball, signatures: null, hasProvenance: false,
+          attestations: null, signingKeys, extractLimits,
+          requirePackageManifest: { name, version: parsed.version },
+          advisories, vulnerabilities,
+        });
+      } catch (err) {
+        if ((err as Error).message.startsWith("malformed npm tarball:")) {
+          return res.status(400).json({ error: (err as Error).message, package: `${name}@${parsed.version}` });
+        }
+        throw err; // scanner/internal failures remain fail-closed as 500
+      }
       const report = score(audit, enterprisePolicy, policyHash);
-      if (report.verdict === "block") {
+      if (verdictAtOrAbove(report.verdict, publishGateOf(enterprisePolicy))) {
         return res.status(403).json({
           error: "publish blocked by Sentinel policy", package: `${name}@${parsed.version}`,
-          verdict: report.verdict,
-          findings: report.findings.map((f) => ({ ruleId: f.ruleId, severity: f.severity, message: f.message })),
+          report,
         });
       }
-      privateStore.put({ name, version: parsed.version, integrity, manifest: parsed.manifest, tarball: parsed.tarball, audit, actor: "publish-token" });
-      console.log(`[private] published ${name}@${parsed.version} (verdict ${report.verdict})`);
+      try {
+        privateStore.publish({ name, version: parsed.version, integrity, manifest: parsed.manifest, tarball: parsed.tarball, audit, actor: "publisher" });
+      } catch (err) {
+        if (err instanceof PublicationConflictError) {
+          return res.status(409).json({ error: "version already published", package: `${name}@${parsed.version}` });
+        }
+        throw err;
+      }
+      console.log(`[registry] published ${name}@${parsed.version} from ${selectedSource} (verdict ${report.verdict})`);
       return res.status(201).json({ ok: true, id: name, rev: `1-${integrity.slice(7, 19)}` });
     } catch (err) {
       return sendError(res, err);
     }
+  });
+
+  // Keep parser failures on the untrusted publish surface JSON-shaped and
+  // fail-closed. This handler must follow the PUT route to receive body-parser errors.
+  app.use((err: unknown, req: Request, res: Response, next: (err?: unknown) => void) => {
+    const bodyError = err as { type?: string; status?: number; message?: string };
+    if (req.method === "PUT" && (bodyError.type === "entity.too.large" || bodyError.status === 413)) {
+      res.status(413).json({ error: "publish payload exceeds configured byte limit" });
+      return;
+    }
+    next(err);
   });
 
   // ---- dashboard ----
@@ -711,11 +768,13 @@ export function createServer(opts: ServerOptions) {
 
     const tar = TARBALL_RE.exec(path);
     if (tar) {
-      const pkg = tar[1] ?? "";
+      let pkg: string;
+      try { pkg = normalizeRegistryReadName(tar[1] ?? ""); }
+      catch (err) { return res.status(400).json({ error: (err as Error).message }); }
       const version = versionFromFilename(pkg, tar[2] ?? "");
       if (!version) return res.status(400).json({ error: "cannot parse version from tarball name" });
       try {
-        const priv = isClaimed(pkg, enterprisePolicy);
+        const priv = isNativeName(pkg);
         const { report, tarball } = await auditVersion(pkg, version);
         const cd = await cooldownFor(pkg, version);
         return gateAndSend(res, pkg, version, report, tarball, priv, cd);
@@ -726,21 +785,22 @@ export function createServer(opts: ServerOptions) {
 
     // Packument
     try {
+      const name = normalizeRegistryReadName(path);
       const base = baseUrlFor(req, publicBaseUrl);
-      if (isClaimed(path, enterprisePolicy)) {
-        const pm = privateStore.packument(path);
-        if (!pm) return res.status(404).json({ error: "private package not found", package: path });
+      if (isNativeName(name)) {
+        const pm = privateStore.packument(name);
+        if (!pm) return res.status(404).json({ error: "native package not found", package: name });
         for (const [v, manifest] of Object.entries(pm.versions)) {
-          (manifest as { dist?: { tarball?: string } }).dist = { ...(manifest as { dist?: object }).dist, tarball: `${base}/${path}/-/${shortName(path)}-${v}.tgz` };
+          (manifest as { dist?: { tarball?: string } }).dist = { ...(manifest as { dist?: object }).dist, tarball: `${base}/${name}/-/${shortName(name)}-${v}.tgz` };
         }
         res.setHeader("content-type", "application/json");
         res.setHeader("x-sentinel-private", "true");
         return res.json(pm);
       }
-      const pm = await upstream.getPackument(path);
+      const pm = await upstream.getPackument(name);
       for (const [v, manifest] of Object.entries(pm.doc.versions ?? {})) {
-        const fileName = `${shortName(path)}-${v}.tgz`;
-        (manifest as { dist: { tarball: string } }).dist.tarball = `${base}/${path}/-/${fileName}`;
+        const fileName = `${shortName(name)}-${v}.tgz`;
+        (manifest as { dist: { tarball: string } }).dist.tarball = `${base}/${name}/-/${fileName}`;
       }
       res.setHeader("content-type", "application/json");
       return res.json(pm.doc);

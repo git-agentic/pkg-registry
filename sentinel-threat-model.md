@@ -1,6 +1,6 @@
 # Sentinel — Threat Model
 
-> Snapshot: 2026-07-10, through ADR-0044 (Landlock Linux exec floor). If the
+> Snapshot: 2026-07-13, including Phase 30 / ADR-0045. If the
 > ADR log has moved past that, check newer ADRs for controls added since.
 
 This document is for a security engineer evaluating Sentinel before adopting it.
@@ -11,13 +11,14 @@ control is described, it is implemented and tested on the main branch; if a gap
 is accepted, the ADR that accepted it is named.
 
 Sentinel is an agent-auditable security layer for npm: a transparent auditing
-proxy in front of `registry.npmjs.org` that scores every tarball before
+mirror plus authoritative native write path that scores every tarball before
 install-time code can run (ADR-0001), a signed per-enterprise policy gate
 (ADR-0012/0014), a deny-by-default install-script sandbox on macOS (Seatbelt)
 and Linux (bubblewrap) (ADR-0016/0018/0038), offline signature and provenance
 verification (ADR-0021/0022), and an MCP control surface for agents
-(ADR-0024). It does not replace npm: packuments and tarballs are served
-transparently, with only `dist.tarball` URLs rewritten (ADR-0005).
+(ADR-0024). Unclaimed public packages remain transparent mirrors with only
+`dist.tarball` URLs rewritten; native names are isolated and authoritative
+(ADR-0005/0045).
 
 ## 1. System overview & trust boundaries
 
@@ -134,6 +135,10 @@ signing key (ADR-0032).
   enterprise's proprietary code. Claimed names are authoritative: served only
   from the private store, never from public npm, and an unpublished claimed
   name is a 404, not a passthrough (ADR-0010/0015).
+- **Native publication integrity.** A version becomes visible only after strict
+  parsing, deterministic audit, policy gating, and an atomic tarball+metadata
+  commit. A failed, interrupted, or duplicate PUT cannot expose a partial or
+  replace immutable bytes (ADR-0045).
 - **Audit history.** The opt-in `HistoryDb` (ADR-0028) feeds metrics and the
   policy impact preview (ADR-0033). It is read-back only — it never
   influences a verdict — but it is an information asset (what an org
@@ -378,34 +383,30 @@ Stated plainly. Each is a deliberate, recorded trade-off, not an oversight.
   (ADR-0012/0014/0025/0032) but cannot detect a signature made with a stolen
   key.
 
-## 6. DRAFT — proposed registry write path (not implemented)
+## 6. Registry write path and future registry controls
 
-> **DRAFT / PROPOSAL — this section is exempt from this document's "nothing
-> here is aspirational" contract.** Everything below analyzes a *design*:
-> the registry evolution recorded in ADR-0045–0048 (all **Proposed**, no
-> implementation exists) and phased as Phases 30–33 in
-> [docs/product/registry-roadmap.md](./docs/product/registry-roadmap.md).
-> Controls described here are design commitments to be verified at
-> implementation time, not shipped behavior. Sections 1–5 above remain
-> accurate for the implemented system and are unchanged.
+> Phase 30 / ADR-0045 is implemented. Sections explicitly labeled Phase 31,
+> 32, or 33 remain proposed design and are not shipped.
 
 Accepting writes adds attacker goals a read-only proxy never faced. The
-design's load-bearing property, stated once: resolution is a name-level
+implemented load-bearing property is a name-level
 partition — `source(name)` is a pure function of the signed policy and the
-signed claim corpus, ordered policy-private → verified-claim → public-mirror,
-with no per-version merging (ADR-0045). Most of the new surface concentrates
+claim-corpus input, ordered policy-private → verified-claim → public-mirror,
+with no per-version merging (ADR-0045). Phase 30 defaults that corpus empty;
+Phase 31 will add signed loading and steward semantics. Most of the new surface concentrates
 on the *inputs* to that function and on the write path itself.
 
 ### 6.1 Publisher-credential and trusted-publisher takeover
 
 An attacker steals a publisher role token (ADR-0025) or compromises the CI
 identity enrolled as a trusted publisher (ADR-0046) and publishes to a
-claimed namespace. Two design controls bound the damage. First, **credentials
+claimed namespace. One shipped control and one future control bound the damage.
+The shipped control is that **credentials
 never bypass the audit engine**: every publish gates synchronously on
 `runAudit` + `score(policy)` against the policy-data `publishGate`, with no
 timeout-fallback-to-allow (ADR-0045) — a stolen credential ships malware only
 if the payload also scores clean, which is the same heuristics-are-signal
-residual as §4, not a new one. Second, the retraction window (ADR-0047)
+residual as §4, not a new one. The proposed Phase 32 retraction window (ADR-0047)
 gives the legitimate owner an operator-side recovery path that does not
 require re-taking the compromised credential — retraction is an instance-side
 act, deliberately unlike Go's publish-a-new-version model. Residuals: a
@@ -414,7 +415,7 @@ and provenance that *validly* attests a compromised CI run — the TanStack
 May-2026 pattern; the design treats OIDC as publish-auth precisely because it
 cannot prove more than build origin.
 
-### 6.2 Steward and claim-corpus compromise
+### 6.2 Steward and signed claim-corpus compromise (Phase 31 — proposed)
 
 The claim corpus is signed, versioned, distributed offline, and verified
 fail-closed at boot (ADR-0046) — so *tampering* in distribution is detected,
@@ -433,7 +434,7 @@ existing one. Residual, stated plainly: the steward is a deliberate trust
 chokepoint — corpus-key compromise is in the same catastrophic class as
 policy-key compromise, and the timelock is the detection window.
 
-### 6.3 Claim forgery
+### 6.3 Claim forgery (Phase 31 — proposed)
 
 An attacker attempts to acquire a claim they are not entitled to: a lookalike
 domain (`tanstack-js.dev`, homograph variants) passes its own DNS TXT
@@ -453,7 +454,7 @@ during a challenge or renewal window defeats the mechanism by satisfying it
 review is a human judgment — the steward's narrow adjudication question is
 the control, not a proof.
 
-### 6.4 Retraction abuse
+### 6.4 Retraction abuse (Phase 32 — proposed)
 
 An attacker (hostile maintainer, compromised publisher, or coerced org)
 tries to grief a dependency out of existence — the left-pad goal. The dual
@@ -478,12 +479,13 @@ The classic attack — steer an installer's semver range to an
 attacker-supplied higher version on the attacker-writable side — is
 **inexpressible** under the partition rule: no packument ever unions native
 and upstream versions, so there is no race for a resolver to lose
-(ADR-0045). The attack therefore moves to changing `source(name)` itself,
-and each input is separately defended: the policy is signed fail-closed
-(ADR-0012/0014, implemented today); the corpus is §6.2; and the remaining
-path is **mode-revert resurrection** — disabling registry mode flips
+(ADR-0045). The attack therefore moves to changing `source(name)` itself.
+The policy input is signed fail-closed (ADR-0012/0014). Phase 30's supplied
+claim data is an embedding trust input; Phase 31's signed distribution and
+steward controls in §6.2 are not shipped yet. Another future path is
+**mode-revert resurrection** (Phase 33) — disabling registry mode flips
 previously-claimed names back to public-mirror, handing their resolution to
-whatever squats them upstream. The design makes that flip loud rather than
+whatever squats them upstream. Phase 33 proposes making that flip loud rather than
 silent: with native content present it is a startup FATAL without an
 explicit acknowledgment, and the revert manifest enumerates every name whose
 resolution class changes, with the safe migration path stated (ADR-0048).

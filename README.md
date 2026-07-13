@@ -20,7 +20,8 @@ so an AI agent or a human can see the risk *before install-time code runs*.
 > detection, supply-chain identity heuristics, whole-tree lockfile auditing with
 > CycloneDX SBOM + signed VSA attestations, a CI-native GitHub Action, an
 > agent-native MCP surface, durable history/observability, and a hardened network
-> trust boundary + resource limits. See the decision log in
+> trust boundary + resource limits. Phase 30 adds deterministic native-vs-mirror
+> resolution and an audit-gated atomic npm publish path. See the decision log in
 > [docs/adr/](./docs/adr/) (one ADR per phase).
 
 See **[ARCHITECTURE.md](./ARCHITECTURE.md)** for the full design (proxy, sync-vs-async
@@ -47,6 +48,7 @@ published yet**: build from source (Quickstart below). Threat model:
 npm install          # install workspace deps
 npm run build        # compile all packages (tsc --build)
 npm run fixtures     # pack the test fixtures into real .tgz tarballs
+npm run benchmark:publish # PUT → audit-verdict latency regression tripwire
 npm test             # engine + end-to-end proxy — see CLAUDE.md for the current count and skip breakdown
 npm run demo         # self-contained malware-detection demo (no network)
 ```
@@ -104,6 +106,8 @@ node packages/cli/dist/index.js install lodash
 | `SENTINEL_PORT` | `4873` | proxy port (verdaccio's conventional local-registry port) |
 | `SENTINEL_REGISTRY` | `https://registry.npmjs.org` | upstream registry when in npm mode |
 | `SENTINEL_STORE` | _(memory only)_ | path to a JSON file to persist the audit log |
+| `SENTINEL_PRIVATE_STORE` | _(memory only)_ | directory for authoritative native tarballs + metadata; each version commits atomically |
+| `SENTINEL_PUBLISH_TOKENS` | _(unset ⇒ publishing disabled in open-auth mode)_ | comma-separated legacy bearer tokens accepted by `PUT /:pkg`; with role auth enabled, a `publisher` token is required instead |
 | `SENTINEL_VIOLATIONS` | _(memory only)_ | path to a JSON file to persist runtime-violation records (quarantine state) |
 | `SENTINEL_AUTO_QUARANTINE` | _(unset ⇒ record-only)_ | set to exactly `1` (any other value is treated as off) to let a confirmed runtime-violation report quarantine its integrity (force `block` at serve time); requires `SENTINEL_AUTH_PUBKEY` to also be set — a fatal error at startup otherwise, so auto-quarantine is only ever attributable to an authenticated caller (ADR-0040) |
 | `SENTINEL_APPROVAL_REQUESTS` | _(memory only)_ | path to a JSON file to persist pending approval requests (MCP `sentinel_request_approval` and any other caller) |
@@ -122,6 +126,44 @@ node packages/cli/dist/index.js install lodash
 | `SENTINEL_RATE_LIMIT_RPM` | _(unset ⇒ disabled)_ | requests-per-minute token-bucket cap, keyed by socket remote address, applied to `POST /-/audit-tree`, `GET /-/explain/*`, and `POST /-/policy/preview`; over-limit ⇒ 429 + `Retry-After`. Install-gate paths are never limited |
 | `SENTINEL_MAX_UNPACKED_BYTES` | `1 GiB` | cap on total decompressed bytes when extracting a tarball's contents; over-cap aborts extraction mid-stream and the current tarball's audit gets a critical `resource-abuse` finding (BLOCK) |
 | `SENTINEL_MAX_FILE_COUNT` | `100000` | cap on the number of files unpacked from a tarball; over-cap aborts extraction mid-stream the same way as the byte cap |
+
+## Authoritative registry write path (Phase 30)
+
+Every package name resolves to one source class through the pure function
+`source(name, signedPolicy, claimCorpus)`: `policy-private`, then
+`verified-claim`, then `public-mirror`, first match wins. Native and mirrored
+version maps, dist-tags, and tarball URLs are never merged. A native name with
+no publication returns 404 and never touches public npm. The executable starts
+with an empty claim corpus, so signed-policy `privateNamespaces` provide the
+complete publish path today; Phase 31's signed corpus loader and steward service
+are not implemented.
+
+Add `"privateNamespaces": ["@acme/*"]` and `"publishGate": "block"` to a
+full policy created by `sentinel policy init`, sign it, then publish with npm:
+
+```bash
+SENTINEL_PRIVATE_STORE=./registry-data \
+SENTINEL_PUBLISH_TOKENS=publish-secret \
+node packages/proxy/dist/index.js
+
+npm publish --registry http://localhost:4873 \
+  --//localhost:4873/:_authToken=publish-secret
+```
+
+`publishGate` is `allow | warn | block`; a report at or above the configured
+level is rejected, and omission defaults to `block`. `PUT /:pkg` authenticates
+before its 64 MiB body parser, accepts one npm version + one canonical-base64
+attachment, audits synchronously with no LLM or external request in the
+decision, and exposes bytes only after an atomic tarball+metadata commit.
+Unclaimed names return 403 with no storage or audit side effects. A gated
+response is `{ error, package, report }` with the complete `AuditReport`.
+Malformed archives, extraction-limit findings, scanner errors, and persistence
+errors all fail closed.
+
+Programmatic embedders may pass `claimCorpus: { claims: [{ namespace:
+"@scope/*" }, { namespace: "exact-unscoped" }] }` to `createServer`. Phase 30
+assumes these entries were already verified; this is not Phase 31's signed
+distribution or ownership-verification flow.
 
 ## CLI
 

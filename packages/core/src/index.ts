@@ -14,6 +14,8 @@ export {
   parsePolicy,
   loadPolicy,
   treeGateOf,
+  publishGateOf,
+  verdictAtOrAbove,
   type EnterprisePolicy,
 } from "./policy.js";
 export {

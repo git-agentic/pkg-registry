@@ -7,6 +7,7 @@ import { describe, test } from "node:test";
 import {
   DEFAULT_POLICY, generateKeypair, signPolicy, verifyPolicyBytes,
   policyHashOfBytes, parsePolicy, loadPolicy, treeGateOf,
+  publishGateOf, verdictAtOrAbove,
 } from "../src/index.js";
 
 const rawDefault = Buffer.from(JSON.stringify({ ...DEFAULT_POLICY, version: "acme-1" }));
@@ -175,6 +176,31 @@ describe("treeGate policy field", () => {
     assert.equal(parsePolicy(good).treeGate, "warn");
     const bad = Buffer.from(JSON.stringify({ ...DEFAULT_POLICY, treeGate: "nope" }));
     assert.throws(() => parsePolicy(bad), /treeGate/);
+  });
+});
+
+describe("publishGate policy field", () => {
+  test("defaults to block and accepts every verdict level", () => {
+    assert.equal(publishGateOf(DEFAULT_POLICY), "block");
+    for (const gate of ["allow", "warn", "block"] as const) {
+      const parsed = parsePolicy(Buffer.from(JSON.stringify({ ...DEFAULT_POLICY, publishGate: gate })));
+      assert.equal(publishGateOf(parsed), gate);
+    }
+  });
+
+  test("rejects an invalid publishGate", () => {
+    assert.throws(
+      () => parsePolicy(Buffer.from(JSON.stringify({ ...DEFAULT_POLICY, publishGate: "nope" }))),
+      /publishGate/,
+    );
+  });
+
+  test("gate comparison follows allow < warn < block", () => {
+    assert.equal(verdictAtOrAbove("allow", "allow"), true);
+    assert.equal(verdictAtOrAbove("allow", "warn"), false);
+    assert.equal(verdictAtOrAbove("warn", "warn"), true);
+    assert.equal(verdictAtOrAbove("block", "warn"), true);
+    assert.equal(verdictAtOrAbove("block", "block"), true);
   });
 });
 

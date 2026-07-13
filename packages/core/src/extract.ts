@@ -26,6 +26,8 @@ export interface UnscannedEntry {
 
 export interface ExtractResult {
   files: PackageFile[];
+  /** Number of tar entries targeting the npm package manifest path, regardless of entry type. */
+  packageManifestEntryCount: number;
   unpackedSize: number;
   fileCount: number;
   /** True when a cap was hit and extraction was aborted early (ADR-0039). */
@@ -76,6 +78,7 @@ export async function extractTarball(
   const maxUnpacked = opts.maxUnpackedBytes ?? DEFAULT_MAX_UNPACKED_BYTES;
   const maxFiles = opts.maxFileCount ?? DEFAULT_MAX_FILE_COUNT;
   const files: PackageFile[] = [];
+  let packageManifestEntryCount = 0;
   const unscanned: UnscannedEntry[] = [];
   const unscannedTotals = { count: 0, native: 0, bytes: 0 };
   const contentMismatch: ContentMismatchEntry[] = [];
@@ -103,6 +106,8 @@ export async function extractTarball(
       entry.resume();
       return;
     }
+    const normalizedPath = normalize(entry.path);
+    if (normalizedPath === "package/package.json") packageManifestEntryCount += 1;
     const isFile = entry.type === "File";
     if (isFile) fileCount += 1;
     const chunks: Buffer[] = [];
@@ -122,7 +127,7 @@ export async function extractTarball(
     });
     entry.on("end", () => {
       if (truncated || !isFile) return;
-      const path = normalize(entry.path);
+      const path = normalizedPath;
       const cls = classifyContent(Buffer.concat(prefixChunks));
       const declaredExt = extOf(path);
       const textLooking = TEXT_EXT.test(path);
@@ -217,7 +222,7 @@ export async function extractTarball(
     await done;
   }
   if (failure) throw failure;
-  return { files, unpackedSize, fileCount, truncated, unscanned, unscannedTotals, contentMismatch, contentMismatchTotals };
+  return { files, packageManifestEntryCount, unpackedSize, fileCount, truncated, unscanned, unscannedTotals, contentMismatch, contentMismatchTotals };
 }
 
 /** Build a `path -> content` baseline map from a previously extracted set. */

@@ -22,4 +22,5 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm run fixtures
+      - run: npm run benchmark:publish
       - run: npm test

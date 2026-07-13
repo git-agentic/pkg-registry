@@ -26,6 +26,7 @@
     "vulns": "tsx scripts/make-vulns.ts",
     "proxy": "tsx packages/proxy/src/index.ts",
     "demo": "npm run fixtures && tsx scripts/demo.ts",
+    "benchmark:publish": "tsx scripts/benchmark-publish.ts",
     "cli": "tsx packages/cli/src/index.ts",
     "pretest": "npm run fixtures"
   },

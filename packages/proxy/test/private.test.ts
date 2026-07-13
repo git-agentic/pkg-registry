@@ -1,10 +1,7 @@
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
 import { describe, test } from "node:test";
-import { isClaimed, parsePublishBody, publishTokenValid } from "../src/private.js";
-import { DEFAULT_POLICY, type EnterprisePolicy } from "@sentinel/core";
-
-const policy = (ns: string[]): EnterprisePolicy => ({ ...DEFAULT_POLICY, privateNamespaces: ns });
+import { parsePublishBody, publishTokenValid } from "../src/private.js";
 
 // Build a publish payload matching the captured npm shape.
 function publishBody(name: string, version: string, bytes = "tarball-bytes", integrity?: string) {
@@ -16,15 +13,6 @@ function publishBody(name: string, version: string, bytes = "tarball-bytes", int
   };
 }
 
-describe("isClaimed", () => {
-  test("matches exact + scope glob, anchored", () => {
-    assert.equal(isClaimed("@acme/payments", policy(["@acme/*"])), true);
-    assert.equal(isClaimed("acme-config", policy(["acme-config"])), true);
-    assert.equal(isClaimed("@other/x", policy(["@acme/*"])), false);
-    assert.equal(isClaimed("anything", policy([])), false);
-  });
-});
-
 describe("parsePublishBody", () => {
   test("extracts the single new version, manifest, and base64 tarball", () => {
     const p = parsePublishBody("@acme/x", publishBody("@acme/x", "1.2.3", "hello", "sha512-zzz"));
@@ -35,6 +23,19 @@ describe("parsePublishBody", () => {
   });
   test("throws on a body with no _attachments", () => {
     assert.throws(() => parsePublishBody("@acme/x", { versions: {} }));
+  });
+  test("throws on multiple attachments or versions", () => {
+    const body = publishBody("@acme/x", "1.2.3");
+    body._attachments["@acme/x-2.0.0.tgz"] = { content_type: "application/octet-stream", data: Buffer.from("x").toString("base64"), length: 1 };
+    assert.throws(() => parsePublishBody("@acme/x", body), /exactly one/);
+    const body2 = publishBody("@acme/x", "1.2.3");
+    (body2.versions as Record<string, unknown>)["2.0.0"] = { name: "@acme/x", version: "2.0.0" };
+    assert.throws(() => parsePublishBody("@acme/x", body2), /exactly one/);
+  });
+  test("throws on non-canonical base64", () => {
+    const body = publishBody("@acme/x", "1.2.3");
+    body._attachments["@acme/x-1.2.3.tgz"]!.data = "!!!!";
+    assert.throws(() => parsePublishBody("@acme/x", body), /base64/);
   });
   test("throws on path-traversal version", () => {
     const body = {
