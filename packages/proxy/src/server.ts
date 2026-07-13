@@ -23,9 +23,10 @@ import {
   type ReleaseContext,
   type Advisory,
   type VulnAdvisory,
+  type ScoredFinding,
 } from "@sentinel/core";
 import { AuditStore } from "./store.js";
-import { resolvePublishTime, cooldownDecision, applyCooldown } from "./cooldown.js";
+import { resolvePublishTime, cooldownDecision, applyCooldown, blockOverlay } from "./cooldown.js";
 import {
   cmpSemver,
   HttpError,
@@ -249,12 +250,12 @@ export function createServer(opts: ServerOptions) {
   function applyQuarantine(report: AuditReport): AuditReport {
     const rec = violations.get(report.meta.integrity);
     if (!rec?.quarantined) return report;
-    const finding = {
+    const finding: ScoredFinding = {
       ruleId: "runtime-violation", category: "install-script" as const, severity: "critical" as const,
       message: `runtime violation: ${rec.kind} access to ${rec.target ?? rec.deniedResource ?? "a denied resource"} blocked at install time — build quarantined`,
       onChangedFile: false, evidence: [], weight: 0, waived: false,
     };
-    return { ...report, verdict: "block", findings: [finding, ...report.findings] };
+    return blockOverlay(report, finding);
   }
 
   /** Resolve the release-cooldown decision for a coordinate (ADR — release-cooldown overlay).
@@ -353,7 +354,9 @@ export function createServer(opts: ServerOptions) {
     for (const v of priors) {
       try {
         const { report } = await auditVersion(pkg, v);
-        if (report.verdict === "allow") return { version: v, score: report.score };
+        const cd = await cooldownFor(pkg, v);
+        const overlaid = applyCooldown(report, cd);
+        if (overlaid.verdict === "allow") return { version: v, score: overlaid.score };
       } catch { /* skip an unauditeable prior version */ }
     }
     return null;

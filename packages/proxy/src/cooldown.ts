@@ -1,4 +1,4 @@
-import { matchPackage, type AuditReport, type EnterprisePolicy } from "@sentinel/core";
+import { matchPackage, type AuditReport, type EnterprisePolicy, type ScoredFinding } from "@sentinel/core";
 
 const HOUR_MS = 3_600_000;
 
@@ -51,13 +51,21 @@ export function cooldownDecision(args: {
 }
 
 /**
+ * Immutable overlay: returns a NEW report with `verdict: "block"` and `finding`
+ * prepended to `report.findings`. The input report is never mutated.
+ */
+export function blockOverlay(report: AuditReport, finding: ScoredFinding): AuditReport {
+  return { ...report, verdict: "block", findings: [finding, ...report.findings] };
+}
+
+/**
  * Immutable overlay: on block, returns a NEW report with `verdict: "block"`
  * and a prepended `release-cooldown` critical finding. The cached report
  * passed in is never mutated; when not blocking, it's returned unchanged.
  */
 export function applyCooldown(report: AuditReport, decision: { block: boolean; reason?: string }): AuditReport {
   if (!decision.block) return report;
-  const finding = {
+  const finding: ScoredFinding = {
     ruleId: "release-cooldown",
     category: "metadata" as const,
     severity: "critical" as const,
@@ -67,5 +75,5 @@ export function applyCooldown(report: AuditReport, decision: { block: boolean; r
     weight: 0,
     waived: false,
   };
-  return { ...report, verdict: "block", findings: [finding, ...report.findings] };
+  return blockOverlay(report, finding);
 }

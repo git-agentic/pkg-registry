@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { cooldownDecision, resolvePublishTime, applyCooldown } from "../src/cooldown.js";
+import { cooldownDecision, resolvePublishTime, applyCooldown, blockOverlay } from "../src/cooldown.js";
 import type { EnterprisePolicy, AuditReport } from "@sentinel/core";
 
 const NOW = Date.parse("2026-07-12T00:00:00Z");
@@ -69,5 +69,26 @@ describe("applyCooldown", () => {
   test("no block → returned unchanged", () => {
     const r = rep();
     assert.equal(applyCooldown(r, { block: false }).verdict, "allow");
+  });
+});
+
+describe("blockOverlay", () => {
+  const rep = (): AuditReport => ({ verdict: "allow", score: 100, findings: [], meta: { integrity: "sha512-x" } }) as unknown as AuditReport;
+  const finding = {
+    ruleId: "runtime-violation", category: "install-script" as const, severity: "critical" as const,
+    message: "test finding", onChangedFile: false, evidence: [], weight: 0, waived: false,
+  };
+  test("returns a new object with verdict block and the finding prepended", () => {
+    const r = rep();
+    const out = blockOverlay(r, finding);
+    assert.equal(out.verdict, "block");
+    assert.deepEqual(out.findings[0], finding);
+    assert.notEqual(out, r, "must return a new object");
+  });
+  test("does not mutate the input report", () => {
+    const r = rep();
+    blockOverlay(r, finding);
+    assert.equal(r.verdict, "allow");
+    assert.deepEqual(r.findings, []);
   });
 });

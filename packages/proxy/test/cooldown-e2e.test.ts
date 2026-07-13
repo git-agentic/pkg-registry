@@ -111,4 +111,19 @@ describe("release-cooldown e2e", () => {
       assert.equal(res.status, 200);
     } finally { server.close(); }
   });
+
+  // leftpad-lite@1.0.0 has no `time` entry in the fixture registry, so its
+  // publish time resolves to null → cooldownDecision fails closed (blocks it)
+  // regardless of the injected clock. findLastKnownGood must apply the same
+  // cooldown overlay it applies everywhere else, or it will recommend
+  // downgrading to a version the gate would 403 on cooldown grounds.
+  test("/-/explain lastKnownGood never recommends a version blocked by cooldown", async () => {
+    const { server, base } = await startServer({ policy: "block", enterprisePolicy: cooldownPolicy(), now: inWindow });
+    try {
+      const body = await (await fetch(`${base}/-/explain/leftpad-lite/1.0.1`)).json();
+      // The only strictly-older version (1.0.0) fails the cooldown closed —
+      // there is no version lastKnownGood can safely recommend.
+      assert.equal(body.lastKnownGood, null);
+    } finally { server.close(); }
+  });
 });
