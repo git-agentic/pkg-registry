@@ -181,6 +181,17 @@ describe("Phase 32 time-locked retraction", () => {
     assert.equal(report.verdict, "block");
   });
 
+  test("an explicit policy rule disable waives the audit verdict but not the 410 tombstone", async () => {
+    const enterprisePolicy = policy();
+    enterprisePolicy.rules = { disabled: ["known-advisory"] };
+    const ctx = await boot(1, 0, enterprisePolicy);
+    assert.equal((await ctx.retract("security")).status, 201);
+    const report = await (await fetch(`${ctx.base}/-/audit/${encodeURIComponent("@acme/widget")}/2.0.0`)).json();
+    assert.equal(report.findings[0].waived, true);
+    assert.equal(report.verdict, "allow");
+    assert.equal((await fetch(`${ctx.base}/@acme%2Fwidget/-/widget-2.0.0.tgz`)).status, 410);
+  });
+
   test("enabling a fresh history DB cannot reset the fallback cumulative count", async () => {
     const history = new HistoryDb(":memory:");
     const ctx = await boot(1, 999, policy(), undefined, undefined, history);
@@ -188,6 +199,18 @@ describe("Phase 32 time-locked retraction", () => {
     const response = await ctx.retract();
     assert.equal(response.status, 403);
     assert.equal((await response.json()).window.cumulativeDownloads, 1_000);
+    history.close();
+  });
+
+  test("a retraction decision mirrors a pre-existing history floor before rejecting", async () => {
+    const history = new HistoryDb(":memory:");
+    for (const npmSession of ["old-a", "old-b"]) {
+      history.recordDownload({ name: "@acme/widget", version: "2.0.0", integrity: integrityOf(Buffer.from("tarball-2.0.0")),
+        npmSession, servedAt: "2026-07-13T10:00:00.000Z" });
+    }
+    const ctx = await boot(1, 0, policy({ maxAgeHours: 72, maxDownloads: 2 }), undefined, undefined, history);
+    assert.equal((await ctx.retract()).status, 403);
+    assert.equal(ctx.privateStore.downloadCount("@acme/widget", "2.0.0"), 2);
     history.close();
   });
 

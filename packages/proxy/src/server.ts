@@ -361,7 +361,9 @@ export function createServer(opts: ServerOptions) {
     // fail-closed even where the numeric high-severity weight would only warn.
     const scoredRetraction = rescored.findings.find((candidate) =>
       candidate.ruleId === "known-advisory" && candidate.message.includes(advisory.id));
-    const overlaid = advisory.reason === "security"
+    const overlaid = scoredRetraction?.waived
+      ? rescored
+      : advisory.reason === "security"
       ? { ...rescored, verdict: "block" as const }
       : scoredRetraction && !scoredRetraction.waived && rescored.verdict === "allow"
         ? { ...rescored, verdict: "warn" as const }
@@ -819,10 +821,11 @@ export function createServer(opts: ServerOptions) {
       return res.status(403).json({ error: "authoritative publish time is invalid; retraction fails closed", code: "retraction-publish-time-invalid" });
     }
     const limits = retractionWindowOf(enterprisePolicy);
-    const cumulativeDownloads = Math.max(
-      history?.downloadCount(name, version) ?? 0,
-      privateStore.downloadCount(name, version),
-    );
+    const historyDownloads = history?.downloadCount(name, version) ?? 0;
+    // Mirror the durable DB's monotonic floor before deciding, so later
+    // disabling/replacing the DB cannot expose a lower fallback count.
+    privateStore.ensureDownloadCountAtLeast(name, version, historyDownloads);
+    const cumulativeDownloads = Math.max(historyDownloads, privateStore.downloadCount(name, version));
     const ageExceeded = ageHours >= limits.maxAgeHours;
     const downloadsExceeded = cumulativeDownloads >= limits.maxDownloads;
     const window = {
