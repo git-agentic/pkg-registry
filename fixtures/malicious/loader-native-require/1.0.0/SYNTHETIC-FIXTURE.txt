@@ -1,0 +1,5 @@
+SYNTHETIC FIXTURE — inert, never executed.
+Evasion closure for the loader-chain analyzer v2 (Spec2): the materialized file is
+loaded via native `require(writtenPath)` instead of `child_process.spawn` or
+`process.dlopen`, which the v1 analyzer's LAUNCH_FNS name list missed. Contains no
+runnable payload and no network address.

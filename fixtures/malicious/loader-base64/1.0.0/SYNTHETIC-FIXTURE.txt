@@ -1,0 +1,5 @@
+SYNTHETIC FIXTURE — inert, never executed.
+Evasion closure for the loader-chain analyzer v2 (Spec2): the packaged read is
+decoded via `Buffer.from(read, 'base64')` instead of a zlib call, which the v1
+analyzer's DECODE_FNS name list missed. Contains no runnable payload and no
+network address.

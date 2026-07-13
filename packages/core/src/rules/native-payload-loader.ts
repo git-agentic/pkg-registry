@@ -65,7 +65,17 @@ export const nativePayloadLoaderRule: Rule = {
       const allFour = ["read", "decode", "write", "launch"].every((s) => stages.has(s as any));
       const evidence: Evidence[] = a.primitives.slice(0, 6).map((p) => ({ file: file.path, line: p.line, snippet: p.snippet }));
       const boosterList = Object.entries(a.boosters).filter(([, v]) => v).map(([k]) => k);
-      const mism = mismatchByFile.size > 0; // a disguised container anywhere in the package strengthens the chain
+      // Spec6: the content-mismatch booster only fires when THIS loader's own read
+      // target resolves to a file that has a content-mismatch observation — not when
+      // ANY mismatch exists anywhere in the package (was: mismatchByFile.size > 0).
+      const readTargets = a.primitives.filter((p) => p.stage === "read" && p.readTarget).map((p) => p.readTarget!);
+      const mism = readTargets.some((rt) => {
+        const base = rt.split("/").pop();
+        for (const mismatchPath of mismatchByFile.keys()) {
+          if (mismatchPath === rt || mismatchPath.endsWith(`/${rt}`) || (base && mismatchPath.endsWith(`/${base}`))) return true;
+        }
+        return false;
+      });
 
       if (a.correlated) {
         findings.push(mkFinding({

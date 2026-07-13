@@ -1,12 +1,19 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { nativePayloadLoaderRule } from "../src/rules/native-payload-loader.js";
-import type { AuditInput, PackageFile } from "../src/types.js";
+import type { AuditInput, ContentMismatchEntry, PackageFile } from "../src/types.js";
 
-function input(files: Record<string, string>, pkgJson: object): AuditInput {
+function input(files: Record<string, string>, pkgJson: object, contentMismatch: ContentMismatchEntry[] = []): AuditInput {
   const list: PackageFile[] = Object.entries(files).map(([path, content]) => ({ path, content, size: content.length, changed: false }));
   list.push({ path: "package/package.json", content: JSON.stringify(pkgJson), size: 0, changed: false });
-  return { meta: { name: "p", version: "1.0.0", author: null, maintainers: [], license: null, hasInstallScripts: false, signature: "unknown", provenance: "unknown", integrity: null, unpackedSize: 0, fileCount: 0 }, files: list, mode: "full" };
+  return {
+    meta: { name: "p", version: "1.0.0", author: null, maintainers: [], license: null, hasInstallScripts: false, signature: "unknown", provenance: "unknown", integrity: null, unpackedSize: 0, fileCount: 0 },
+    files: list,
+    mode: "full",
+    extractionObservations: contentMismatch.length
+      ? { contentMismatch, contentMismatchTotals: { count: contentMismatch.length, byKind: {} }, unscannedTotals: { count: 0, native: 0, bytes: 0 } }
+      : undefined,
+  };
 }
 
 const CORRELATED = `
@@ -52,6 +59,26 @@ describe("nativePayloadLoaderRule", () => {
 
   test("throwing input never crashes (returns array)", () => {
     assert.doesNotThrow(() => nativePayloadLoaderRule.run(input({}, {})));
+  });
+
+  test("Spec6: content-mismatch on an UNRELATED file does not strengthen the finding", () => {
+    const f = nativePayloadLoaderRule.run(input(
+      { "package/index.js": CORRELATED },
+      { name: "p", version: "1.0.0", main: "index.js" },
+      [{ path: "package/dist/b.js", declaredExt: ".js", detectedKind: "gzip", size: 100 }],
+    ));
+    assert.equal(f[0]!.severity, "critical");
+    assert.doesNotMatch(f[0]!.message, /content-mismatch/, "unrelated mismatch must not be claimed as correlated evidence");
+  });
+
+  test("Spec6: content-mismatch on the loader's OWN read target strengthens the finding", () => {
+    const f = nativePayloadLoaderRule.run(input(
+      { "package/index.js": CORRELATED },
+      { name: "p", version: "1.0.0", main: "index.js" },
+      [{ path: "package/intro.js", declaredExt: ".js", detectedKind: "gzip", size: 100 }],
+    ));
+    assert.equal(f[0]!.severity, "critical");
+    assert.match(f[0]!.message, /content-mismatch/, "mismatch on the actual read target must be claimed as correlated evidence");
   });
 
   test("diff-mode: loader on a CHANGED file → finding flagged onChangedFile (acceptance #6)", () => {

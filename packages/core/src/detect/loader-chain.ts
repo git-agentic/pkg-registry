@@ -1,7 +1,16 @@
 import * as acorn from "acorn";
 import * as walk from "acorn-walk";
 
-export interface LoaderPrimitive { stage: "read" | "decode" | "write" | "launch"; line: number; snippet: string }
+export interface LoaderPrimitive {
+  stage: "read" | "decode" | "write" | "launch";
+  line: number;
+  snippet: string;
+  /** For read-stage primitives: the statically-known relative path/basename the read
+   *  resolves to (e.g. `path.join(__dirname,'intro.js')` -> "intro.js"). Undefined
+   *  when the read target isn't a static string (Spec6 — links the content-mismatch
+   *  booster to the loader's ACTUAL read target, not any mismatch in the package). */
+  readTarget?: string;
+}
 export interface LoaderBoosters { tempOrHidden: boolean; chmod: boolean; detached: boolean; unref: boolean; moduleLoad: boolean }
 export interface LoaderAnalysis { primitives: LoaderPrimitive[]; correlated: boolean; boosters: LoaderBoosters; parseFailed: boolean }
 
@@ -101,8 +110,8 @@ export function analyzeLoaderChain(source: string, opts: { moduleLoadReachable?:
     for (const s of chain) { if (taint.get(s)?.has(name)) return s; }
     return chain[0];
   };
-  const record = (stage: LoaderPrimitive["stage"], node: any) =>
-    primitives.push({ stage, line: lineOf(source, node.start), snippet: snip(source, node) });
+  const record = (stage: LoaderPrimitive["stage"], node: any, readTarget?: string) =>
+    primitives.push({ stage, line: lineOf(source, node.start), snippet: snip(source, node), ...(readTarget ? { readTarget } : {}) });
 
   // ---------- module reference resolution ----------
   function stripNode(m: string): string { return m.startsWith("node:") ? m.slice(5) : m; }
@@ -195,6 +204,44 @@ export function analyzeLoaderChain(source: string, opts: { moduleLoadReachable?:
       return false;
     }
     return false;
+  }
+
+  // ---------- static read-target resolution (Spec6: link booster to the ACTUAL read) ----------
+  /** Join literal path.join/resolve arguments into a relative string, skipping the
+   *  __dirname/__filename base segment. Returns null when any segment isn't a static
+   *  string literal (the target is then simply unknown, not guessed). */
+  function joinLiteralParts(argNodes: any[]): string | null {
+    const parts: string[] = [];
+    for (const a of argNodes) {
+      if (a?.type === "Identifier" && (a.name === "__dirname" || a.name === "__filename")) continue;
+      if (a?.type === "Literal" && typeof a.value === "string") { parts.push(a.value); continue; }
+      return null;
+    }
+    return parts.length ? parts.join("/").replace(/^\.\//, "") : null;
+  }
+  /** Statically-known relative path/basename a read's path argument resolves to, or
+   *  undefined when it isn't a static string (identifier through a literal init,
+   *  a relative literal, `require.resolve(...)`, or `path.join/resolve(__dirname, ...literals)`). */
+  function staticReadTarget(node: any, depth = 0): string | undefined {
+    if (!node || depth > 12) return undefined;
+    if (node.type === "Identifier") {
+      const init = declInit.get(node.name);
+      return init && init !== node ? staticReadTarget(init, depth + 1) : undefined;
+    }
+    if (node.type === "Literal" && typeof node.value === "string") {
+      const v = node.value;
+      if (v.includes("://") || v.startsWith("/") || /^[A-Za-z]:[\\/]/.test(v)) return undefined;
+      return v.replace(/^\.\//, "");
+    }
+    if (node.type === "CallExpression") {
+      const c = node.callee;
+      if (c?.type === "MemberExpression" && c.object?.type === "Identifier" && c.object.name === "require" && propName(c) === "resolve") {
+        const arg = node.arguments?.[0];
+        return arg?.type === "Literal" && typeof arg.value === "string" ? arg.value.replace(/^\.\//, "") : undefined;
+      }
+      if (resolvesToPathJoiner(c)) return joinLiteralParts(node.arguments ?? []) ?? undefined;
+    }
+    return undefined;
   }
 
   // ---------- expression-level payload taint ----------
@@ -339,7 +386,7 @@ export function analyzeLoaderChain(source: string, opts: { moduleLoadReachable?:
       const args = node.arguments ?? [];
 
       if (cat === "read") {
-        record("read", node);                     // evidence for ANY recognized read
+        record("read", node, staticReadTarget(args[0]));   // evidence for ANY recognized read
       } else if (cat === "decode") {
         // A decode only counts (primitive + scope gate) when it decodes payload
         // data — i.e. its input carries read/decoded taint. `Buffer.from(literal,
@@ -395,7 +442,7 @@ export function analyzeLoaderChain(source: string, opts: { moduleLoadReachable?:
         } else if (spec?.type === "Literal" && typeof spec.value === "string" && isPackageRelative(spec)) {
           const ext = spec.value.includes(".") ? spec.value.split(".").pop()! : "";
           if (ext && !JS_EXTS.has(ext.toLowerCase())) {           // require('./x.node') — non-JS packaged asset
-            record("read", node);
+            record("read", node, spec.value.replace(/^\.\//, ""));
             record("launch", node);
           }
         }

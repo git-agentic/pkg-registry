@@ -1,0 +1,5 @@
+SYNTHETIC FIXTURE — inert, never executed.
+Evasion closure for the loader-chain analyzer v2 (S3): write-path and launch-path
+are inline `path.join(os.tmpdir(), '.x')` expressions repeated verbatim (no shared
+identifier), which the v1 analyzer's Identifier-only correlation missed. Contains
+no runnable payload and no network address.

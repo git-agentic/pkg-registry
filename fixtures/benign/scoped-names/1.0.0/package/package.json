@@ -1,0 +1,7 @@
+{
+  "name": "scoped-names",
+  "version": "1.0.0",
+  "description": "SYNTHETIC FIXTURE — false-positive control: scope isolation between two functions sharing a local variable name.",
+  "main": "index.js",
+  "license": "MIT"
+}

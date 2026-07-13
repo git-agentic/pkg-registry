@@ -1,0 +1,7 @@
+{
+  "name": "external-file-tool",
+  "version": "1.0.0",
+  "description": "SYNTHETIC FIXTURE — false-positive control: decompress/write/spawn chain over an external (non-package) file path.",
+  "main": "index.js",
+  "license": "MIT"
+}
