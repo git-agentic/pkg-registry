@@ -94,6 +94,18 @@ describe("parseAdvisories", () => {
       { name: "b", version: "1", id: "Y", severity: "high" },
     ]);
   });
+
+  test("operator retraction advisories require SRI integrity and canonical timestamps", () => {
+    const base = {
+      kind: "retraction", name: "a", version: "1.0.0", reason: "broken", severity: "medium",
+      retractedAt: "2026-07-13T11:00:00.000Z", integrity: "sha512-YWJj",
+    };
+    assert.deepEqual(parseAdvisories(JSON.stringify([
+      { ...base, id: "bad-integrity", integrity: "not-sri" },
+      { ...base, id: "bad-time", retractedAt: "2026-07-13 11:00:00Z" },
+      { ...base, id: "valid" },
+    ])), [{ ...base, id: "valid" }]);
+  });
 });
 
 describe("parseAdvisoriesStrict", () => {

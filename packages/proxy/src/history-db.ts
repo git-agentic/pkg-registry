@@ -165,6 +165,17 @@ export class HistoryDb {
     }));
   }
 
+  retractionWindowHitCounts(): { age: number; downloads: number; both: number } {
+    const row = this.db.prepare(
+      `SELECT
+         SUM(CASE WHEN age_exceeded=1 AND downloads_exceeded=0 THEN 1 ELSE 0 END) age,
+         SUM(CASE WHEN age_exceeded=0 AND downloads_exceeded=1 THEN 1 ELSE 0 END) downloads,
+         SUM(CASE WHEN age_exceeded=1 AND downloads_exceeded=1 THEN 1 ELSE 0 END) both
+       FROM retraction_window_hits`,
+    ).all()[0] as { age: number | null; downloads: number | null; both: number | null };
+    return { age: Number(row.age ?? 0), downloads: Number(row.downloads ?? 0), both: Number(row.both ?? 0) };
+  }
+
   summary(): HistorySummary {
     const n = (col: "verdict" | "signature" | "provenance", val: string, table = "audit_events") =>
       Number((this.db.prepare(`SELECT COUNT(*) c FROM ${table} WHERE ${col}=?`).all(val)[0] as { c: number }).c);

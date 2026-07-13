@@ -216,6 +216,20 @@ describe("Phase 32 time-locked retraction", () => {
     history.close();
   });
 
+  test("the retraction feed keeps the same window-hit counter schema with SQLite", async () => {
+    const history = new HistoryDb(":memory:");
+    history.recordRetractionWindowHit({ name: "@acme/widget", version: "2.0.0", ageHours: 73, downloads: 5,
+      maxAgeHours: 72, maxDownloads: 1_000, ageExceeded: true, downloadsExceeded: false,
+      attemptedAt: "2026-07-13T10:00:00.000Z" });
+    history.recordRetractionWindowHit({ name: "@acme/widget", version: "2.0.0", ageHours: 73, downloads: 1_001,
+      maxAgeHours: 72, maxDownloads: 1_000, ageExceeded: true, downloadsExceeded: true,
+      attemptedAt: "2026-07-13T10:01:00.000Z" });
+    const ctx = await boot(1, 0, policy(), undefined, undefined, history);
+    const feed = await (await fetch(`${ctx.base}/-/retractions`)).json();
+    assert.deepEqual(feed.windowHits, { age: 1, downloads: 0, both: 1 });
+    history.close();
+  });
+
   test("the same signed-corpus version applies the same tombstone overlay on another instance", async () => {
     const origin = await boot(1, 0);
     assert.equal((await origin.retract("security")).status, 201);
@@ -239,6 +253,36 @@ describe("Phase 32 time-locked retraction", () => {
       version: corpus.version, hash: retractionCorpusHashOfBytes(Buffer.from(JSON.stringify(corpus))),
     });
     assert.equal(tree.packages[0].status, "block");
+  });
+
+  test("a corpus advisory with different integrity does not block a legitimate local retraction", async () => {
+    const corpus: RetractionCorpus = {
+      schema: 1, version: "fleet-mismatched-integrity", issuedAt: "2026-07-13T12:00:00.000Z",
+      advisories: [{
+        kind: "retraction", id: "SENTINEL-RETRACT-other-bytes", name: "@acme/widget", version: "2.0.0",
+        integrity: integrityOf(Buffer.from("different-tarball")), reason: "security",
+        retractedAt: "2026-07-13T11:00:00.000Z", severity: "high",
+      }],
+    };
+    const ctx = await boot(1, 0, policy(), corpus);
+    assert.equal((await ctx.retract("security")).status, 201);
+  });
+
+  test("an existing matching corpus retraction returns the compact tombstone schema", async () => {
+    const tarball = Buffer.from("tarball-2.0.0");
+    const corpus: RetractionCorpus = {
+      schema: 1, version: "fleet-matching-integrity", issuedAt: "2026-07-13T12:00:00.000Z",
+      advisories: [{
+        kind: "retraction", id: "SENTINEL-RETRACT-fleet", name: "@acme/widget", version: "2.0.0",
+        integrity: integrityOf(tarball), reason: "broken", retractedAt: "2026-07-13T11:00:00.000Z", severity: "medium",
+      }],
+    };
+    const ctx = await boot(1, 0, policy(), corpus);
+    const response = await ctx.retract("broken");
+    assert.equal(response.status, 409);
+    assert.deepEqual((await response.json()).tombstone, {
+      retractedAt: "2026-07-13T11:00:00.000Z", reason: "broken", advisoryId: "SENTINEL-RETRACT-fleet",
+    });
   });
 
   test("retraction is operator-only when role-token auth is enabled", async () => {
