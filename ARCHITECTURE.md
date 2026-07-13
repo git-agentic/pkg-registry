@@ -98,7 +98,7 @@ single-version publish PUT:
 - `POST /-/retractions` → an operator retraction for a native version, accepted
   only inside the signed-policy age/download window. `GET /-/retractions`
   exposes the operator feed, active corpus identity, counting contract, and
-  window-hit telemetry.
+  `windowHits: { age, downloads, both }` counters with or without SQLite.
 
 Transparency: because we only rewrite tarball URLs and otherwise proxy the document
 verbatim, any npm/yarn/pnpm/npx client works with zero changes beyond pointing

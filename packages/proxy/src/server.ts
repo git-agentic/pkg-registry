@@ -366,8 +366,9 @@ export function createServer(opts: ServerOptions) {
       engine: { version: report.engine.version, rules: report.engine.rules, mode: report.engine.mode },
       auditedAt: report.auditedAt, durationMs: report.durationMs,
     });
-    // A security retraction is an authoritative unavailability fact and remains
-    // fail-closed even where the numeric high-severity weight would only warn.
+    // A security retraction blocks by default even where its numeric weight would
+    // only warn. An explicit policy waiver may relax the audit verdict; availability
+    // remains fail-closed because the tarball path returns 410 independently below.
     const scoredRetraction = rescored.findings.find((candidate) =>
       candidate.ruleId === "known-advisory" && candidate.message.includes(advisory.id));
     const overlaid = scoredRetraction?.waived
@@ -802,7 +803,7 @@ export function createServer(opts: ServerOptions) {
     res.json({
       advisories: [...privateStore.retractionAdvisories(), ...retractionCorpus.advisories],
       retractionCorpus: { version: retractionCorpus.version, hash: retractionCorpusHash },
-      windowHits: history ? history.retractionWindowHits() : privateStore.retractionWindowHits(),
+      windowHits: history ? history.retractionWindowHitCounts() : privateStore.retractionWindowHits(),
       downloadCounting: "Successful native tarball responses count once; with SQLite, repeats for the same package version and npm-session are deduplicated; requests without npm-session count individually.",
     });
   });
@@ -819,7 +820,14 @@ export function createServer(opts: ServerOptions) {
     if (!isNativeName(name)) return res.status(403).json({ error: "only authoritative native packages can be retracted", package: `${name}@${version}` });
     const stored = privateStore.getVersion(name, version);
     if (!stored) return res.status(404).json({ error: "native package version not found", package: `${name}@${version}` });
-    const existing = privateStore.getRetraction(name, version) ?? retractionCorpus.advisories.find((advisory) => advisory.name === name && advisory.version === version);
+    const localRetraction = privateStore.getRetraction(name, version);
+    const corpusRetraction = retractionCorpus.advisories.find((advisory) =>
+      advisory.name === name && advisory.version === version && advisory.integrity === stored.integrity);
+    const existing = localRetraction ?? (corpusRetraction ? {
+      retractedAt: corpusRetraction.retractedAt,
+      reason: corpusRetraction.reason,
+      advisoryId: corpusRetraction.id,
+    } : undefined);
     if (existing) return res.status(409).json({ error: "package version already retracted", package: `${name}@${version}`, tombstone: existing });
 
     const nowMs = now();

@@ -217,7 +217,8 @@ history bytes are not rewritten. Successful native tarball responses count as
 downloads. With SQLite, repeats for one package version and `npm-session`
 dedupe; requests without `npm-session` count individually.
 `GET /-/retractions` exposes this counting contract, the local/operator advisory
-feed, active corpus identity, and window-hit telemetry.
+feed, active corpus identity, and stable `windowHits: { age, downloads, both }`
+counters regardless of whether SQLite history is enabled.
 
 Local retractions take effect immediately. For fleet propagation, send the
 integrity-bound advisory to the steward's authenticated `POST /-/retractions`;

@@ -5,7 +5,8 @@
  * (name, version, id) triple below was fetched and cross-checked against
  * github.com/advisories at authoring time (see Task 1 report for per-entry notes).
  */
-import type { RetractionAdvisory } from "./retraction-corpus.js";
+import { Buffer } from "node:buffer";
+import { parseRetractionCorpus, type RetractionAdvisory } from "./retraction-corpus.js";
 
 export interface MalwareAdvisory {
   name: string;
@@ -49,13 +50,14 @@ function coerceAdvisoryEntry(e: unknown): Advisory | undefined {
   const a = e as Record<string, unknown>;
   if (typeof a.name !== "string" || typeof a.version !== "string" || typeof a.id !== "string") return undefined;
   if (a.kind === "retraction") {
-    if (typeof a.integrity !== "string" || typeof a.retractedAt !== "string" ||
-        !["security", "withdrawn", "broken", "legal"].includes(String(a.reason))) return undefined;
-    const reason = a.reason as RetractionAdvisory["reason"];
-    const severity = reason === "security" ? "high" : "medium";
-    if (a.severity !== severity) return undefined;
-    return { kind: "retraction", name: a.name, version: a.version, id: a.id,
-      integrity: a.integrity, retractedAt: a.retractedAt, reason, severity };
+    try {
+      return parseRetractionCorpus(Buffer.from(JSON.stringify({
+        schema: 1,
+        version: "operator-advisory",
+        issuedAt: "9999-12-31T23:59:59.999Z",
+        advisories: [a],
+      }))).advisories[0];
+    } catch { return undefined; }
   }
   const adv: MalwareAdvisory = { name: a.name, version: a.version, id: a.id };
   if (a.severity === "high" || a.severity === "critical") adv.severity = a.severity;
