@@ -20,13 +20,13 @@ control plane.
 We are the Socket/Chainguard wedge: **do not** try to replace npm. Resolve and
 serve real packages transparently; only attach signal.
 
-Registry evolution has begun: **Phases 30–31 are implemented** (authoritative
+Registry evolution has begun: **Phases 30–32 are implemented** (authoritative
 write path, deterministic name-level source partition, atomic native
 publication, synchronous `publishGate`, verified claim-corpus loading, and the
-claim steward; ADR-0045/0046). Phases 32–33 remain design-only: time-locked
-retraction and migration/compatibility. See
+claim steward, plus time-locked retraction; ADR-0045/0046/0047). Phase 33
+remains design-only: migration/compatibility. See
 [docs/product/registry-roadmap.md](./docs/product/registry-roadmap.md),
-ADR-0045–0048, and threat-model §6. Do not treat ADR-0047–0048 as shipped.
+ADR-0045–0048, and threat-model §6. Do not treat ADR-0048 as shipped.
 
 ### Current state by subsystem
 
@@ -87,13 +87,23 @@ versioned Ed25519-signed claim corpus at boot (tamper/malformed ⇒ FATAL), reco
 its version/hash in audit provenance, keeps frozen/disputed names authoritative,
 and requires matching offline Sigstore provenance for enrolled trusted
 publishers. The default corpus remains the explicit empty corpus.
+Phase 32 adds policy-data retraction bounds (default age < 72 h AND cumulative
+downloads < 1,000), durable tombstones and spent identifiers, 410 tarball
+responses, packument exclusion, successful-serve download counting, window-hit
+telemetry, and an immutable `known-advisory` overlay across the read/audit
+surfaces. Local retractions synchronously enter the operator feed; a separate
+versioned Ed25519-signed retraction corpus propagates the same integrity-bound
+fact fleet-wide and is verified fail-closed at boot. Retraction enforcement is
+on by default and never mutates cached reports.
 
 **Claim steward (`@sentinel/steward`)** — authenticated operational service for
 exact-apex DNS TXT challenges, steward-fetched three-tier grandfathering,
 claimant-key-signed transfers, 12-month renewal and freeze, 30-day announced
 Tier-2 grants/transfers/dispute rulings, durable atomic state, and atomic
-directory-based Ed25519-signed corpus releases. DNS and issuance run only on the
-steward; proxy resolution and auditing remain offline. Native version metadata
+directory-based Ed25519-signed corpus releases. Authenticated
+claimed-namespace retractions join the next signed `advisories.json` release in
+the same atomic directory. DNS and issuance run only on the steward; proxy
+resolution and auditing remain offline. Native version metadata
 snapshots claim attribution at publication so later transfers never rewrite
 history. The steward control plane and proxy publish route have mandatory
 per-source rate-limit backstops; release directory names are generated
@@ -225,6 +235,7 @@ a tool that guards against exactly that.
 | `SENTINEL_HISTORY_DB` | path ⇒ enable sqlite history write-through (ADR-0028) |
 | `SENTINEL_ADVISORIES` / `SENTINEL_VULNERABILITIES` | operator advisory/vuln JSON feeds (ADR-0034/0035) |
 | `SENTINEL_CLAIM_CORPUS_FILE` / `SENTINEL_CLAIM_CORPUS_SIG` / `SENTINEL_CLAIM_CORPUS_PUBKEY` | versioned offline claim corpus; file requires a pinned key, bad signature/schema is FATAL (ADR-0046) |
+| `SENTINEL_RETRACTION_CORPUS_FILE` / `SENTINEL_RETRACTION_CORPUS_SIG` / `SENTINEL_RETRACTION_CORPUS_PUBKEY` | versioned offline retraction corpus; pubkey may fall back to the claim-corpus key; bad signature/schema is FATAL (ADR-0047) |
 | `SENTINEL_REGISTRY` / `SENTINEL_TARBALL_ORIGINS` / `SENTINEL_PUBLIC_BASE_URL` | upstream origin, outbound tarball allowlist, inbound rewrite base (ADR-0036) |
 | `SENTINEL_MAX_TARBALL_BYTES` / `SENTINEL_MAX_PACKUMENT_BYTES` / `SENTINEL_MAX_TREE_PACKAGES` / `SENTINEL_RATE_LIMIT_RPM` | fetch caps (256 MB / 128 MB), tree cap (5000), opt-in rate limit (ADR-0037) |
 | `SENTINEL_MAX_UNPACKED_BYTES` / `SENTINEL_MAX_FILE_COUNT` | decompression-bomb caps (1 GiB / 100k) (ADR-0039) |
@@ -233,8 +244,8 @@ a tool that guards against exactly that.
 
 ```bash
 npm run build            # tsc --build (project references) + the Linux-only native helper step
-npm test                 # hermetic engine + e2e proxy suite. 931 tests on this darwin host
-                         # as of 2026-07-13 (929 pass, 2 skipped) — but NEVER plan arithmetic
+npm test                 # hermetic engine + e2e proxy suite. 965 tests on this darwin host
+                         # as of 2026-07-13 (963 pass, 2 skipped) — but NEVER plan arithmetic
                          # on a written count; run npm test and use what it prints.
 npm run demo             # offline malware-detection walkthrough
 node packages/proxy/dist/index.js   # run the proxy (see README for env vars)

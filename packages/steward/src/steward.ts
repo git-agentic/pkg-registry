@@ -12,6 +12,11 @@ import {
   type PendingClaimGrant,
   type TrustedPublisher,
   type VerifiedClaim,
+  matchPackage,
+  parseRetractionCorpus,
+  signRetractionCorpus,
+  type RetractionAdvisory,
+  type RetractionCorpus,
 } from "@sentinel/core";
 
 export type GrandfatherTier = 1 | 2 | 3;
@@ -49,6 +54,11 @@ interface PendingGrant {
   announcedAt: string;
   effectiveAt: string;
   evidenceRef: string;
+}
+
+interface ReleasedSnapshot {
+  raw: string;
+  retractionRaw: string;
 }
 
 export interface StewardOptions {
@@ -138,6 +148,8 @@ export class ClaimSteward {
   private readonly applications = new Map<string, Application>();
   private readonly claims = new Map<string, VerifiedClaim>();
   private readonly pendingGrants = new Map<string, PendingGrant>();
+  private readonly retractions = new Map<string, RetractionAdvisory>();
+  private readonly releases = new Map<string, ReleasedSnapshot>();
 
   constructor(options: StewardOptions) {
     this.now = options.now ?? Date.now;
@@ -259,10 +271,39 @@ export class ClaimSteward {
     this.persist();
   }
 
-  release(version: string, privateKeyPem?: string): { corpus: ClaimCorpus; raw: Buffer; signature?: string } {
+  /** Append an authenticated instance retraction for the next bundled fleet release. */
+  recordRetraction(advisory: RetractionAdvisory): void {
+    if (![...this.claims.values()].some((claim) => matchPackage(claim.namespace, advisory.name))) {
+      throw new Error(`retraction package ${advisory.name} is not in a claimed namespace`);
+    }
+    const parsed = parseRetractionCorpus(Buffer.from(JSON.stringify({
+      schema: 1, version: "steward-intake", issuedAt: iso(this.now()), advisories: [advisory],
+    }))).advisories[0]!;
+    if (this.retractions.has(parsed.id) || [...this.retractions.values()].some((existing) => existing.name === parsed.name && existing.version === parsed.version)) {
+      throw new Error(`duplicate retraction advisory for ${parsed.name}@${parsed.version}`);
+    }
+    this.retractions.set(parsed.id, parsed);
+    this.persist();
+  }
+
+  release(version: string, privateKeyPem?: string): {
+    corpus: ClaimCorpus; raw: Buffer; signature?: string;
+    retractionCorpus: RetractionCorpus; retractionRaw: Buffer; retractionSignature?: string;
+  } {
+    if (!version.trim()) throw new Error("release version must be non-empty");
+    const prior = this.releases.get(version);
+    if (prior) {
+      const raw = Buffer.from(prior.raw, "base64");
+      const retractionRaw = Buffer.from(prior.retractionRaw, "base64");
+      return {
+        corpus: parseClaimCorpus(raw), raw,
+        ...(privateKeyPem ? { signature: signClaimCorpus(raw, privateKeyPem) } : {}),
+        retractionCorpus: parseRetractionCorpus(retractionRaw), retractionRaw,
+        ...(privateKeyPem ? { retractionSignature: signRetractionCorpus(retractionRaw, privateKeyPem) } : {}),
+      };
+    }
     this.applyExpiryFreeze();
     this.materializeEffectiveChanges();
-    this.persist();
     const pendingClaims: PendingClaimGrant[] = [...this.pendingGrants.values()].map(({ claim, announcedAt, effectiveAt, evidenceRef }) => ({
       namespace: claim.namespace, domain: claim.domain, claimantPublicKey: claim.claimantPublicKey, tier: 2, challenge: claim.challenge,
       announcedAt, effectiveAt, authorizedBy: evidenceRef,
@@ -274,7 +315,17 @@ export class ClaimSteward {
     };
     const raw = Buffer.from(JSON.stringify(candidate));
     const corpus = parseClaimCorpus(raw);
-    return { corpus, raw, ...(privateKeyPem ? { signature: signClaimCorpus(raw, privateKeyPem) } : {}) };
+    const retractionRaw = Buffer.from(JSON.stringify({
+      schema: 1, version, issuedAt: candidate.issuedAt, advisories: [...this.retractions.values()],
+    }));
+    const retractionCorpus = parseRetractionCorpus(retractionRaw);
+    this.releases.set(version, { raw: raw.toString("base64"), retractionRaw: retractionRaw.toString("base64") });
+    this.persist();
+    return {
+      corpus, raw, ...(privateKeyPem ? { signature: signClaimCorpus(raw, privateKeyPem) } : {}),
+      retractionCorpus, retractionRaw,
+      ...(privateKeyPem ? { retractionSignature: signRetractionCorpus(retractionRaw, privateKeyPem) } : {}),
+    };
   }
 
   private materializeEffectiveChanges(): void {
@@ -329,7 +380,7 @@ export class ClaimSteward {
     let decoded: unknown;
     try { decoded = JSON.parse(readFileSync(this.stateFile, "utf8")); }
     catch { throw new Error("invalid steward state: expected JSON"); }
-    const state = decoded as { schema?: unknown; applications?: unknown; claims?: unknown; pendingGrants?: unknown };
+    const state = decoded as { schema?: unknown; applications?: unknown; claims?: unknown; pendingGrants?: unknown; retractions?: unknown; releases?: unknown };
     if (state?.schema !== 1 || !Array.isArray(state.applications) || !Array.isArray(state.claims) || !Array.isArray(state.pendingGrants)) {
       throw new Error("invalid steward state: expected schema 1 arrays");
     }
@@ -366,6 +417,27 @@ export class ClaimSteward {
       }
       this.pendingGrants.set(parsed.namespace, { ...pending, claim: parsed });
     }
+    const retractions = state.retractions ?? [];
+    if (!Array.isArray(retractions)) throw new Error("invalid steward state: retractions must be an array");
+    const parsedRetractions = parseRetractionCorpus(Buffer.from(JSON.stringify({
+      schema: 1, version: "steward-state", issuedAt: STATE_VALIDATION_ISSUED_AT, advisories: retractions,
+    }))).advisories;
+    for (const advisory of parsedRetractions) this.retractions.set(advisory.id, advisory);
+    const releases = state.releases ?? [];
+    if (!Array.isArray(releases)) throw new Error("invalid steward state: releases must be an array");
+    for (const candidate of releases) {
+      const release = candidate as { version?: unknown; raw?: unknown; retractionRaw?: unknown };
+      if (typeof release.version !== "string" || !release.version.trim() || typeof release.raw !== "string" ||
+          typeof release.retractionRaw !== "string" || this.releases.has(release.version)) {
+        throw new Error("invalid steward state: malformed release snapshot");
+      }
+      try {
+        const claimCorpus = parseClaimCorpus(Buffer.from(release.raw, "base64"));
+        const retractionCorpus = parseRetractionCorpus(Buffer.from(release.retractionRaw, "base64"));
+        if (claimCorpus.version !== release.version || retractionCorpus.version !== release.version) throw new Error("version mismatch");
+      } catch { throw new Error("invalid steward state: malformed release snapshot"); }
+      this.releases.set(release.version, { raw: release.raw, retractionRaw: release.retractionRaw });
+    }
   }
 
   private persist(): void {
@@ -376,6 +448,8 @@ export class ClaimSteward {
       applications: [...this.applications.values()],
       claims: [...this.claims.values()],
       pendingGrants: [...this.pendingGrants.values()],
+      retractions: [...this.retractions.values()],
+      releases: [...this.releases].map(([version, snapshot]) => ({ version, ...snapshot })),
     });
     const temporary = `${this.stateFile}.${process.pid}.tmp`;
     writeFileSync(temporary, raw, { mode: 0o600 });

@@ -1,6 +1,6 @@
 # Sentinel — Threat Model
 
-> Snapshot: 2026-07-13, including Phase 30 / ADR-0045. If the
+> Snapshot: 2026-07-13, including Phases 30–32 / ADR-0045–0047. If the
 > ADR log has moved past that, check newer ADRs for controls added since.
 
 This document is for a security engineer evaluating Sentinel before adopting it.
@@ -385,8 +385,8 @@ Stated plainly. Each is a deliberate, recorded trade-off, not an oversight.
 
 ## 6. Registry write path and future registry controls
 
-> Phases 30–31 / ADR-0045–0046 are implemented. Sections explicitly labeled
-> Phase 32 or 33 remain proposed design and are not shipped.
+> Phases 30–32 / ADR-0045–0047 are implemented. Sections explicitly labeled
+> Phase 33 remain proposed design and are not shipped.
 
 Accepting writes adds attacker goals a read-only proxy never faced. The
 implemented load-bearing property is a name-level
@@ -400,13 +400,12 @@ on the *inputs* to that function and on the write path itself.
 
 An attacker steals a publisher role token (ADR-0025) or compromises the CI
 identity enrolled as a trusted publisher (ADR-0046) and publishes to a
-claimed namespace. One shipped control and one future control bound the damage.
-The shipped control is that **credentials
+claimed namespace. Two shipped controls bound the damage. The first is that **credentials
 never bypass the audit engine**: every publish gates synchronously on
 `runAudit` + `score(policy)` against the policy-data `publishGate`, with no
 timeout-fallback-to-allow (ADR-0045) — a stolen credential ships malware only
 if the payload also scores clean, which is the same heuristics-are-signal
-residual as §4, not a new one. The proposed Phase 32 retraction window (ADR-0047)
+residual as §4, not a new one. The implemented Phase 32 retraction window (ADR-0047)
 gives the legitimate owner an operator-side recovery path that does not
 require re-taking the compromised credential — retraction is an instance-side
 act, deliberately unlike Go's publish-a-new-version model. Residuals: a
@@ -462,7 +461,7 @@ during a challenge or renewal window defeats the mechanism by satisfying it
 review is a human judgment — the steward's narrow adjudication question is
 the control, not a proof.
 
-### 6.4 Retraction abuse (Phase 32 — proposed)
+### 6.4 Retraction abuse (Phase 32 — implemented)
 
 An attacker (hostile maintainer, compromised publisher, or coerced org)
 tries to grief a dependency out of existence — the left-pad goal. The dual
@@ -475,9 +474,13 @@ local, corpus-cadence fleet-wide); tombstones are permanent and identifiers
 spent, so retract-then-republish substitution is rejected by construction;
 and history — audits, attestations, history-DB rows — survives retraction
 byte-identically, so the record of what was served cannot be erased by the
-mechanism (ADR-0047). Residuals: churn-griefing of young releases is an
-annoyance the advisory trail makes visible but does not prevent; and the
-window means Sentinel **cannot** serve as a takedown mechanism for
+mechanism (ADR-0047). Successful native tarball serves count toward adoption;
+SQLite deduplicates a repeated coordinate within one `npm-session`, while
+headerless requests count individually. Residuals: churn-griefing of young
+releases is an annoyance the advisory trail makes visible but does not prevent;
+an unauthenticated downloader can deliberately exhaust the download window and
+freeze a release into immutability (a denial of maintainer control, never a
+substitution or availability bypass); and the window means Sentinel **cannot** serve as a takedown mechanism for
 widely-adopted content — legal takedowns are an operator/steward process
 outside this design, recorded as a boundary, not a gap.
 

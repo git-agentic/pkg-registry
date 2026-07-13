@@ -1,4 +1,5 @@
 import { createRequire } from "node:module";
+import { createHash, randomUUID } from "node:crypto";
 import type { AuditReport } from "@sentinel/core";
 import type { ViolationRecord } from "./violations.js";
 
@@ -9,12 +10,24 @@ export interface HistorySummary {
   provenance: { verified: number; invalid: number; absent: number; unknown: number };
   violations: number;
   quarantined: number;
+  retractionWindowHits: number;
 }
 
 export interface HistoryRow { name: string; version: string; verdict: string; score: number; topFinding: string | null; auditedAt: string; }
 export interface TrendBucket { date: string; allow: number; warn: number; block: number; }
 export interface TopFlagged { name: string; warn: number; block: number; }
 export interface ViolationTimelineRow { name: string | null; version: string | null; status: string; quarantined: boolean; detail: string | null; recordedAt: string; }
+export interface RetractionWindowHitRow {
+  name: string;
+  version: string;
+  ageHours: number;
+  downloads: number;
+  maxAgeHours: number;
+  maxDownloads: number;
+  ageExceeded: boolean;
+  downloadsExceeded: boolean;
+  attemptedAt: string;
+}
 
 // Minimal shape of the node:sqlite surface we use (the module is loaded lazily).
 interface Stmt { run(...p: unknown[]): unknown; all(...p: unknown[]): Record<string, unknown>[]; }
@@ -45,6 +58,27 @@ CREATE TABLE IF NOT EXISTS violation_events (
   recorded_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_viol_at ON violation_events(recorded_at);
+CREATE TABLE IF NOT EXISTS download_events (
+  dedupe_key TEXT PRIMARY KEY,
+  integrity  TEXT NOT NULL,
+  name       TEXT NOT NULL,
+  version    TEXT NOT NULL,
+  served_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_download_coordinate ON download_events(name, version);
+CREATE TABLE IF NOT EXISTS retraction_window_hits (
+  id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+  name               TEXT NOT NULL,
+  version            TEXT NOT NULL,
+  age_hours           REAL NOT NULL,
+  downloads           INTEGER NOT NULL,
+  max_age_hours       INTEGER NOT NULL,
+  max_downloads       INTEGER NOT NULL,
+  age_exceeded        INTEGER NOT NULL,
+  downloads_exceeded  INTEGER NOT NULL,
+  attempted_at        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_retraction_hit_at ON retraction_window_hits(attempted_at);
 `;
 
 /**
@@ -87,18 +121,63 @@ export class HistoryDb {
       .run(rec.integrity, rec.name, rec.version, rec.confidence, rec.quarantined ? 1 : 0, detail, rec.reportedAt);
   }
 
+  /** Count successful native tarball serves. npm-session retries dedupe per coordinate; requests without it count individually. */
+  recordDownload(input: { name: string; version: string; integrity: string; npmSession?: string; servedAt: string }): { count: number; recorded: boolean } {
+    const material = input.npmSession === undefined
+      ? `serve:${randomUUID()}`
+      : `npm-session:${input.name}\u0000${input.version}\u0000${input.integrity}\u0000${input.npmSession}`;
+    const dedupeKey = createHash("sha256").update(material).digest("hex");
+    const result = this.db.prepare(
+      `INSERT INTO download_events(dedupe_key,integrity,name,version,served_at)
+       VALUES(?,?,?,?,?) ON CONFLICT(dedupe_key) DO NOTHING`,
+    ).run(dedupeKey, input.integrity, input.name, input.version, input.servedAt) as { changes: number | bigint };
+    return { count: this.downloadCount(input.name, input.version), recorded: Number(result.changes) > 0 };
+  }
+
+  downloadCount(name: string, version: string): number {
+    return Number((this.db.prepare("SELECT COUNT(*) c FROM download_events WHERE name=? AND version=?").all(name, version)[0] as { c: number }).c);
+  }
+
+  recordRetractionWindowHit(hit: RetractionWindowHitRow): void {
+    this.db.prepare(
+      `INSERT INTO retraction_window_hits(name,version,age_hours,downloads,max_age_hours,max_downloads,age_exceeded,downloads_exceeded,attempted_at)
+       VALUES(?,?,?,?,?,?,?,?,?)`,
+    ).run(
+      hit.name, hit.version, hit.ageHours, hit.downloads, hit.maxAgeHours, hit.maxDownloads,
+      hit.ageExceeded ? 1 : 0, hit.downloadsExceeded ? 1 : 0, hit.attemptedAt,
+    );
+  }
+
+  retractionWindowHits(opts: { limit?: number } = {}): RetractionWindowHitRow[] {
+    return this.db.prepare(
+      `SELECT name,version,age_hours,downloads,max_age_hours,max_downloads,age_exceeded,downloads_exceeded,attempted_at
+       FROM retraction_window_hits ORDER BY attempted_at DESC, id DESC LIMIT ?`,
+    ).all(opts.limit ?? 100).map((row) => ({
+      name: row.name as string,
+      version: row.version as string,
+      ageHours: Number(row.age_hours),
+      downloads: Number(row.downloads),
+      maxAgeHours: Number(row.max_age_hours),
+      maxDownloads: Number(row.max_downloads),
+      ageExceeded: Number(row.age_exceeded) === 1,
+      downloadsExceeded: Number(row.downloads_exceeded) === 1,
+      attemptedAt: row.attempted_at as string,
+    }));
+  }
+
   summary(): HistorySummary {
     const n = (col: "verdict" | "signature" | "provenance", val: string, table = "audit_events") =>
       Number((this.db.prepare(`SELECT COUNT(*) c FROM ${table} WHERE ${col}=?`).all(val)[0] as { c: number }).c);
     const total = Number((this.db.prepare("SELECT COUNT(*) c FROM audit_events").all()[0] as { c: number }).c);
     const violations = Number((this.db.prepare("SELECT COUNT(*) c FROM violation_events").all()[0] as { c: number }).c);
     const quarantined = Number((this.db.prepare("SELECT COUNT(*) c FROM violation_events WHERE quarantined=1").all()[0] as { c: number }).c);
+    const retractionWindowHits = Number((this.db.prepare("SELECT COUNT(*) c FROM retraction_window_hits").all()[0] as { c: number }).c);
     return {
       total,
       verdict: { allow: n("verdict", "allow"), warn: n("verdict", "warn"), block: n("verdict", "block") },
       signature: { verified: n("signature", "verified"), invalid: n("signature", "invalid"), unsigned: n("signature", "unsigned"), unknown: n("signature", "unknown") },
       provenance: { verified: n("provenance", "verified"), invalid: n("provenance", "invalid"), absent: n("provenance", "absent"), unknown: n("provenance", "unknown") },
-      violations, quarantined,
+      violations, quarantined, retractionWindowHits,
     };
   }
 

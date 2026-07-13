@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, test } from "node:test";
-import { generateKeypair, parseClaimCorpus, verifyClaimCorpusBytes } from "@sentinel/core";
+import { generateKeypair, parseClaimCorpus, verifyClaimCorpusBytes, parseRetractionCorpus, verifyRetractionCorpusBytes } from "@sentinel/core";
 import { ClaimSteward, corroboratesClaimDomain, signTransferRequest, type UpstreamClaimLookup } from "../src/steward.js";
 import { createStewardServer } from "../src/server.js";
 
@@ -116,6 +116,40 @@ describe("claim steward pipeline", () => {
     assert.equal(parseClaimCorpus(release.raw).claims[0]?.challenge.id, app.id);
   });
 
+  test("claimed-namespace retractions join the next signed release train and survive restart", async () => {
+    const stateFile = join(mkdtempSync(join(tmpdir(), "sentinel-steward-retractions-")), "state.json");
+    const keys = generateKeypair();
+    const first = new ClaimSteward({ now: () => Date.parse("2026-07-13T12:00:00.000Z"), id: () => "claimed", stateFile, lookupUpstream: absent });
+    const challenge = await first.issueChallenge({ namespace: "@acme/*", domain: "acme.example", claimantPublicKey: claimant.publicKey });
+    await first.verifyChallenge(challenge.id, async () => [[challenge.txtValue]]);
+    first.approve(challenge.id);
+    first.recordRetraction({
+      kind: "retraction", id: "SENTINEL-RETRACT-steward", name: "@acme/widget", version: "2.0.0",
+      integrity: "sha512-YWJj", reason: "security", retractedAt: "2026-07-13T11:00:00.000Z", severity: "high",
+    });
+
+    const restarted = new ClaimSteward({ now: () => Date.parse("2026-07-13T12:00:00.000Z"), stateFile, lookupUpstream: absent });
+    const release = restarted.release("fleet-1", keys.privateKey);
+    assert.equal(parseRetractionCorpus(release.retractionRaw).advisories[0]?.id, "SENTINEL-RETRACT-steward");
+    assert.equal(verifyRetractionCorpusBytes(release.retractionRaw, release.retractionSignature!, keys.publicKey), true);
+    assert.throws(() => restarted.recordRetraction({
+      kind: "retraction", id: "other", name: "unclaimed", version: "1.0.0", integrity: "sha512-YWJj",
+      reason: "broken", retractedAt: "2026-07-13T11:00:00.000Z", severity: "medium",
+    }), /claimed namespace/i);
+  });
+
+  test("a reused corpus version is an immutable snapshot, including after restart", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "sentinel-steward-release-version-"));
+    const stateFile = join(dir, "state.json");
+    const steward = new ClaimSteward({ stateFile, lookupUpstream: absent });
+    const first = steward.release("immutable-version");
+    await steward.issueChallenge({ namespace: "later-name", domain: "later.example", claimantPublicKey: claimant.publicKey });
+    assert.deepEqual(steward.release("immutable-version").retractionRaw, first.retractionRaw);
+    assert.deepEqual(steward.release("immutable-version").raw, first.raw);
+    const restarted = new ClaimSteward({ stateFile, lookupUpstream: absent });
+    assert.deepEqual(restarted.release("immutable-version").raw, first.raw);
+  });
+
   test("challenge, renewal, and claim state survives a steward restart", async () => {
     const stateFile = join(mkdtempSync(join(tmpdir(), "sentinel-steward-state-")), "state.json");
     const first = new ClaimSteward({ now: () => Date.parse("2026-07-01T00:00:00.000Z"), id: () => "durable", stateFile, lookupUpstream: absent });
@@ -177,10 +211,12 @@ describe("claim steward pipeline", () => {
       const body = await response.json() as { releasePath: string };
       assert.match(basename(body.releasePath), /^[a-f0-9]{64}$/);
       assert.notEqual(basename(body.releasePath), "release-1");
-      assert.deepEqual(readdirSync(body.releasePath).sort(), ["claims.json", "claims.json.sig"]);
+      assert.deepEqual(readdirSync(body.releasePath).sort(), ["advisories.json", "advisories.json.sig", "claims.json", "claims.json.sig"]);
       assert.equal(existsSync(join(releaseDir, "claims.json")), false);
       assert.equal(verifyClaimCorpusBytes(readFileSync(join(body.releasePath, "claims.json")),
         readFileSync(join(body.releasePath, "claims.json.sig"), "utf8"), signing.publicKey), true);
+      assert.equal(verifyRetractionCorpusBytes(readFileSync(join(body.releasePath, "advisories.json")),
+        readFileSync(join(body.releasePath, "advisories.json.sig"), "utf8"), signing.publicKey), true);
     } finally { server.close(); }
   });
 

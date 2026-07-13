@@ -9,6 +9,7 @@
 import type { Advisory } from "./advisory-corpus.js";
 import type { VulnAdvisory } from "./vuln-corpus.js";
 import type { ClaimCorpusIdentity } from "./claim-corpus.js";
+import type { RetractionCorpusIdentity } from "./retraction-corpus.js";
 
 export type Verdict = "allow" | "warn" | "block";
 
@@ -143,7 +144,7 @@ export interface AuditReport {
   auditedAt: string;
   durationMs: number;
   /** The policy under which this report was scored. */
-  policy: { version: string; hash: string; claimCorpus?: ClaimCorpusIdentity };
+  policy: { version: string; hash: string; claimCorpus?: ClaimCorpusIdentity; retractionCorpus?: RetractionCorpusIdentity };
 }
 
 /** A single file extracted from a package tarball. */

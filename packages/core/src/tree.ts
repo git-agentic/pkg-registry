@@ -1,5 +1,6 @@
 import type { ProvenanceStatus, Verdict } from "./types.js";
 import type { ClaimCorpusIdentity } from "./claim-corpus.js";
+import type { RetractionCorpusIdentity } from "./retraction-corpus.js";
 
 export type TreeStatus = Verdict | "error";
 
@@ -41,6 +42,8 @@ export interface TreeAuditResult {
   policyHash?: string;
   /** Verified claim-corpus identity used for source partitioning (Phase 31). */
   claimCorpus?: ClaimCorpusIdentity;
+  /** Verified retraction-corpus identity used for fleet-wide tombstone overlays (Phase 32). */
+  retractionCorpus?: RetractionCorpusIdentity;
 }
 
 const VERDICT_RANK: Record<Verdict, number> = { allow: 0, warn: 1, block: 2 };

@@ -7,7 +7,7 @@ import { describe, test } from "node:test";
 import {
   DEFAULT_POLICY, generateKeypair, signPolicy, verifyPolicyBytes,
   policyHashOfBytes, parsePolicy, loadPolicy, treeGateOf,
-  publishGateOf, verdictAtOrAbove,
+  publishGateOf, retractionWindowOf, verdictAtOrAbove,
 } from "../src/index.js";
 
 const rawDefault = Buffer.from(JSON.stringify({ ...DEFAULT_POLICY, version: "acme-1" }));
@@ -201,6 +201,41 @@ describe("publishGate policy field", () => {
     assert.equal(verdictAtOrAbove("warn", "warn"), true);
     assert.equal(verdictAtOrAbove("block", "warn"), true);
     assert.equal(verdictAtOrAbove("block", "block"), true);
+  });
+});
+
+describe("retraction policy window", () => {
+  test("defaults to 72 hours and 1,000 cumulative downloads", () => {
+    assert.deepEqual(retractionWindowOf(DEFAULT_POLICY), { maxAgeHours: 72, maxDownloads: 1_000 });
+    assert.deepEqual(retractionWindowOf({ ...DEFAULT_POLICY, retraction: undefined }), { maxAgeHours: 72, maxDownloads: 1_000 });
+  });
+
+  test("accepts finite non-negative policy-data bounds", () => {
+    const parsed = parsePolicy(Buffer.from(JSON.stringify({
+      ...DEFAULT_POLICY,
+      retraction: { maxAgeHours: 24, maxDownloads: 50 },
+    })));
+    assert.deepEqual(retractionWindowOf(parsed), { maxAgeHours: 24, maxDownloads: 50 });
+    assert.deepEqual(
+      retractionWindowOf(parsePolicy(Buffer.from(JSON.stringify({ ...DEFAULT_POLICY, retraction: { maxAgeHours: 0, maxDownloads: 0 } })))),
+      { maxAgeHours: 0, maxDownloads: 0 },
+    );
+  });
+
+  test("rejects malformed or unbounded retraction limits", () => {
+    for (const retraction of [
+      null,
+      { maxAgeHours: -1, maxDownloads: 1_000 },
+      { maxAgeHours: 72, maxDownloads: -1 },
+      { maxAgeHours: 72.5, maxDownloads: 1_000 },
+      { maxAgeHours: 72, maxDownloads: 1.5 },
+      { maxAgeHours: 72 },
+    ]) {
+      assert.throws(
+        () => parsePolicy(Buffer.from(JSON.stringify({ ...DEFAULT_POLICY, retraction }))),
+        /retraction/,
+      );
+    }
   });
 });
 
