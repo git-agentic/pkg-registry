@@ -5,9 +5,10 @@
   "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/index.js",
-  "bin": { "sentinel-proxy": "./dist/index.js" },
+  "bin": { "sentinel-proxy": "./dist/index.js", "sentinel-registry": "./dist/registry-cli.js" },
   "dependencies": {
     "@sentinel/core": "0.1.0",
+    "commander": "^15.0.0",
     "express": "^5.2.1",
     "express-rate-limit": "^8.5.2"
   },

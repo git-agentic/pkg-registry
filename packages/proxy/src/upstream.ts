@@ -2,6 +2,8 @@ import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 import type { RegistrySignature } from "@sentinel/core";
 import { assertAllowedTarballUrl } from "./net-config.js";
 import { readBodyCapped } from "./limits.js";
@@ -51,6 +53,10 @@ export interface Upstream {
   /** Fetch the attestation-endpoint response for a version; null when unavailable.
    *  Acquisition-path network (invariant #3 keeps the AUDIT offline, not this). */
   getAttestations(pkg: string, version: string): Promise<unknown | null>;
+  /** Optional byte-preserving forwarding for the bounded Phase 33 compatibility surface. */
+  proxyRegistryRequest?(pathAndQuery: string, init: { method: string; headers: Record<string, string>; body?: Buffer }): Promise<{
+    status: number; headers: Record<string, string | string[]>; body: Buffer;
+  }>;
 }
 
 function authorString(a: unknown): string | null {
@@ -105,7 +111,7 @@ export class NpmUpstream implements Upstream {
    * keeps legitimate redirecting mirrors (Artifactory/Nexus/Verdaccio)
    * working while refusing to follow a hop off the allowlist (ADR-0036).
    */
-  private async fetchPinned(initialUrl: string, what: string): Promise<Response> {
+  private async fetchPinned(initialUrl: string, what: string, init: RequestInit = {}): Promise<Response> {
     let url = initialUrl;
     for (let hop = 0; hop <= MAX_TARBALL_REDIRECTS; hop++) {
       try {
@@ -113,7 +119,7 @@ export class NpmUpstream implements Upstream {
       } catch (err) {
         throw new HttpError(502, `refusing ${what}: ${(err as Error).message}`);
       }
-      const res = await fetch(url, { redirect: "manual" });
+      const res = await fetch(url, { ...init, redirect: "manual" });
       if (res.status >= 300 && res.status < 400) {
         const loc = res.headers.get("location");
         if (!loc) return res; // no Location — let the caller's !res.ok handle it
@@ -167,6 +173,44 @@ export class NpmUpstream implements Upstream {
     } catch {
       return null; // fail-open to "unknown" — an outage must not break installs
     }
+  }
+
+  async proxyRegistryRequest(pathAndQuery: string, init: { method: string; headers: Record<string, string>; body?: Buffer }) {
+    const target = new URL(pathAndQuery, `${this.registry}/`);
+    if (target.origin !== this.registryOrigin) throw new HttpError(502, "refusing compatibility proxy outside registry origin");
+    const allowed = (init.method === "GET" && (target.pathname === "/-/v1/search" || target.pathname === "/-/npm/v1/keys" ||
+      target.pathname.startsWith("/-/npm/v1/attestations/"))) ||
+      (init.method === "POST" && (target.pathname === "/-/npm/v1/security/advisories/bulk" || target.pathname === "/-/v1/login"));
+    if (!allowed) throw new HttpError(502, "refusing unrecognized compatibility proxy route");
+    const registry = new URL(this.registry);
+    return new Promise<{ status: number; headers: Record<string, string | string[]>; body: Buffer }>((resolve, reject) => {
+      const request = (registry.protocol === "https:" ? httpsRequest : httpRequest)({
+        protocol: registry.protocol, hostname: registry.hostname, port: registry.port || undefined,
+        path: `${target.pathname}${target.search}`, method: init.method, headers: init.headers,
+      }, (response) => {
+        const chunks: Buffer[] = [];
+        let size = 0;
+        response.on("data", (chunk: Buffer) => {
+          size += chunk.length;
+          if (size > this.maxPackumentBytes) {
+            response.destroy(new Error(`compatibility route ${target.pathname} exceeds ${this.maxPackumentBytes} bytes`));
+            return;
+          }
+          chunks.push(Buffer.from(chunk));
+        });
+        response.on("error", (error) => reject(new HttpError(502, `upstream compatibility route: ${error.message}`)));
+        response.on("end", () => {
+          const headers: Record<string, string | string[]> = {};
+          for (const [name, value] of Object.entries(response.headers)) {
+            if (value !== undefined) headers[name] = value;
+          }
+          resolve({ status: response.statusCode ?? 502, headers, body: Buffer.concat(chunks) });
+        });
+      });
+      request.on("error", (error) => reject(new HttpError(502, `upstream compatibility route: ${error.message}`)));
+      if (init.body) request.write(init.body);
+      request.end();
+    });
   }
 }
 

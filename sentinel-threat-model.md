@@ -1,6 +1,6 @@
 # Sentinel — Threat Model
 
-> Snapshot: 2026-07-13, including Phases 30–32 / ADR-0045–0047. If the
+> Snapshot: 2026-07-13, including Phases 30–33 / ADR-0045–0048. If the
 > ADR log has moved past that, check newer ADRs for controls added since.
 
 This document is for a security engineer evaluating Sentinel before adopting it.
@@ -383,10 +383,9 @@ Stated plainly. Each is a deliberate, recorded trade-off, not an oversight.
   (ADR-0012/0014/0025/0032) but cannot detect a signature made with a stolen
   key.
 
-## 6. Registry write path and future registry controls
+## 6. Registry write path and migration controls
 
-> Phases 30–32 / ADR-0045–0047 are implemented. Sections explicitly labeled
-> Phase 33 remain proposed design and are not shipped.
+> Phases 30–33 / ADR-0045–0048 are implemented.
 
 Accepting writes adds attacker goals a read-only proxy never faced. The
 implemented load-bearing property is a name-level
@@ -493,10 +492,10 @@ attacker-supplied higher version on the attacker-writable side — is
 and upstream versions, so there is no race for a resolver to lose
 (ADR-0045). The attack therefore moves to changing `source(name)` itself.
 The policy input is signed fail-closed (ADR-0012/0014). Phase 31's claim data
-is a signature-verified trust input with the steward controls in §6.2. Another future path is
+is a signature-verified trust input with the steward controls in §6.2. Another path is
 **mode-revert resurrection** (Phase 33) — disabling registry mode flips
 previously-claimed names back to public-mirror, handing their resolution to
-whatever squats them upstream. Phase 33 proposes making that flip loud rather than
+whatever squats them upstream. Phase 33 makes that flip loud rather than
 silent: with native content present it is a startup FATAL without an
 explicit acknowledgment, and the revert manifest enumerates every name whose
 resolution class changes, with the safe migration path stated (ADR-0048).

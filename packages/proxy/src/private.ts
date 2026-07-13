@@ -1,12 +1,24 @@
 import { Buffer } from "node:buffer";
-import { createHash, timingSafeEqual } from "node:crypto";
+import { timingSafeEqual } from "node:crypto";
 
-function sha(s: string): Buffer {
-  return createHash("sha256").update(s).digest();
+/** Constant-time token equality without treating bearer tokens as passwords
+ * or storing a password-style digest. Length is not confidential here: the
+ * candidate came from the request and configured token lengths are visible to
+ * the operator who owns this process. */
+function tokenEqual(candidate: string, configured: string): boolean {
+  const a = Buffer.from(candidate);
+  const b = Buffer.from(configured);
+  const length = Math.max(a.length, b.length, 1);
+  const paddedA = Buffer.alloc(length);
+  const paddedB = Buffer.alloc(length);
+  a.copy(paddedA);
+  b.copy(paddedB);
+  return timingSafeEqual(paddedA, paddedB) && a.length === b.length;
 }
 
 export interface ParsedPublish {
   version: string;
+  distTag: string;
   manifest: Record<string, unknown>;
   tarball: Buffer;
   declaredIntegrity: string | undefined;
@@ -74,7 +86,11 @@ export function parsePublishBody(name: string, body: unknown): ParsedPublish {
   if (Object.keys(versions).length !== 1) throw new Error("publish payload must have exactly one version");
   const manifest = versions[version];
   if (!manifest) throw new Error(`publish payload missing manifest for version ${version}`);
-  if (b["dist-tags"]?.latest !== version) throw new Error("publish dist-tags.latest must match the published version");
+  const distTags = Object.entries(b["dist-tags"] ?? {}).filter(([, target]) => target === version);
+  if (distTags.length !== 1 || Object.keys(b["dist-tags"] ?? {}).length !== 1) {
+    throw new Error("publish payload must have exactly one dist-tag targeting the published version");
+  }
+  if (!/^[^\s/]+$/.test(distTags[0]![0])) throw new Error("publish payload contains an invalid dist-tag");
   if (manifest.name !== name) {
     throw new Error(`publish manifest name "${String(manifest.name)}" does not match ${name}`);
   }
@@ -84,6 +100,7 @@ export function parsePublishBody(name: string, body: unknown): ParsedPublish {
   const dist = manifest.dist as { integrity?: string } | undefined;
   return {
     version,
+    distTag: distTags[0]![0],
     manifest,
     tarball,
     declaredIntegrity: dist?.integrity,
@@ -98,6 +115,6 @@ export function publishTokenValid(authHeader: string | undefined, tokens: string
   // Authorization header (no polynomial backtracking over a long space run).
   const m = /^Bearer\s+(\S.*)$/i.exec(authHeader ?? "");
   if (!m) return false;
-  const candidate = sha((m[1] ?? "").trim());
-  return tokens.some((t) => timingSafeEqual(candidate, sha(t)));
+  const candidate = (m[1] ?? "").trim();
+  return tokens.some((token) => tokenEqual(candidate, token));
 }

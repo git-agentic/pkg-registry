@@ -219,6 +219,26 @@ matches advisories by `(name, version, integrity)`. A matching fleet advisory
 applies the same packument exclusion and 410/report overlay as a local
 retraction (ADR-0047).
 
+Phase 33 adds the bounded compatibility and migration surface from ADR-0048.
+Native packuments are full npm documents with `time` and `_rev`; corgi Accept
+negotiation returns the abbreviated projection with the matching Content-Type.
+Dist-tag writes, legacy CouchDB login, whoami, metadata-only deprecation, and
+the npm/pnpm `-rev` dance are native routes. Unpublish is only a client-facing
+spelling of Phase 32 retraction; it never deletes retained bytes. Search,
+bulk-advisory, signing-key, attestation, and web-login routes are forwarded
+without rewriting their response bytes.
+
+The registry escape hatch is `SENTINEL_REGISTRY_MODE=off`. It removes verified
+claims from source selection and disables registry mutations, while signed
+policy-private namespaces remain authoritative. Retained native content makes
+an unacknowledged off switch fatal; an acknowledged switch emits a manifest of
+the exact verified-claim → public-mirror flips and deletes nothing. Re-enable
+therefore restores the same store bytes. History import audits all upstream
+versions before committing any, preserves each upstream integrity, and marks
+publication provenance as imported. Export writes the original tarballs plus
+full packuments. Source class remains derived from policy and corpus and is
+never stored.
+
 ### 3.6 Sandbox enforcement (Phases 3–5, ADR-0011/0016/0017/0018)
 
 `@sentinel/sandbox` turns an *approved* capability set into *enforced* runtime

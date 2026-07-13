@@ -34,6 +34,7 @@ import { PrivatePackageStore } from "./private-store.js";
 import { ViolationStore } from "./violations.js";
 import { ApprovalRequestStore } from "./approval-requests.js";
 import { HistoryDb } from "./history-db.js";
+import { configureRegistryMode } from "./registry-mode.js";
 
 export { createServer } from "./server.js";
 export { AuditStore } from "./store.js";
@@ -42,6 +43,8 @@ export { PrivatePackageStore } from "./private-store.js";
 export * from "./resolution.js";
 export { ViolationStore } from "./violations.js";
 export { ApprovalRequestStore } from "./approval-requests.js";
+export * from "./registry-mode.js";
+export * from "./registry-export.js";
 export * from "./upstream.js";
 
 function env(name: string, fallback: string): string {
@@ -277,6 +280,23 @@ function main(): void {
   const store = new AuditStore(process.env.SENTINEL_STORE, policyHash, history);
   const approvals = new ApprovalStore(process.env.SENTINEL_APPROVALS);
   const privateStore = new PrivatePackageStore(process.env.SENTINEL_PRIVATE_STORE);
+  let registryMode: "on" | "off";
+  try {
+    const configured = configureRegistryMode({
+      rawMode: process.env.SENTINEL_REGISTRY_MODE,
+      acknowledged: process.env.SENTINEL_REGISTRY_MODE_OFF_ACK,
+      manifestPath: process.env.SENTINEL_REVERT_MANIFEST ??
+        (process.env.SENTINEL_PRIVATE_STORE ? join(process.env.SENTINEL_PRIVATE_STORE, "revert-manifest.json") : undefined),
+      privateStore,
+      policy: enterprisePolicy,
+      claimCorpus,
+    });
+    registryMode = configured.mode;
+    if (configured.manifest) console.log(`  registry  : OFF\n  REVERT MANIFEST: ${JSON.stringify(configured.manifest)}`);
+  } catch (error) {
+    console.error(`FATAL: registry mode: ${(error as Error).message}`);
+    process.exit(1);
+  }
   const publishTokens = (process.env.SENTINEL_PUBLISH_TOKENS ?? "").split(",").map((t) => t.trim()).filter(Boolean);
   // dist/index.js -> ../public ; src is run via tsx with the same relative layout.
   const publicDir = env("SENTINEL_PUBLIC", join(here, "..", "public"));
@@ -288,7 +308,7 @@ function main(): void {
   const vulnerabilities = resolveVulnerabilities();
   const autoQuarantine = resolveAutoQuarantine(Boolean(authPublicKey));
 
-  const app = createServer({ upstream, store, approvals, enterprisePolicy, policyHash, policy, publicDir, privateStore, claimCorpus, claimCorpusHash, retractionCorpus, retractionCorpusHash, publishTokens, trustMaterial, violations, approvalRequests, authPublicKey, history, advisories, vulnerabilities, publicBaseUrl, maxTreePackages, rateLimiter, extractLimits, autoQuarantine });
+  const app = createServer({ upstream, store, approvals, enterprisePolicy, policyHash, policy, publicDir, privateStore, claimCorpus, claimCorpusHash, retractionCorpus, retractionCorpusHash, publishTokens, trustMaterial, violations, approvalRequests, authPublicKey, history, advisories, vulnerabilities, publicBaseUrl, maxTreePackages, rateLimiter, extractLimits, autoQuarantine, registryMode });
   app.listen(port, () => {
     console.log(`Sentinel proxy listening on http://localhost:${port}`);
     console.log(`  upstream : ${upstream.name}`);

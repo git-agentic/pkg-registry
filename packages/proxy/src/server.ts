@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import express, { type Request, type Response } from "express";
 import { rateLimit } from "express-rate-limit";
 import {
@@ -20,6 +20,7 @@ import {
   verdictAtOrAbove,
   NPM_SIGNING_KEYS,
   remediate,
+  verifyToken,
   parsePolicy,
   type Audit,
   type AuditReport,
@@ -69,6 +70,7 @@ import type { HistoryDb } from "./history-db.js";
 import type { RateLimiter } from "./rate-limit.js";
 
 export type ProxyPolicy = "observe" | "block";
+export type RegistryMode = "on" | "off";
 
 export interface ServerOptions {
   upstream: Upstream;
@@ -130,9 +132,24 @@ export interface ServerOptions {
   publishAudit?: typeof runAudit;
   /** Injectable clock (ms) for the release-cooldown overlay. Default Date.now. */
   now?: () => number;
+  /** Phase 33 escape hatch. Off ignores verified claims and disables registry mutations. */
+  registryMode?: RegistryMode;
 }
 
 const TARBALL_RE = /^(.+)\/-\/([^/]+\.tgz)$/;
+const CORGI = "application/vnd.npm.install-v1+json";
+
+/** Verify every supported token in an SRI string without normalizing the
+ * upstream value. Legacy registries may legitimately publish sha1/sha256 or
+ * multi-algorithm SRI, and lockfiles depend on receiving it verbatim. */
+function integrityMatches(tarball: Buffer, declared: string): boolean {
+  const tokens = declared.trim().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return false;
+  return tokens.every((token) => {
+    const match = /^(sha1|sha256|sha512)-/.exec(token);
+    return match !== null && integrityOfAlgo(tarball, match[1] as "sha1" | "sha256" | "sha512") === token;
+  });
+}
 
 /** Derive the release-vs-history context for a version from its packument (Phase 16). Pure. */
 export function buildReleaseContext(pm: UpstreamPackument, version: string): ReleaseContext {
@@ -178,6 +195,7 @@ export function createServer(opts: ServerOptions) {
   const { upstream, store, approvals, violations, approvalRequests } = opts;
   const history = opts.history;
   const enterprisePolicy = opts.enterprisePolicy;
+  const registryMode = opts.registryMode ?? "on";
   const policyHash = opts.policyHash ?? policyHashOf(enterprisePolicy);
   const policy: ProxyPolicy = opts.policy ?? "observe";
   const privateStore = opts.privateStore ?? new PrivatePackageStore();
@@ -205,11 +223,71 @@ export function createServer(opts: ServerOptions) {
   const autoQuarantineEnabled = Boolean(opts.autoQuarantine) && authz.enabled;
   const app = express();
   app.disable("x-powered-by");
+
+  // npm-compatible endpoints are a byte-preserving tunnel to the configured
+  // upstream. Register them before JSON parsing so whitespace, encodings, and
+  // non-JSON request bodies are not rewritten by Sentinel.
+  const hopByHopHeaders = new Set([
+    "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer",
+    "transfer-encoding", "upgrade", "host",
+  ]);
+  async function proxyCompatibility(req: Request, res: Response): Promise<void> {
+    if (!upstream.proxyRegistryRequest) {
+      res.status(501).json({ error: "upstream does not support compatibility-route proxying" });
+      return;
+    }
+    const headers: Record<string, string> = {};
+    for (const [name, value] of Object.entries(req.headers)) {
+      if (hopByHopHeaders.has(name) || value === undefined) continue;
+      headers[name] = Array.isArray(value) ? value.join(", ") : value;
+    }
+    try {
+      let body: Buffer | undefined;
+      if (req.method !== "GET" && req.method !== "HEAD") {
+        const chunks: Buffer[] = [];
+        let size = 0;
+        for await (const chunk of req) {
+          const bytes = Buffer.from(chunk as Uint8Array);
+          size += bytes.length;
+          if (size > 128 * 1024 * 1024) throw new HttpError(413, "compatibility request exceeds 128 MiB");
+          chunks.push(bytes);
+        }
+        if (size) body = Buffer.concat(chunks);
+      }
+      const response = await upstream.proxyRegistryRequest(req.originalUrl, {
+        method: req.method, headers, ...(body ? { body } : {}),
+      });
+      for (const [name, value] of Object.entries(response.headers)) {
+        if (!hopByHopHeaders.has(name.toLowerCase())) res.setHeader(name, value);
+      }
+      res.status(response.status).send(response.body);
+    } catch (error) { sendError(res, error); }
+  }
+  app.get("/-/v1/search", proxyCompatibility);
+  app.post("/-/npm/v1/security/advisories/bulk", proxyCompatibility);
+  app.get("/-/npm/v1/keys", proxyCompatibility);
+  app.get(/^\/-\/npm\/v1\/attestations\/.+$/, proxyCompatibility);
+  app.post("/-/v1/login", proxyCompatibility);
+
   const jsonSmall = express.json({ limit: "1mb" });
   app.use((req, res, next) => (req.method === "PUT" ? next() : jsonSmall(req, res, next)));
-  const jsonPublish = express.json({ limit: opts.maxPublishBytes ?? 64 * 1024 * 1024 });
+  const jsonPublish = express.json({ limit: opts.maxPublishBytes ?? 64 * 1024 * 1024, strict: false });
+  const legacyIdentities = new Map<string, { username: string; expiresAt: number }>();
+  const legacySessionTtlMs = 60 * 60_000;
+  const maxLegacySessions = 1_024;
 
-  const registrySource = (name: string) => source(name, enterprisePolicy, claimCorpus);
+  function purgeLegacySessions(): void {
+    const current = now();
+    for (const [token, session] of legacyIdentities) if (session.expiresAt <= current) legacyIdentities.delete(token);
+  }
+
+  function activeLegacyTokens(): string[] {
+    purgeLegacySessions();
+    return [...legacyIdentities.keys()];
+  }
+
+  const resolutionCorpus = registryMode === "on" ? claimCorpus : EMPTY_CLAIM_CORPUS;
+  const registrySource = (name: string) => source(name, enterprisePolicy, resolutionCorpus);
   const isNativeName = (name: string) => isNativeSource(registrySource(name));
   // Audit bytes are policy/corpus-independent cache data. A report represents
   // the decision context at response time, so cached audits deliberately carry
@@ -788,6 +866,78 @@ export function createServer(opts: ServerOptions) {
     res.json({ cleared: violations.clear(integrity) });
   });
 
+  function requirePublishAuth(req: Request, res: Response, next: () => void): void {
+    if (!publishTokenValid(req.headers.authorization, [...publishTokens, ...activeLegacyTokens()])) {
+      res.status(401).json({ error: "authentication required to publish" });
+      return;
+    }
+    next();
+  }
+  const publishAuth = authz.enabled ? authz.requireRole(["publisher"]) : requirePublishAuth;
+  const registryMutationEnabled: express.RequestHandler = (_req, res, next) => {
+    if (registryMode === "off") return res.status(503).json({ error: "registry mode is disabled", code: "registry-mode-disabled" });
+    next();
+  };
+
+  // Lowest-common-denominator client authentication. The generated token is
+  // process-local and deliberately scoped to this registry instance.
+  app.put(/^\/-\/user\/org\.couchdb\.user:([^/]+)(?:\/-rev\/[^/]+)?$/, publishRateGate, jsonPublish, (req, res) => {
+    const username = decodeURIComponent(req.params[0] ?? "");
+    const body = req.body as { name?: unknown; password?: unknown };
+    if (!username || body?.name !== username || typeof body.password !== "string" || !body.password) {
+      return res.status(400).json({ error: "legacy login requires matching name and a password" });
+    }
+    if (!publishTokenValid(`Bearer ${body.password}`, publishTokens)) {
+      return res.status(401).json({ error: "invalid legacy registry credentials" });
+    }
+    purgeLegacySessions();
+    while (legacyIdentities.size >= maxLegacySessions) legacyIdentities.delete(legacyIdentities.keys().next().value!);
+    const token = randomBytes(32).toString("base64url");
+    legacyIdentities.set(token, { username, expiresAt: now() + legacySessionTtlMs });
+    return res.status(201).json({ ok: true, id: `org.couchdb.user:${username}`, rev: "1-login", token });
+  });
+
+  app.get("/-/whoami", publishRateGate, (req, res) => {
+    const match = /^Bearer\s+(\S+)$/i.exec(req.headers.authorization ?? "");
+    const token = match?.[1];
+    purgeLegacySessions();
+    let username = token ? (legacyIdentities.get(token)?.username ?? (publishTokens.includes(token) ? "publisher" : undefined)) : undefined;
+    if (!username && token && opts.authPublicKey) {
+      const verified = verifyToken(token, opts.authPublicKey);
+      if (verified.ok) username = verified.sub;
+    }
+    if (!username) return res.status(401).json({ error: "authentication required" });
+    return res.json({ username });
+  });
+
+  app.get(/^\/-\/package\/(.+)\/dist-tags$/, (req, res) => {
+    let name: string;
+    try { name = normalizePackageName(decodeURIComponent(req.params[0] ?? "")); }
+    catch (error) { return res.status(400).json({ error: (error as Error).message }); }
+    if (!isNativeName(name)) return res.status(404).json({ error: "native package not found", package: name });
+    const pm = privateStore.packument(name);
+    return pm ? res.json(pm["dist-tags"]) : res.status(404).json({ error: "native package not found", package: name });
+  });
+
+  app.put(/^\/-\/package\/(.+)\/dist-tags\/([^/]+)$/, registryMutationEnabled, publishRateGate, publishAuth, jsonPublish, (req, res) => {
+    let name: string;
+    try { name = normalizePackageName(decodeURIComponent(req.params[0] ?? "")); }
+    catch (error) { return res.status(400).json({ error: (error as Error).message }); }
+    if (typeof req.body !== "string") return res.status(400).json({ error: "dist-tag body must be a JSON version string" });
+    try {
+      privateStore.setDistTag(name, decodeURIComponent(req.params[1] ?? ""), req.body);
+      return res.status(201).json({ ok: true });
+    } catch (error) { return res.status(404).json({ error: (error as Error).message }); }
+  });
+
+  app.delete(/^\/-\/package\/(.+)\/dist-tags\/([^/]+)$/, registryMutationEnabled, publishRateGate, publishAuth, (req, res) => {
+    let name: string;
+    try { name = normalizePackageName(decodeURIComponent(req.params[0] ?? "")); }
+    catch (error) { return res.status(400).json({ error: (error as Error).message }); }
+    const removed = privateStore.deleteDistTag(name, decodeURIComponent(req.params[1] ?? ""));
+    return removed ? res.json({ ok: true }) : res.status(404).json({ error: "dist-tag not found" });
+  });
+
   app.get("/-/private", (_req, res) => {
     res.json({
       claims: enterprisePolicy.privateNamespaces ?? [],
@@ -796,6 +946,60 @@ export function createServer(opts: ServerOptions) {
       verifiedClaims: claimCorpus.claims.map((claim) => ({ namespace: claim.namespace, domain: claim.domain, status: claim.status })),
       packages: privateStore.names().map((name) => ({ name, versions: privateStore.versions(name) })),
     });
+  });
+
+  app.post("/-/registry/import", registryMutationEnabled, publishRateGate, authz.requireRole(["operator"]), async (req, res) => {
+    let name: string;
+    try { name = normalizePackageName(String((req.body as { name?: unknown })?.name ?? "")); }
+    catch (error) { return res.status(400).json({ error: (error as Error).message }); }
+    if (registrySource(name) !== "verified-claim") {
+      return res.status(403).json({ error: "history import requires an active verified claim", package: name });
+    }
+    const importClaim = claimForPackage(name, claimCorpus);
+    if (!importClaim || importClaim.status !== "active") {
+      return res.status(423).json({ error: "verified claim must be active for history import", package: name });
+    }
+    if (privateStore.has(name)) return res.status(409).json({ error: "native history already exists", package: name });
+    try {
+      const pm = await upstream.getPackument(name);
+      const staged: { version: string; manifest: Record<string, unknown>; tarball: Buffer; audit: Audit; publishedAt?: string }[] = [];
+      for (const version of Object.keys(pm.doc.versions).sort(cmpSemver)) {
+        const manifest = structuredClone(pm.doc.versions[version] as unknown as Record<string, unknown>);
+        const tarball = await upstream.getTarball(name, version);
+        const declared = (manifest.dist as { integrity?: string } | undefined)?.integrity;
+        const integrity = integrityOf(tarball);
+        if (declared && !integrityMatches(tarball, declared)) {
+          return res.status(400).json({ error: "upstream history integrity mismatch", package: `${name}@${version}`, declared });
+        }
+        const normalized = pm.versions[version]!;
+        const attestations = await upstream.getAttestations(name, version);
+        const audit = await publishAudit({
+          meta: { name, version, author: normalized.author, maintainers: normalized.maintainers, license: normalized.license,
+            hasInstallScripts: normalized.hasInstallScripts, integrity },
+          tarball, signatures: normalized.signatures, hasProvenance: normalized.hasProvenance,
+          attestations, signingKeys, trustMaterial: opts.trustMaterial, extractLimits,
+          requirePackageManifest: { name, version }, advisories: [...(advisories ?? []), ...retractionCorpus.advisories], vulnerabilities,
+        });
+        const report = scoreAudit(audit);
+        if (verdictAtOrAbove(report.verdict, publishGateOf(enterprisePolicy))) {
+          return res.status(403).json({ error: "history import blocked by Sentinel policy", package: `${name}@${version}`, report });
+        }
+        staged.push({ version, manifest, tarball, audit, ...(pm.time?.[version] ? { publishedAt: pm.time[version] } : {}) });
+      }
+      const importedTags = Object.entries(pm.doc["dist-tags"] ?? {});
+      if (importedTags.some(([, version]) => !staged.some((item) => item.version === version))) {
+        return res.status(400).json({ error: "upstream dist-tag targets a missing history version", package: name });
+      }
+      for (const item of staged) {
+        const primaryTag = importedTags.find(([, version]) => version === item.version)?.[0];
+        privateStore.publish({ name, version: item.version, integrity: integrityOf(item.tarball), manifest: item.manifest,
+          tarball: item.tarball, audit: item.audit, actor: "imported", publishedAt: item.publishedAt, distTag: primaryTag ?? null });
+      }
+      for (const [tag, version] of importedTags) {
+        if (privateStore.packument(name)?.["dist-tags"][tag] !== version) privateStore.setDistTag(name, tag, version);
+      }
+      return res.status(201).json({ imported: true, package: name, versions: staged.map((item) => item.version) });
+    } catch (error) { return sendError(res, error); }
   });
 
   // ---- time-locked retraction (ADR-0047) ----
@@ -807,19 +1011,13 @@ export function createServer(opts: ServerOptions) {
       downloadCounting: "Successful native tarball responses count once; with SQLite, repeats for the same package version and npm-session are deduplicated; requests without npm-session count individually.",
     });
   });
-  app.post("/-/retractions", retractionRateGate, authz.requireRole(["operator"]), (req, res) => {
-    const body = req.body as { name?: unknown; version?: unknown; reason?: unknown };
-    let name: string;
-    try { name = normalizePackageName(String(body?.name ?? "")); }
-    catch (error) { return res.status(400).json({ error: (error as Error).message }); }
-    const version = typeof body?.version === "string" ? body.version : "";
-    const reasons: RetractionReason[] = ["security", "withdrawn", "broken", "legal"];
-    if (!version || !reasons.includes(body?.reason as RetractionReason)) {
-      return res.status(400).json({ error: "retraction requires name, version, and reason(security|withdrawn|broken|legal)" });
-    }
-    if (!isNativeName(name)) return res.status(403).json({ error: "only authoritative native packages can be retracted", package: `${name}@${version}` });
+  type RetractionPreparation = { ok: true; name: string; version: string; reason: RetractionReason; attemptedAt: string;
+    advisoryId: string; window: Record<string, unknown> } | { ok: false; status: number; body: Record<string, unknown> };
+
+  function prepareRetraction(name: string, version: string, reason: RetractionReason): RetractionPreparation {
+    if (!isNativeName(name)) return { ok: false, status: 403, body: { error: "only authoritative native packages can be retracted", package: `${name}@${version}` } };
     const stored = privateStore.getVersion(name, version);
-    if (!stored) return res.status(404).json({ error: "native package version not found", package: `${name}@${version}` });
+    if (!stored) return { ok: false, status: 404, body: { error: "native package version not found", package: `${name}@${version}` } };
     const localRetraction = privateStore.getRetraction(name, version);
     const corpusRetraction = retractionCorpus.advisories.find((advisory) =>
       advisory.name === name && advisory.version === version && advisory.integrity === stored.integrity);
@@ -828,14 +1026,14 @@ export function createServer(opts: ServerOptions) {
       reason: corpusRetraction.reason,
       advisoryId: corpusRetraction.id,
     } : undefined);
-    if (existing) return res.status(409).json({ error: "package version already retracted", package: `${name}@${version}`, tombstone: existing });
+    if (existing) return { ok: false, status: 409, body: { error: "package version already retracted", package: `${name}@${version}`, tombstone: existing } };
 
     const nowMs = now();
     const attemptedAt = new Date(nowMs).toISOString();
     const publishedAtMs = Date.parse(stored.publishedAt);
     const ageHours = (nowMs - publishedAtMs) / 3_600_000;
     if (!Number.isFinite(ageHours) || ageHours < 0) {
-      return res.status(403).json({ error: "authoritative publish time is invalid; retraction fails closed", code: "retraction-publish-time-invalid" });
+      return { ok: false, status: 403, body: { error: "authoritative publish time is invalid; retraction fails closed", code: "retraction-publish-time-invalid" } };
     }
     const limits = retractionWindowOf(enterprisePolicy);
     const historyDownloads = history?.downloadCount(name, version) ?? 0;
@@ -857,16 +1055,80 @@ export function createServer(opts: ServerOptions) {
         ...(ageExceeded ? [{ code: "retraction-age-limit-exceeded", actual: ageHours, limit: limits.maxAgeHours }] : []),
         ...(downloadsExceeded ? [{ code: "retraction-download-limit-exceeded", actual: cumulativeDownloads, limit: limits.maxDownloads }] : []),
       ];
-      return res.status(403).json({ error: "retraction window closed", code: "retraction-window-closed", package: `${name}@${version}`, window, exceeded });
+      return { ok: false, status: 403, body: {
+        error: `retraction window closed (retraction-window-closed; maxAgeHours=${limits.maxAgeHours}; maxDownloads=${limits.maxDownloads})`,
+        code: "retraction-window-closed", package: `${name}@${version}`, window, exceeded,
+      } };
     }
 
-    const reason = body.reason as RetractionReason;
     const advisoryId = "SENTINEL-RETRACT-" + createHash("sha256")
       .update(`${name}\u0000${version}\u0000${stored.integrity}\u0000${attemptedAt}\u0000${reason}`)
       .digest("hex").slice(0, 24);
+    return { ok: true, name, version, reason, attemptedAt, advisoryId, window };
+  }
+
+  function retractNative(name: string, version: string, reason: RetractionReason, res: Response): Response | void {
+    const prepared = prepareRetraction(name, version, reason);
+    if (!prepared.ok) return res.status(prepared.status).json(prepared.body);
     try {
-      const tombstone = privateStore.retract({ name, version, reason, retractedAt: attemptedAt, advisoryId });
-      return res.status(201).json({ retracted: true, package: `${name}@${version}`, tombstone, window });
+      const tombstone = privateStore.retract({ name, version, reason, retractedAt: prepared.attemptedAt, advisoryId: prepared.advisoryId });
+      return res.status(201).json({ retracted: true, package: `${name}@${version}`, tombstone, window: prepared.window });
+    } catch (error) {
+      if (error instanceof PublicationConflictError) return res.status(409).json({ error: error.message });
+      return sendError(res, error);
+    }
+  }
+
+  app.post("/-/retractions", registryMutationEnabled, retractionRateGate, authz.requireRole(["operator"]), (req, res) => {
+    const body = req.body as { name?: unknown; version?: unknown; reason?: unknown };
+    let name: string;
+    try { name = normalizePackageName(String(body?.name ?? "")); }
+    catch (error) { return res.status(400).json({ error: (error as Error).message }); }
+    const version = typeof body?.version === "string" ? body.version : "";
+    const reasons: RetractionReason[] = ["security", "withdrawn", "broken", "legal"];
+    if (!version || !reasons.includes(body?.reason as RetractionReason)) {
+      return res.status(400).json({ error: "retraction requires name, version, and reason(security|withdrawn|broken|legal)" });
+    }
+    return retractNative(name, version, body.reason as RetractionReason, res);
+  });
+
+  // npm/pnpm single-version unpublish first stage: accept the client's
+  // revision-bearing packument rewrite, then perform the actual retraction on
+  // the tarball DELETE below. No bytes are deleted by either route.
+  app.put(/^\/(.+)\/-rev\/([^/]+)$/, registryMutationEnabled, retractionRateGate, publishAuth, jsonPublish, (req, res) => {
+    let name: string;
+    try { name = normalizePackageName(decodeURIComponent(req.params[0] ?? "")); }
+    catch (error) { return res.status(400).json({ error: (error as Error).message }); }
+    if (req.params[1] !== privateStore.revision(name)) return res.status(409).json({ error: "packument revision conflict" });
+    return res.json({ ok: true, id: name, rev: privateStore.revision(name) });
+  });
+
+  app.delete(/^\/(.+)\/-\/([^/]+\.tgz)\/-rev\/([^/]+)$/, registryMutationEnabled, retractionRateGate, publishAuth, (req, res) => {
+    let name: string;
+    try { name = normalizePackageName(decodeURIComponent(req.params[0] ?? "")); }
+    catch (error) { return res.status(400).json({ error: (error as Error).message }); }
+    if (req.params[2] !== privateStore.revision(name)) return res.status(409).json({ error: "packument revision conflict" });
+    const version = versionFromFilename(name, req.params[1] ?? "");
+    if (!version) return res.status(400).json({ error: "cannot parse version from tarball name" });
+    return retractNative(name, version, "withdrawn", res);
+  });
+
+  app.delete(/^\/(.+)\/-rev\/([^/]+)$/, registryMutationEnabled, retractionRateGate, publishAuth, (req, res) => {
+    let name: string;
+    try { name = normalizePackageName(decodeURIComponent(req.params[0] ?? "")); }
+    catch (error) { return res.status(400).json({ error: (error as Error).message }); }
+    if (req.params[1] !== privateStore.revision(name)) return res.status(409).json({ error: "packument revision conflict" });
+    const packument = privateStore.packument(name);
+    const active = packument ? Object.keys(packument.versions) : [];
+    if (!active.length) return res.status(404).json({ error: "native package has no active versions", package: name });
+    const prepared = active.map((version) => prepareRetraction(name, version, "withdrawn"));
+    const rejected = prepared.find((item) => !item.ok);
+    if (rejected && !rejected.ok) return res.status(rejected.status).json(rejected.body);
+    try {
+      const accepted = prepared.filter((item): item is Extract<RetractionPreparation, { ok: true }> => item.ok);
+      const tombstones = privateStore.retractMany(accepted.map((item) => ({ name, version: item.version, reason: item.reason,
+        retractedAt: item.attemptedAt, advisoryId: item.advisoryId })));
+      return res.status(201).json({ retracted: true, package: name, versions: accepted.map((item, index) => ({ version: item.version, tombstone: tombstones[index] })) });
     } catch (error) {
       if (error instanceof PublicationConflictError) return res.status(409).json({ error: error.message });
       return sendError(res, error);
@@ -874,16 +1136,7 @@ export function createServer(opts: ServerOptions) {
   });
 
   // ---- publish (PUT /:pkg) — authoritative private registry write path ----
-  function requirePublishAuth(req: Request, res: Response, next: () => void): void {
-    if (!publishTokenValid(req.headers.authorization, publishTokens)) {
-      res.status(401).json({ error: "authentication required to publish" });
-      return;
-    }
-    next();
-  }
-
-  const publishAuth = authz.enabled ? authz.requireRole(["publisher"]) : requirePublishAuth;
-  app.put(/^\/(.+)$/, publishRateGate, rateGate, publishAuth, jsonPublish, async (req, res) => {
+  app.put(/^\/(.+)$/, registryMutationEnabled, publishRateGate, rateGate, publishAuth, jsonPublish, async (req, res) => {
     try {
       let name: string;
       try { name = normalizePackageName(decodeURIComponent(req.params[0] ?? "")); }
@@ -898,6 +1151,18 @@ export function createServer(opts: ServerOptions) {
       }
       if (verifiedClaim?.status === "disputed") {
         return res.status(423).json({ error: "verified claim is disputed; publication is disabled while contested", code: "claim-disputed", package: name });
+      }
+      const rawBody = req.body as Record<string, unknown>;
+      if (rawBody && typeof rawBody === "object" && !("_attachments" in rawBody)) {
+        if (!privateStore.has(name)) return res.status(404).json({ error: "native package not found", package: name });
+        if (typeof rawBody._rev !== "string") return res.status(400).json({ error: "metadata update requires _rev", package: name });
+        try {
+          const rev = privateStore.updateDeprecations(name, rawBody._rev, rawBody);
+          return res.status(201).json({ ok: true, id: name, rev });
+        } catch (error) {
+          const status = error instanceof PublicationConflictError ? 409 : 400;
+          return res.status(status).json({ error: (error as Error).message, package: name });
+        }
       }
       let parsed;
       try { parsed = parsePublishBody(name, req.body); }
@@ -948,6 +1213,7 @@ export function createServer(opts: ServerOptions) {
       try {
         privateStore.publish({
           name, version: parsed.version, integrity, manifest: parsed.manifest, tarball: parsed.tarball, audit,
+          distTag: parsed.distTag,
           ...(parsed.attestations !== null ? { attestations: parsed.attestations } : {}), actor: "publisher",
           ...(verifiedClaim ? { claimAtPublication: {
             namespace: verifiedClaim.namespace,
@@ -1033,18 +1299,23 @@ export function createServer(opts: ServerOptions) {
           if (advisory.name !== name || !pm.versions[advisory.version]) continue;
           if (privateStore.getVersion(name, advisory.version)?.integrity !== advisory.integrity) continue;
           delete pm.versions[advisory.version];
+          delete pm.time[advisory.version];
           pm._sentinel ??= { retractions: {} };
           pm._sentinel.retractions[advisory.version] = {
             retractedAt: advisory.retractedAt, reason: advisory.reason, advisoryId: advisory.id,
           };
         }
-        const activeVersions = Object.keys(pm.versions).sort(cmpSemver);
-        pm["dist-tags"] = activeVersions.length ? { latest: activeVersions.at(-1)! } : {};
+        const activeVersions = new Set(Object.keys(pm.versions));
+        pm["dist-tags"] = Object.fromEntries(Object.entries(pm["dist-tags"]).filter(([, version]) => activeVersions.has(version)));
         for (const [v, manifest] of Object.entries(pm.versions)) {
           (manifest as { dist?: { tarball?: string } }).dist = { ...(manifest as { dist?: object }).dist, tarball: `${base}/${name}/-/${shortName(name)}-${v}.tgz` };
         }
-        res.setHeader("content-type", "application/json");
         res.setHeader("x-sentinel-private", "true");
+        if (req.get("accept")?.includes(CORGI) && req.query.write !== "true") {
+          res.type(CORGI);
+          return res.json(abbreviatedPackument(pm));
+        }
+        res.type("application/json");
         return res.json(pm);
       }
       const pm = await upstream.getPackument(name);
@@ -1064,6 +1335,15 @@ export function createServer(opts: ServerOptions) {
 
 function shortName(pkg: string): string {
   return pkg.includes("/") ? (pkg.split("/").pop() ?? pkg) : pkg;
+}
+
+function abbreviatedPackument(pm: ReturnType<PrivatePackageStore["packument"]>): Record<string, unknown> {
+  if (!pm) return {};
+  const fields = ["name", "version", "dependencies", "optionalDependencies", "peerDependencies", "engines", "deprecated", "_hasShrinkwrap", "dist"];
+  const versions = Object.fromEntries(Object.entries(pm.versions).map(([version, manifest]) => [version,
+    Object.fromEntries(fields.filter((field) => manifest[field] !== undefined).map((field) => [field, manifest[field]])),
+  ]));
+  return { name: pm.name, modified: Object.values(pm.time).sort().at(-1), "dist-tags": pm["dist-tags"], versions };
 }
 
 /** Recover the version from `name-1.2.3.tgz`, handling scoped names. */
