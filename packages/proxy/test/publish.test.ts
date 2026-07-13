@@ -18,7 +18,7 @@ import { ViolationStore } from "../src/violations.js";
 import { ApprovalRequestStore } from "../src/approval-requests.js";
 import { LocalFixtureUpstream } from "../src/upstream.js";
 import type { ClaimCorpus } from "../src/resolution.js";
-import { DEFAULT_POLICY, integrityOf, type EnterprisePolicy } from "@sentinel/core";
+import { DEFAULT_POLICY, generateKeypair, integrityOf, type EnterprisePolicy } from "@sentinel/core";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURES = join(HERE, "..", "..", "..", "fixtures");
@@ -26,10 +26,11 @@ function ensure() { if (!existsSync(join(FIXTURES, "registry.json")) || !existsS
   execFileSync("npx", ["tsx", join(HERE, "..", "..", "..", "scripts", "make-fixtures.ts")], { stdio: "ignore" }); }
 
 const policy = (ns: string[]): EnterprisePolicy => ({ ...DEFAULT_POLICY, privateNamespaces: ns });
+const CLAIMANT_KEY = generateKeypair().publicKey;
 
 function verifiedCorpus(namespaces: string[]): ClaimCorpus {
   return { schema: 1, version: "test", issuedAt: "2026-07-02T00:00:00.000Z", claims: namespaces.map((namespace, i) => ({
-    namespace, domain: `claim${i}.example`, status: "active",
+    namespace, domain: `claim${i}.example`, claimantPublicKey: CLAIMANT_KEY, status: "active",
     challenge: { method: "dns-txt", id: `c-${i}`, verifiedAt: "2026-07-01T00:00:00.000Z" },
     renewalDueAt: "2027-07-01T00:00:00.000Z",
   })) };
@@ -231,6 +232,9 @@ describe("Phase 30 authoritative publish path", () => {
     try {
       assert.equal((await ctx.put("claimed-name", "1.0.0")).status, 201);
       assert.equal(ctx.privateStore.has("claimed-name"), true);
+      assert.deepEqual(ctx.privateStore.getVersion("claimed-name", "1.0.0")?.claimAtPublication, {
+        namespace: "claimed-name", domain: "claim0.example", claimantPublicKey: CLAIMANT_KEY,
+      });
     } finally { ctx.server.close(); }
   });
 

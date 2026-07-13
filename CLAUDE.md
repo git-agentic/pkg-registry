@@ -89,10 +89,13 @@ and requires matching offline Sigstore provenance for enrolled trusted
 publishers. The default corpus remains the explicit empty corpus.
 
 **Claim steward (`@sentinel/steward`)** — authenticated operational service for
-exact-apex DNS TXT challenges, three-tier grandfathering, 12-month renewal and
-freeze, 30-day announced Tier-2 grants/transfers/dispute rulings, durable atomic
-state, and atomic Ed25519-signed corpus releases. DNS and issuance run only on
-the steward; proxy resolution and auditing remain offline.
+exact-apex DNS TXT challenges, steward-fetched three-tier grandfathering,
+claimant-key-signed transfers, 12-month renewal and freeze, 30-day announced
+Tier-2 grants/transfers/dispute rulings, durable atomic state, and atomic
+directory-based Ed25519-signed corpus releases. DNS and issuance run only on the
+steward; proxy resolution and auditing remain offline. Native version metadata
+snapshots claim attribution at publication so later transfers never rewrite
+history.
 
 **Sandbox (`@sentinel/sandbox`)** — `createSandbox()` selects Seatbelt (darwin)
 or bubblewrap (linux); one approved-capability model, fail-closed contract
@@ -228,8 +231,8 @@ a tool that guards against exactly that.
 
 ```bash
 npm run build            # tsc --build (project references) + the Linux-only native helper step
-npm test                 # hermetic engine + e2e proxy suite. 787 tests on this darwin host
-                         # as of 2026-07-10 (785 pass, 2 skipped) — but NEVER plan arithmetic
+npm test                 # hermetic engine + e2e proxy suite. 928 tests on this darwin host
+                         # as of 2026-07-13 (926 pass, 2 skipped) — but NEVER plan arithmetic
                          # on a written count; run npm test and use what it prints.
 npm run demo             # offline malware-detection walkthrough
 node packages/proxy/dist/index.js   # run the proxy (see README for env vars)

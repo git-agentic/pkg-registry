@@ -163,8 +163,9 @@ response is `{ error, package, report }` with the complete `AuditReport`.
 Malformed archives, extraction-limit findings, scanner errors, and persistence
 errors all fail closed.
 
-Claim entries carry their namespace, organizational domain, passed DNS challenge,
-renewal deadline, lifecycle status, and optional trusted-publisher identities.
+Claim entries carry their namespace, organizational domain, claimant transfer
+key, passed DNS challenge, renewal deadline, lifecycle status, and optional
+trusted-publisher identities.
 Frozen/disputed claims keep serving stored bytes but reject new publishes;
 trusted-publisher claims require a matching offline-verified SLSA identity.
 
@@ -180,10 +181,15 @@ npm run steward
 ```
 
 The authenticated `/-/claims/*` API issues and verifies exact-apex DNS TXT
-challenges, approves the three grandfather tiers, tracks renewal/freeze, announces
-transfers/dispute rulings for 30 days, and atomically writes `claims.json` plus
-`claims.json.sig`. Point the proxy's three claim-corpus variables at that release
-and the corresponding pinned public key.
+challenges, derives the grandfather tier from steward-fetched upstream metadata,
+tracks renewal/freeze, and announces signed transfers or dispute rulings for 30
+days. A release atomically publishes
+`<release-dir>/<version>/{claims.json,claims.json.sig}` as one directory. Point
+the proxy's corpus file/signature variables at that version directory and its
+public-key variable at the corresponding pinned key. Set
+`SENTINEL_STEWARD_REGISTRY` only when the steward should use an npm-compatible
+registry other than `https://registry.npmjs.org` as its authoritative evidence
+source.
 
 ## CLI
 

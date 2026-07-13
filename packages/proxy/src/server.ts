@@ -762,7 +762,14 @@ export function createServer(opts: ServerOptions) {
         });
       }
       try {
-        privateStore.publish({ name, version: parsed.version, integrity, manifest: parsed.manifest, tarball: parsed.tarball, audit, actor: "publisher" });
+        privateStore.publish({
+          name, version: parsed.version, integrity, manifest: parsed.manifest, tarball: parsed.tarball, audit, actor: "publisher",
+          ...(verifiedClaim ? { claimAtPublication: {
+            namespace: verifiedClaim.namespace,
+            domain: verifiedClaim.domain,
+            claimantPublicKey: verifiedClaim.claimantPublicKey,
+          } } : {}),
+        });
       } catch (err) {
         if (err instanceof PublicationConflictError) {
           return res.status(409).json({ error: "version already published", package: `${name}@${parsed.version}` });

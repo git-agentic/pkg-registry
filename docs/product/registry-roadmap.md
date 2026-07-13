@@ -140,9 +140,12 @@ free).
 Evidence: `packages/core/test/claim-corpus.test.ts`,
 `packages/proxy/test/claim-corpus-startup.test.ts`,
 `packages/proxy/test/claim-lifecycle-e2e.test.ts`, and
-`packages/steward/test/steward.test.ts`. The proxy remains an offline consumer;
-the authenticated `@sentinel/steward` service owns DNS verification, durable
-renewal state, timelocked issuance changes, and signed release output.
+`packages/steward/test/steward.test.ts`. Applicant input cannot select a
+grandfather tier: the steward owns the upstream lookup, and voluntary transfers
+must verify against the current claim's Ed25519 key. The proxy remains an
+offline consumer; the authenticated `@sentinel/steward` service owns DNS
+verification, durable renewal state, timelocked issuance changes, and signed
+release output.
 
 ## Phase 32 — Time-locked retraction
 

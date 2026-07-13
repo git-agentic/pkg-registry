@@ -7,7 +7,7 @@ import type { AddressInfo } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, test } from "node:test";
-import { DEFAULT_POLICY, integrityOf, runAudit, type ClaimCorpus, type ClaimStatus, type EnterprisePolicy, type TrustedPublisher } from "@sentinel/core";
+import { DEFAULT_POLICY, generateKeypair, integrityOf, runAudit, type ClaimCorpus, type ClaimStatus, type EnterprisePolicy, type TrustedPublisher } from "@sentinel/core";
 import { ApprovalRequestStore } from "../src/approval-requests.js";
 import { ApprovalStore } from "../src/approvals.js";
 import { PrivatePackageStore } from "../src/private-store.js";
@@ -19,11 +19,12 @@ import { ViolationStore } from "../src/violations.js";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..", "..", "..");
 const FIXTURES = join(ROOT, "fixtures");
+const CLAIMANT_KEY = generateKeypair().publicKey;
 function ensure() { if (!existsSync(join(FIXTURES, "registry.json"))) execFileSync("npx", ["tsx", join(ROOT, "scripts/make-fixtures.ts")]); }
 
 function corpus(namespace: string, status: ClaimStatus, trustedPublishers?: TrustedPublisher[]): ClaimCorpus {
   return { schema: 1, version: "2026.07.1", issuedAt: "2026-07-02T00:00:00.000Z", claims: [{
-    namespace, domain: "sigstore.dev", status,
+    namespace, domain: "sigstore.dev", claimantPublicKey: CLAIMANT_KEY, status,
     challenge: { method: "dns-txt", id: "claim-1", verifiedAt: "2026-07-01T00:00:00.000Z" },
     renewalDueAt: "2027-07-01T00:00:00.000Z", trustedPublishers,
   }] };

@@ -30,7 +30,7 @@ function configured(mode: "valid" | "tampered" | "malformed" = "valid"): Record<
   const file = join(dir, "claims.json");
   const raw = Buffer.from(JSON.stringify({
     schema: 1, version: "2026.07.1", issuedAt: "2026-07-02T00:00:00.000Z",
-    claims: [{ namespace: "@acme/*", domain: "acme.example", status: "active",
+    claims: [{ namespace: "@acme/*", domain: "acme.example", claimantPublicKey: publicKey, status: "active",
       challenge: { method: "dns-txt", id: "c-1", verifiedAt: "2026-07-01T00:00:00.000Z" },
       renewalDueAt: "2027-07-01T00:00:00.000Z" }],
   }));

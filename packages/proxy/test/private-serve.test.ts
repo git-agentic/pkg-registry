@@ -14,16 +14,17 @@ import { PrivatePackageStore } from "../src/private-store.js";
 import { ViolationStore } from "../src/violations.js";
 import { ApprovalRequestStore } from "../src/approval-requests.js";
 import { LocalFixtureUpstream, type Upstream } from "../src/upstream.js";
-import { DEFAULT_POLICY, runAudit, integrityOf, type EnterprisePolicy } from "@sentinel/core";
+import { DEFAULT_POLICY, generateKeypair, runAudit, integrityOf, type EnterprisePolicy } from "@sentinel/core";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURES = join(HERE, "..", "..", "..", "fixtures");
 function ensure() { if (!existsSync(join(FIXTURES, "registry.json")) || !existsSync(join(FIXTURES, ".tarballs")))
   execFileSync("npx", ["tsx", join(HERE, "..", "..", "..", "scripts", "make-fixtures.ts")], { stdio: "ignore" }); }
 const policy = (ns: string[]): EnterprisePolicy => ({ ...DEFAULT_POLICY, privateNamespaces: ns });
+const CLAIMANT_KEY = generateKeypair().publicKey;
 const verifiedCorpus = (namespace: string) => ({
   schema: 1 as const, version: "test", issuedAt: "2026-07-02T00:00:00.000Z", claims: [{ namespace,
-    domain: "claim.example", status: "active" as const,
+    domain: "claim.example", claimantPublicKey: CLAIMANT_KEY, status: "active" as const,
     challenge: { method: "dns-txt" as const, id: "c-1", verifiedAt: "2026-07-01T00:00:00.000Z" },
     renewalDueAt: "2027-07-01T00:00:00.000Z" }],
 });

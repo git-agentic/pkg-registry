@@ -176,9 +176,12 @@ signature against a pinned key at boot, and fails closed on signature or schema
 errors. Reports, tree audits, and audit attestations carry its version/hash beside
 the policy hash. Frozen/disputed claims remain native for reads but reject writes;
 trusted-publisher enrollments require a matching offline-verified Sigstore SLSA
-identity. `@sentinel/steward` performs exact-apex DNS challenges, renewal/freeze,
-three-tier grandfathering, and 30-day announced changes before signing releases
-(ADR-0046).
+identity. Stored native versions snapshot the claim namespace, domain, and
+claimant key at publication, so an ownership change cannot re-attribute history.
+`@sentinel/steward` performs exact-apex DNS challenges, derives grandfather tiers
+from steward-fetched upstream evidence, verifies claimant-key transfer
+signatures, applies renewal/domain-change freezes, and atomically publishes
+versioned directories after 30-day announced changes (ADR-0046).
 
 ### 3.6 Sandbox enforcement (Phases 3–5, ADR-0011/0016/0017/0018)
 

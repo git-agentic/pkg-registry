@@ -13,9 +13,12 @@ import {
   type ClaimCorpus,
 } from "../src/index.js";
 
+const CLAIMANT_KEY = generateKeypair().publicKey;
+
 const claim = (over: Record<string, unknown> = {}) => ({
   namespace: "@acme/*",
   domain: "acme.example",
+  claimantPublicKey: CLAIMANT_KEY,
   status: "active",
   challenge: { method: "dns-txt", id: "challenge-1", verifiedAt: "2026-07-01T00:00:00.000Z" },
   renewalDueAt: "2027-07-01T00:00:00.000Z",
@@ -58,6 +61,7 @@ describe("signed claim corpus", () => {
       claim({ pending: {
         kind: "transfer", announcedAt: "2026-07-01T00:00:00.000Z",
         effectiveAt: "2026-07-30T23:59:59.999Z", targetDomain: "new.example",
+        targetClaimantPublicKey: CLAIMANT_KEY,
         challenge: { method: "dns-txt", id: "new-1", verifiedAt: "2026-07-01T00:00:00.000Z" },
         authorizedBy: "old-claimant-signature",
       } }),
@@ -72,6 +76,7 @@ describe("signed claim corpus", () => {
         pending: {
           kind: "transfer", announcedAt: "2026-07-01T00:00:00.000Z",
           effectiveAt: "2026-07-31T00:00:00.000Z", targetDomain: "new.example",
+          targetClaimantPublicKey: CLAIMANT_KEY,
           challenge: { method: "dns-txt", id: "new-1", verifiedAt: "2026-07-01T00:00:00.000Z" },
           authorizedBy: "old-claimant-signature",
         },

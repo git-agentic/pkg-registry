@@ -82,6 +82,8 @@ export {
   signClaimCorpus,
   verifyClaimCorpusBytes,
   loadClaimCorpus,
+  isValidClaimNamespace,
+  isValidClaimDomain,
   type ClaimCorpus,
   type LoadedClaimCorpus,
   type VerifiedClaim,
@@ -91,6 +93,7 @@ export {
   type PendingClaimChange,
   type PendingClaimGrant,
   type ClaimChangeKind,
+  type ClaimCorpusIdentity,
 } from "./claim-corpus.js";
 export {
   buildAuditStatement, signAttestation, verifyAttestation, attestationKeyid, pae, SENTINEL_PREDICATE_TYPE,

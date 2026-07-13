@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { DEFAULT_POLICY, type EnterprisePolicy } from "@sentinel/core";
+import { DEFAULT_POLICY, generateKeypair, type EnterprisePolicy } from "@sentinel/core";
 import {
   EMPTY_CLAIM_CORPUS,
   normalizePackageName,
@@ -13,11 +13,12 @@ import {
 function policy(privateNamespaces: string[]): EnterprisePolicy {
   return { ...DEFAULT_POLICY, privateNamespaces };
 }
+const CLAIMANT_KEY = generateKeypair().publicKey;
 
 function corpus(namespaces: string[]): ClaimCorpus {
   return {
     schema: 1, version: "test", issuedAt: "2026-07-02T00:00:00.000Z",
-    claims: namespaces.map((namespace, i) => ({ namespace, domain: `org${i}.example`, status: "active",
+    claims: namespaces.map((namespace, i) => ({ namespace, domain: `org${i}.example`, claimantPublicKey: CLAIMANT_KEY, status: "active",
       challenge: { method: "dns-txt", id: `c-${i}`, verifiedAt: "2026-07-01T00:00:00.000Z" },
       renewalDueAt: "2027-07-01T00:00:00.000Z" })),
   };

@@ -428,7 +428,9 @@ class as the policy key (§4 key-hygiene stance applies); **local policy
 sovereignty** — policy-private outranks every claim, so an operator can pin
 any name against a hostile corpus; **30-day timelocked corpus entries** for
 transfers, dispute rulings, and Tier-2 grants make the dangerous mutations
-visible in corpus diffs before they take effect; and claims are
+visible in corpus diffs before they take effect; voluntary transfers must
+verify against the current claimant's Ed25519 key; published versions retain
+their publication-time claim attribution; and claims are
 non-overlapping by construction, so a forged claim cannot silently shadow an
 existing one. Residual, stated plainly: the steward is a deliberate trust
 chokepoint — corpus-key compromise is in the same catastrophic class as
@@ -439,10 +441,11 @@ policy-key compromise, and the timelock is the detection window.
 An attacker attempts to acquire a claim they are not entitled to: a lookalike
 domain (`tanstack-js.dev`, homograph variants) passes its own DNS TXT
 challenge trivially, so **domain control alone never grants a contested
-name**. The design's control is the three-tier grandfathering rule
-(ADR-0046): Tier-1 auto-grant requires the *upstream package's own metadata*
-to corroborate the claimant's domain — a pure function the attacker cannot
-satisfy without already controlling the upstream package; Tier-2 (an active
+name**. The design's control is the three-tier grandfathering rule, derived
+from an authoritative upstream lookup owned by the steward rather than
+applicant input (ADR-0046): Tier-1 auto-grant requires the *upstream package's
+own metadata* to corroborate the claimant's domain — a pure function the
+attacker cannot satisfy without already controlling the upstream package; Tier-2 (an active
 unlinked upstream publisher — the squatting-dispute tier) is refused by
 default and requires PEP-541-grade evidence plus the 30-day timelocked entry;
 brand-dispute adjudication is categorically refused, closing the

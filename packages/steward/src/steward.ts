@@ -1,10 +1,12 @@
 import { Buffer } from "node:buffer";
-import { randomBytes, randomUUID } from "node:crypto";
+import { createPrivateKey, createPublicKey, randomBytes, randomUUID, sign as edSign, verify as edVerify } from "node:crypto";
 import { dirname } from "node:path";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import {
   parseClaimCorpus,
   signClaimCorpus,
+  isValidClaimDomain,
+  isValidClaimNamespace,
   type ClaimCorpus,
   type DnsChallengeProof,
   type PendingClaimGrant,
@@ -18,10 +20,16 @@ export type TxtResolver = (domain: string) => Promise<readonly (readonly string[
 export interface ClaimApplicationInput {
   namespace: string;
   domain: string;
-  tier: GrandfatherTier;
-  upstreamPackument: unknown | null;
   trustedPublishers?: TrustedPublisher[];
+  claimantPublicKey: string;
 }
+
+export type UpstreamClaimEvidence =
+  | { kind: "absent" }
+  | { kind: "long-dead-placeholder"; packument: unknown }
+  | { kind: "active"; packument: unknown };
+
+export type UpstreamClaimLookup = (namespace: string) => Promise<UpstreamClaimEvidence>;
 
 export interface ClaimChallenge {
   id: string;
@@ -30,6 +38,8 @@ export interface ClaimChallenge {
 }
 
 interface Application extends ClaimApplicationInput, ClaimChallenge {
+  tier: GrandfatherTier;
+  upstreamPackument: unknown | null;
   issuedAt: string;
   verifiedAt?: string;
 }
@@ -46,18 +56,34 @@ export interface StewardOptions {
   id?: () => string;
   /** Durable state file. Invalid state fails closed during construction. */
   stateFile?: string;
+  /** Authoritative upstream lookup owned by the steward, never applicant input. */
+  lookupUpstream: UpstreamClaimLookup;
 }
 
 const DAY = 24 * 60 * 60 * 1000;
-const NAMESPACE = /^(?:@[a-z0-9][a-z0-9._~-]*\/\*|[a-z0-9][a-z0-9._~-]*)$/;
-const DOMAIN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+const STATE_VALIDATION_ISSUED_AT = "9999-12-31T23:59:59.999Z";
 
 function iso(ms: number): string { return new Date(ms).toISOString(); }
+
+function isCanonicalInstant(value: unknown): value is string {
+  return typeof value === "string" && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
+}
 
 function renewalDue(verifiedAt: string): string {
   const date = new Date(verifiedAt);
   date.setUTCFullYear(date.getUTCFullYear() + 1);
   return date.toISOString();
+}
+
+export function transferRequestBytes(input: { namespace: string; targetDomain: string; targetChallengeId: string; targetClaimantPublicKey: string }): Buffer {
+  return Buffer.from(JSON.stringify({ schema: 1, ...input }));
+}
+
+export function signTransferRequest(
+  input: { namespace: string; targetDomain: string; targetChallengeId: string; targetClaimantPublicKey: string },
+  privateKeyPem: string,
+): string {
+  return edSign(null, transferRequestBytes(input), createPrivateKey(privateKeyPem)).toString("base64");
 }
 
 function directUrls(packument: unknown): string[] {
@@ -107,25 +133,34 @@ export class ClaimSteward {
   private readonly now: () => number;
   private readonly id: () => string;
   private readonly stateFile: string | undefined;
+  private readonly lookupUpstream: UpstreamClaimLookup;
   private readonly applications = new Map<string, Application>();
   private readonly claims = new Map<string, VerifiedClaim>();
   private readonly pendingGrants = new Map<string, PendingGrant>();
 
-  constructor(options: StewardOptions = {}) {
+  constructor(options: StewardOptions) {
     this.now = options.now ?? Date.now;
     this.id = options.id ?? randomUUID;
     this.stateFile = options.stateFile;
+    this.lookupUpstream = options.lookupUpstream;
     this.loadState();
   }
 
-  issueChallenge(input: ClaimApplicationInput): ClaimChallenge {
-    if (!NAMESPACE.test(input.namespace)) throw new Error("invalid namespace: expected @scope/* or exact unscoped name");
-    if (!DOMAIN.test(input.domain)) throw new Error("invalid domain: expected a lowercase exact apex domain");
-    if (![1, 2, 3].includes(input.tier)) throw new Error("invalid grandfather tier");
+  async issueChallenge(input: ClaimApplicationInput): Promise<ClaimChallenge> {
+    if (!isValidClaimNamespace(input.namespace)) throw new Error("invalid namespace: expected @scope/* or exact unscoped name");
+    if (!isValidClaimDomain(input.domain)) throw new Error("invalid domain: expected a lowercase exact apex domain");
+    try {
+      if (createPublicKey(input.claimantPublicKey).asymmetricKeyType !== "ed25519") throw new Error("wrong key type");
+    } catch { throw new Error("claimantPublicKey must be an Ed25519 public key PEM"); }
     const id = this.id();
     if (this.applications.has(id)) throw new Error(`duplicate challenge id ${id}`);
     const txtValue = `sentinel-claim=${id}.${randomBytes(18).toString("base64url")}`;
-    this.applications.set(id, { ...input, id, domain: input.domain, txtValue, issuedAt: iso(this.now()) });
+    const evidence = await this.lookupUpstream(input.namespace);
+    const upstreamPackument = evidence.kind === "absent" ? null : evidence.packument;
+    const tier: GrandfatherTier = evidence.kind === "absent" || evidence.kind === "long-dead-placeholder"
+      ? 3
+      : corroboratesClaimDomain(evidence.packument, input.domain) ? 1 : 2;
+    this.applications.set(id, { ...input, tier, upstreamPackument, id, domain: input.domain, txtValue, issuedAt: iso(this.now()) });
     this.persist();
     return { id, domain: input.domain, txtValue };
   }
@@ -147,10 +182,9 @@ export class ClaimSteward {
     if (application.tier === 1 && !corroboratesClaimDomain(application.upstreamPackument, application.domain)) {
       throw new Error("Tier-1 claim lacks corroborating upstream metadata");
     }
-    if (application.tier === 3 && application.upstreamPackument !== null) {
-      throw new Error("Tier-3 claim requires a free upstream name");
-    }
-    const claim = this.claimFrom(application);
+    const claim = parseClaimCorpus(Buffer.from(JSON.stringify({
+      schema: 1, version: "steward-approval", issuedAt: iso(this.now()), claims: [this.claimFrom(application)],
+    }))).claims[0]!;
     if (application.tier === 2) {
       if (!options.evidenceRef) throw new Error("Tier-2 claim requires adjudicated evidence");
       const announcedAt = iso(this.now());
@@ -169,11 +203,16 @@ export class ClaimSteward {
     const target = this.application(targetChallengeId);
     if (!target.verifiedAt) throw new Error("transfer target requires a passed challenge");
     if (target.namespace !== namespace) throw new Error("transfer challenge namespace mismatch");
-    if (!oldClaimantSignature) throw new Error("transfer requires the old claimant signature");
+    const request = { namespace, targetDomain: target.domain, targetChallengeId, targetClaimantPublicKey: target.claimantPublicKey };
+    let authorized = false;
+    try {
+      authorized = edVerify(null, transferRequestBytes(request), createPublicKey(claim.claimantPublicKey), Buffer.from(oldClaimantSignature, "base64"));
+    } catch { authorized = false; }
+    if (!authorized) throw new Error("transfer requires a valid old claimant signature");
     const announcedAt = iso(this.now());
     claim.pending = {
       kind: "transfer", announcedAt, effectiveAt: iso(this.now() + 30 * DAY), targetDomain: target.domain,
-      challenge: this.proof(target), authorizedBy: oldClaimantSignature,
+      targetClaimantPublicKey: target.claimantPublicKey, challenge: this.proof(target), authorizedBy: oldClaimantSignature,
     };
     this.persist();
   }
@@ -188,10 +227,12 @@ export class ClaimSteward {
     const target = this.application(targetChallengeId);
     if (claim.status !== "disputed") throw new Error("claim is not disputed");
     if (!target.verifiedAt) throw new Error("ruling target requires a passed challenge");
+    if (target.namespace !== namespace) throw new Error("ruling challenge namespace mismatch");
     if (!evidenceRef) throw new Error("dispute ruling requires evidence");
     const announcedAt = iso(this.now());
     claim.pending = { kind: "dispute-ruling", announcedAt, effectiveAt: iso(this.now() + 30 * DAY),
-      targetDomain: target.domain, challenge: this.proof(target), authorizedBy: evidenceRef };
+      targetDomain: target.domain, targetClaimantPublicKey: target.claimantPublicKey,
+      challenge: this.proof(target), authorizedBy: evidenceRef };
     this.persist();
   }
 
@@ -206,23 +247,31 @@ export class ClaimSteward {
   }
 
   freezeExpiredClaims(): void {
-    for (const claim of this.claims.values()) if (Date.parse(claim.renewalDueAt) <= this.now()) claim.status = "frozen";
+    this.applyExpiryFreeze();
+    this.persist();
+  }
+
+  freezeForDomainChange(namespace: string, evidenceRef: string): void {
+    if (!evidenceRef) throw new Error("domain-change freeze requires evidence");
+    this.claim(namespace).status = "frozen";
     this.persist();
   }
 
   release(version: string, privateKeyPem?: string): { corpus: ClaimCorpus; raw: Buffer; signature?: string } {
+    this.applyExpiryFreeze();
     this.materializeEffectiveChanges();
     this.persist();
     const pendingClaims: PendingClaimGrant[] = [...this.pendingGrants.values()].map(({ claim, announcedAt, effectiveAt, evidenceRef }) => ({
-      namespace: claim.namespace, domain: claim.domain, tier: 2, challenge: claim.challenge,
+      namespace: claim.namespace, domain: claim.domain, claimantPublicKey: claim.claimantPublicKey, tier: 2, challenge: claim.challenge,
       announcedAt, effectiveAt, authorizedBy: evidenceRef,
       ...(claim.trustedPublishers ? { trustedPublishers: claim.trustedPublishers } : {}),
     }));
-    const corpus: ClaimCorpus = {
+    const candidate: ClaimCorpus = {
       schema: 1, version, issuedAt: iso(this.now()), claims: [...this.claims.values()].map((claim) => structuredClone(claim)),
       ...(pendingClaims.length ? { pendingClaims } : {}),
     };
-    const raw = Buffer.from(JSON.stringify(corpus));
+    const raw = Buffer.from(JSON.stringify(candidate));
+    const corpus = parseClaimCorpus(raw);
     return { corpus, raw, ...(privateKeyPem ? { signature: signClaimCorpus(raw, privateKeyPem) } : {}) };
   }
 
@@ -237,6 +286,7 @@ export class ClaimSteward {
       const pending = claim.pending;
       if (!pending || Date.parse(pending.effectiveAt) > this.now()) continue;
       claim.domain = pending.targetDomain!;
+      claim.claimantPublicKey = pending.targetClaimantPublicKey!;
       claim.challenge = pending.challenge!;
       claim.renewalDueAt = renewalDue(pending.challenge!.verifiedAt);
       claim.status = "active";
@@ -244,9 +294,13 @@ export class ClaimSteward {
     }
   }
 
+  private applyExpiryFreeze(): void {
+    for (const claim of this.claims.values()) if (Date.parse(claim.renewalDueAt) <= this.now()) claim.status = "frozen";
+  }
+
   private claimFrom(application: Application): VerifiedClaim {
     return {
-      namespace: application.namespace, domain: application.domain, status: "active",
+      namespace: application.namespace, domain: application.domain, claimantPublicKey: application.claimantPublicKey, status: "active",
       challenge: this.proof(application), renewalDueAt: renewalDue(application.verifiedAt!),
       ...(application.trustedPublishers?.length ? { trustedPublishers: structuredClone(application.trustedPublishers) } : {}),
     };
@@ -278,16 +332,37 @@ export class ClaimSteward {
       throw new Error("invalid steward state: expected schema 1 arrays");
     }
     const parsedClaims = parseClaimCorpus(Buffer.from(JSON.stringify({
-      schema: 1, version: "steward-state", issuedAt: iso(this.now()), claims: state.claims,
+      schema: 1, version: "steward-state", issuedAt: STATE_VALIDATION_ISSUED_AT, claims: state.claims,
     }))).claims;
-    for (const application of state.applications as Application[]) {
-      if (!application || typeof application.id !== "string") throw new Error("invalid steward state: malformed application");
+    for (const candidate of state.applications as Application[]) {
+      const application = candidate as Application;
+      if (!application || typeof application.id !== "string" || !application.id || !isValidClaimNamespace(application.namespace) ||
+          !isValidClaimDomain(application.domain) || ![1, 2, 3].includes(application.tier) ||
+          typeof application.txtValue !== "string" || !application.txtValue || !isCanonicalInstant(application.issuedAt) ||
+          (application.verifiedAt !== undefined && !isCanonicalInstant(application.verifiedAt))) {
+        throw new Error("invalid steward state: malformed application");
+      }
+      try {
+        if (createPublicKey(application.claimantPublicKey).asymmetricKeyType !== "ed25519") throw new Error("wrong key type");
+      } catch { throw new Error("invalid steward state: malformed application claimant key"); }
+      if (this.applications.has(application.id)) throw new Error("invalid steward state: duplicate application id");
       this.applications.set(application.id, application);
     }
     for (const claim of parsedClaims) this.claims.set(claim.namespace, claim);
-    for (const pending of state.pendingGrants as PendingGrant[]) {
-      if (!pending?.claim || typeof pending.claim.namespace !== "string") throw new Error("invalid steward state: malformed pending grant");
-      this.pendingGrants.set(pending.claim.namespace, pending);
+    for (const candidate of state.pendingGrants as PendingGrant[]) {
+      const pending = candidate as PendingGrant;
+      if (!pending?.claim || !isCanonicalInstant(pending.announcedAt) || !isCanonicalInstant(pending.effectiveAt) ||
+          Date.parse(pending.effectiveAt) - Date.parse(pending.announcedAt) < 30 * DAY ||
+          typeof pending.evidenceRef !== "string" || !pending.evidenceRef) {
+        throw new Error("invalid steward state: malformed pending grant");
+      }
+      const parsed = parseClaimCorpus(Buffer.from(JSON.stringify({
+        schema: 1, version: "steward-pending-state", issuedAt: STATE_VALIDATION_ISSUED_AT, claims: [pending.claim],
+      }))).claims[0]!;
+      if (this.claims.has(parsed.namespace) || this.pendingGrants.has(parsed.namespace)) {
+        throw new Error("invalid steward state: overlapping pending grant");
+      }
+      this.pendingGrants.set(parsed.namespace, { ...pending, claim: parsed });
     }
   }
 

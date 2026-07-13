@@ -3,7 +3,9 @@ import { createHash, createPrivateKey, createPublicKey, sign, verify } from "nod
 import { readFileSync } from "node:fs";
 
 export type ClaimStatus = "active" | "frozen" | "disputed";
-export type ClaimChangeKind = "transfer" | "dispute-ruling" | "tier2-grant";
+export type ClaimChangeKind = "transfer" | "dispute-ruling";
+
+export interface ClaimCorpusIdentity { version: string; hash: string }
 
 export interface DnsChallengeProof {
   method: "dns-txt";
@@ -25,12 +27,15 @@ export interface PendingClaimChange {
   targetDomain?: string;
   challenge?: DnsChallengeProof;
   authorizedBy: string;
+  targetClaimantPublicKey?: string;
 }
 
 export interface VerifiedClaim {
   /** `@scope/*` or an exact unscoped package name. */
   namespace: string;
   domain: string;
+  /** Ed25519 key authorized to sign voluntary transfers for this claim. */
+  claimantPublicKey: string;
   status: ClaimStatus;
   challenge: DnsChallengeProof;
   renewalDueAt: string;
@@ -43,6 +48,7 @@ export interface VerifiedClaim {
 export interface PendingClaimGrant {
   namespace: string;
   domain: string;
+  claimantPublicKey: string;
   tier: 2;
   challenge: DnsChallengeProof;
   announcedAt: string;
@@ -75,8 +81,16 @@ const UNSCOPED_NAME = /^[a-z0-9][a-z0-9._~-]*$/;
 const SCOPED_CLAIM = /^@[a-z0-9][a-z0-9._~-]*\/\*$/;
 const DOMAIN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const STATUSES = new Set<ClaimStatus>(["active", "frozen", "disputed"]);
-const CHANGE_KINDS = new Set<ClaimChangeKind>(["transfer", "dispute-ruling", "tier2-grant"]);
+const CHANGE_KINDS = new Set<ClaimChangeKind>(["transfer", "dispute-ruling"]);
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+
+export function isValidClaimNamespace(value: string): boolean {
+  return SCOPED_CLAIM.test(value) || UNSCOPED_NAME.test(value);
+}
+
+export function isValidClaimDomain(value: string): boolean {
+  return DOMAIN.test(value);
+}
 
 function objectAt(value: unknown, path: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`invalid claim corpus: ${path} must be an object`);
@@ -98,8 +112,16 @@ function instant(value: unknown, path: string): string {
 
 function domain(value: unknown, path: string): string {
   const text = nonempty(value, path);
-  if (!DOMAIN.test(text)) throw new Error(`invalid claim corpus: ${path} must be a lowercase apex domain`);
+  if (!isValidClaimDomain(text)) throw new Error(`invalid claim corpus: ${path} must be a lowercase apex domain`);
   return text;
+}
+
+function ed25519PublicKey(value: unknown, path: string): string {
+  const pem = nonempty(value, path);
+  try {
+    if (createPublicKey(pem).asymmetricKeyType !== "ed25519") throw new Error("wrong key type");
+  } catch { throw new Error(`invalid claim corpus: ${path} must be an Ed25519 public key PEM`); }
+  return pem;
 }
 
 function challenge(value: unknown, path: string): DnsChallengeProof {
@@ -141,9 +163,10 @@ function pendingChange(value: unknown, path: string): PendingClaimChange | undef
     authorizedBy: nonempty(input.authorizedBy, `${path}.authorizedBy`),
   };
   if (input.targetDomain !== undefined) result.targetDomain = domain(input.targetDomain, `${path}.targetDomain`);
+  if (input.targetClaimantPublicKey !== undefined) result.targetClaimantPublicKey = ed25519PublicKey(input.targetClaimantPublicKey, `${path}.targetClaimantPublicKey`);
   if (input.challenge !== undefined) result.challenge = challenge(input.challenge, `${path}.challenge`);
-  if ((kind === "transfer" || kind === "dispute-ruling") && (!result.targetDomain || !result.challenge)) {
-    throw new Error(`invalid claim corpus: ${path} requires targetDomain and a passed challenge`);
+  if ((kind === "transfer" || kind === "dispute-ruling") && (!result.targetDomain || !result.challenge || !result.targetClaimantPublicKey)) {
+    throw new Error(`invalid claim corpus: ${path} requires targetDomain, targetClaimantPublicKey, and a passed challenge`);
   }
   return result;
 }
@@ -163,7 +186,7 @@ export function parseClaimCorpus(raw: Buffer): ClaimCorpus {
     const path = `claims[${index}]`;
     const value = objectAt(entry, path);
     const namespace = nonempty(value.namespace, `${path}.namespace`);
-    if (!SCOPED_CLAIM.test(namespace) && !UNSCOPED_NAME.test(namespace)) {
+    if (!isValidClaimNamespace(namespace)) {
       throw new Error(`invalid claim corpus: ${path}.namespace must be @scope/* or an exact unscoped name`);
     }
     if (seen.has(namespace)) throw new Error(`invalid claim corpus: overlapping namespace ${namespace}`);
@@ -188,6 +211,7 @@ export function parseClaimCorpus(raw: Buffer): ClaimCorpus {
     return {
       namespace,
       domain: domain(value.domain, `${path}.domain`),
+      claimantPublicKey: ed25519PublicKey(value.claimantPublicKey, `${path}.claimantPublicKey`),
       status: value.status as ClaimStatus,
       challenge: proof,
       renewalDueAt,
@@ -202,7 +226,7 @@ export function parseClaimCorpus(raw: Buffer): ClaimCorpus {
       const path = `pendingClaims[${index}]`;
       const value = objectAt(entry, path);
       const namespace = nonempty(value.namespace, `${path}.namespace`);
-      if (!SCOPED_CLAIM.test(namespace) && !UNSCOPED_NAME.test(namespace)) {
+      if (!isValidClaimNamespace(namespace)) {
         throw new Error(`invalid claim corpus: ${path}.namespace must be @scope/* or an exact unscoped name`);
       }
       if (seen.has(namespace)) throw new Error(`invalid claim corpus: overlapping namespace ${namespace}`);
@@ -220,6 +244,7 @@ export function parseClaimCorpus(raw: Buffer): ClaimCorpus {
       return {
         namespace,
         domain: domain(value.domain, `${path}.domain`),
+        claimantPublicKey: ed25519PublicKey(value.claimantPublicKey, `${path}.claimantPublicKey`),
         tier: 2,
         challenge: proof,
         announcedAt,

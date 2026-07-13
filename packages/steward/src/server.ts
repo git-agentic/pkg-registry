@@ -1,5 +1,5 @@
 import { createHash, timingSafeEqual } from "node:crypto";
-import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import express, { type Request, type Response } from "express";
 import { ClaimSteward, type ClaimApplicationInput, type TxtResolver } from "./steward.js";
@@ -34,8 +34,8 @@ export function createStewardServer(options: StewardServerOptions) {
     next();
   });
 
-  app.post("/-/claims/challenges", (req: Request, res: Response) => {
-    try { res.status(201).json(options.steward.issueChallenge(req.body as ClaimApplicationInput)); }
+  app.post("/-/claims/challenges", async (req: Request, res: Response) => {
+    try { res.status(201).json(await options.steward.issueChallenge(req.body as ClaimApplicationInput)); }
     catch (error) { sendError(res, error); }
   });
   app.post("/-/claims/challenges/:id/verify", async (req, res) => {
@@ -75,23 +75,35 @@ export function createStewardServer(options: StewardServerOptions) {
     options.steward.freezeExpiredClaims();
     res.json({ frozen: true });
   });
+  app.post("/-/claims/domain-change-freezes", (req, res) => {
+    try {
+      const body = req.body as { namespace: string; evidenceRef: string };
+      options.steward.freezeForDomainChange(body.namespace, body.evidenceRef);
+      res.json({ frozen: true });
+    } catch (error) { sendError(res, error); }
+  });
   app.post("/-/claims/releases", (req, res) => {
     try {
       const version = (req.body as { version?: unknown }).version;
-      if (typeof version !== "string" || !version) throw new Error("release version is required");
+      if (typeof version !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(version)) throw new Error("release version is required and must be path-safe");
       const release = options.steward.release(version, options.privateKeyPem);
+      let releasePath: string | undefined;
       if (options.releaseDir) {
         mkdirSync(options.releaseDir, { recursive: true });
-        const corpusPath = join(options.releaseDir, "claims.json");
-        const sigPath = `${corpusPath}.sig`;
-        const nonce = `${process.pid}-${Date.now()}`;
-        writeFileSync(`${corpusPath}.${nonce}.tmp`, release.raw);
-        writeFileSync(`${sigPath}.${nonce}.tmp`, release.signature!);
-        renameSync(`${corpusPath}.${nonce}.tmp`, corpusPath);
-        renameSync(`${sigPath}.${nonce}.tmp`, sigPath);
+        const staging = mkdtempSync(join(options.releaseDir, ".release-"));
+        const finalDir = join(options.releaseDir, version);
+        try {
+          writeFileSync(join(staging, "claims.json"), release.raw, { flag: "wx" });
+          writeFileSync(join(staging, "claims.json.sig"), release.signature!, { flag: "wx" });
+          renameSync(staging, finalDir);
+          releasePath = finalDir;
+        } catch (error) {
+          rmSync(staging, { recursive: true, force: true });
+          throw error;
+        }
       }
       res.json({ version, claims: release.corpus.claims.length, pendingClaims: release.corpus.pendingClaims?.length ?? 0,
-        corpus: release.corpus, signature: release.signature });
+        corpus: release.corpus, signature: release.signature, releasePath });
     } catch (error) { sendError(res, error); }
   });
   return app;
