@@ -51,10 +51,26 @@ describe("nativePayloadLoaderRule", () => {
     assert.ok(!f.some((x) => x.severity === "critical"), "benign build tool must not be critical");
   });
 
-  test("TypeScript source with loader keywords → regex fallback, capped below critical", () => {
+  test("TypeScript source (acorn can't parse) → NO loader finding (parse-failure expected, not a signal)", () => {
     const ts = `const out: string = tmp(); fs.writeFileSync(out, gunzipSync(fs.readFileSync(p))); spawn(out,{detached:true});`;
     const f = nativePayloadLoaderRule.run(input({ "package/index.ts": ts }, { name: "p", version: "1.0.0", main: "index.ts" }));
-    assert.ok(!f.some((x) => x.severity === "critical"), "parse-failed fallback never critical");
+    assert.equal(f.length, 0, "a .ts file acorn can't parse must not produce a regex-fallback loader finding");
+  });
+
+  test("`.d.ts` type declarations with read/write/decode tokens → NO finding (never executes; the @types/node false-positive)", () => {
+    // Shape mirrors real @types/node: type signatures mentioning readFile/write/gunzip.
+    const dts = `export function readFileSync(p: string): Buffer;
+export function writeFileSync(p: string, d: Buffer): void;
+export function gunzipSync(b: Buffer): Buffer;`;
+    const f = nativePayloadLoaderRule.run(input({ "package/index.d.ts": dts }, { name: "types-pkg", version: "1.0.0" }));
+    assert.equal(f.length, 0, "a .d.ts declaration file must never be flagged as a loader");
+  });
+
+  test("genuinely-anomalous JS that acorn cannot parse → regex fallback still fires (its intended use), capped below critical", () => {
+    // A .js file with a hard syntax error so acorn fails, carrying ≥2 loader tokens.
+    const brokenJs = `@@@ not valid js @@@ fs.readFileSync(x); fs.writeFileSync(y, gunzipSync(z));`;
+    const f = nativePayloadLoaderRule.run(input({ "package/index.js": brokenJs }, { name: "p", version: "1.0.0", main: "index.js" }));
+    assert.ok(f.length >= 1 && f.every((x) => x.severity !== "critical"), "JS fallback fires but is never critical");
   });
 
   test("throwing input never crashes (returns array)", () => {

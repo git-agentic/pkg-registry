@@ -347,6 +347,17 @@ silent gaps:
 - **Stream-`pipe()` loaders.** `createReadStream().pipe(createGunzip()).pipe(createWriteStream())`
   is not modeled — the analyzer's DECODE/WRITE recognition is call-based
   (function-call primitives with argument dataflow), not stream-topology-based.
+- **Loaders shipped as TypeScript/JSX source.** acorn parses JavaScript only,
+  so `.ts`/`.mts`/`.cts`/`.tsx`/`.jsx`/`.d.ts` files fail to parse. On those,
+  parse-failure is *expected*, so the rule emits **no finding** — the regex
+  fallback runs only for genuinely-JavaScript extensions (`.js`/`.cjs`/`.mjs`)
+  where a parse failure is anomalous (minified/obfuscated JS). This is a
+  deliberate false-positive control: published packages execute compiled `.js`,
+  and running the token-level fallback over every TypeScript file in the
+  ecosystem (e.g. `@types/node`'s hundreds of `.d.ts`, whose type signatures
+  mention `readFile`/`write`/`gunzip`) produced stacked false blocks. A loader
+  that executes from `.ts` source would additionally require a TypeScript
+  runtime; the compiled `.js` it ships for execution is analyzed normally.
 
 These residual forms are not undetected entirely: they still surface as
 lower-severity primitives/boosters (e.g. an unlinked READ+WRITE+LAUNCH still

@@ -2,6 +2,18 @@ import type { AuditInput, ContentMismatchEntry, Evidence, Finding, Rule } from "
 import { codeFiles, mkFinding, truncate } from "./util.js";
 import { analyzeLoaderChain } from "../detect/loader-chain.js";
 
+/**
+ * Extensions acorn (a JavaScript parser) is expected to parse. A parse failure on
+ * one of these is anomalous (minified/obfuscated JS) and warrants the regex
+ * fallback. A parse failure on `.ts`/`.mts`/`.cts`/`.tsx`/`.jsx`/`.d.ts` is
+ * EXPECTED — acorn does not parse TypeScript or JSX — so a regex co-occurrence
+ * there is noise, not signal, and must NOT emit a finding. (Type-declaration
+ * `.d.ts` files never execute at all.) Without this gate, every TypeScript file in
+ * the ecosystem — e.g. `@types/node`'s hundreds of `.d.ts` — trips the fallback on
+ * `readFile`/`write`/decode tokens in type signatures and stacks to a false block.
+ */
+const JS_PARSEABLE = /\.(c?js|mjs)$/i;
+
 /** Regex signals for the parse-failure fallback. Detect independently; NEVER claim dataflow. */
 const FALLBACK = {
   read: /\b(readFileSync|readFile|createReadStream)\s*\(/,
@@ -48,6 +60,9 @@ export const nativePayloadLoaderRule: Rule = {
       const a = analyzeLoaderChain(file.content, { moduleLoadReachable: reachable });
 
       if (a.parseFailed) {
+        // Only fall back for genuinely-JS files: on TS/JSX/.d.ts a parse failure is
+        // expected (acorn is JS-only), so a regex guess is noise, not signal.
+        if (!JS_PARSEABLE.test(rel)) continue;
         // Regex fallback — independent signal only, capped below critical.
         const hits = (Object.keys(FALLBACK) as (keyof typeof FALLBACK)[]).filter((k) => FALLBACK[k].test(file.content));
         if (hits.length >= 2) {
