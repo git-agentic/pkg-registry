@@ -33,10 +33,12 @@ describe("PrivatePackageStore", () => {
     const dir = mkdtempSync(join(tmpdir(), "sentinel-priv-"));
     const a = new PrivatePackageStore(dir);
     put(a, "@acme/y", "2.0.0", "bytes-y");
+    a.setDistTag("@acme/y", "stable", "2.0.0");
     const b = new PrivatePackageStore(dir);  // fresh instance, same dir
     assert.equal(b.has("@acme/y"), true);
     assert.equal(b.getTarball("@acme/y", "2.0.0")?.toString(), "bytes-y");
     assert.equal(b.getVersion("@acme/y", "2.0.0")?.integrity, "sha512-2.0.0");
+    assert.equal(b.packument("@acme/y")?.["dist-tags"].stable, "2.0.0");
   });
 
   test("preserves claim attribution as an immutable publication-time snapshot", () => {
@@ -106,7 +108,7 @@ describe("PrivatePackageStore", () => {
 
     const b = new PrivatePackageStore(dir);
     assert.deepEqual(b.packument("@acme/y"), {
-      name: "@acme/y", "dist-tags": {}, versions: {},
+      _id: "@acme/y", _rev: b.revision("@acme/y"), name: "@acme/y", "dist-tags": {}, versions: {}, time: {},
       _sentinel: { retractions: { "1.0.0": {
         retractedAt: "2026-07-13T12:00:00.000Z", reason: "security", advisoryId: "SENTINEL-RETRACT-durable",
       } } },

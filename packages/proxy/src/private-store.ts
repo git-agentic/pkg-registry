@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { Buffer } from "node:buffer";
 import type { Audit, RetractionAdvisory, RetractionReason, VerifiedClaim } from "@sentinel/core";
@@ -20,9 +20,12 @@ export interface StoredVersion {
 }
 
 export interface PrivatePackument {
+  _id: string;
+  _rev: string;
   name: string;
   "dist-tags": Record<string, string>;
   versions: Record<string, Record<string, unknown>>;
+  time: Record<string, string>;
   _sentinel?: { retractions: Record<string, RetractionTombstone> };
 }
 
@@ -35,10 +38,11 @@ export interface RetractionTombstone {
 }
 
 interface OperationalState {
-  schema: 1;
+  schema: 1 | 2;
   retractions: { name: string; version: string; tombstone: RetractionTombstone }[];
   downloads: { name: string; version: string; count: number }[];
   windowHits: { age: number; downloads: number; both: number };
+  distTags?: { name: string; tags: Record<string, string> }[];
 }
 
 const RETRACTION_REASONS = new Set<RetractionReason>(["security", "withdrawn", "broken", "legal"]);
@@ -65,6 +69,7 @@ export class PrivatePackageStore {
   private byName = new Map<string, Map<string, Entry>>();
   private retractions = new Map<string, RetractionTombstone>();
   private downloads = new Map<string, number>();
+  private distTags = new Map<string, Record<string, string>>();
   private windowHits = { age: 0, downloads: 0, both: 0 };
 
   constructor(private readonly dir?: string, private readonly now: () => number = Date.now) {
@@ -132,6 +137,8 @@ export class PrivatePackageStore {
     manifest: Record<string, unknown>; tarball: Buffer; audit: Audit; actor: string;
     claimAtPublication?: Pick<VerifiedClaim, "namespace" | "domain" | "claimantPublicKey">;
     attestations?: unknown;
+    distTag?: string;
+    publishedAt?: string;
   }): StoredVersion {
     if (this.getRetraction(v.name, v.version)) {
       throw new PublicationConflictError(`version identifier is permanently spent by retraction: ${v.name}@${v.version}`);
@@ -142,7 +149,7 @@ export class PrivatePackageStore {
     const meta: StoredVersion = {
       name: v.name, version: v.version, integrity: v.integrity,
       manifest: v.manifest, audit: v.audit, actor: v.actor,
-      publishedAt: new Date(this.now()).toISOString(),
+      publishedAt: v.publishedAt ?? new Date(this.now()).toISOString(),
       ...(v.claimAtPublication ? { claimAtPublication: structuredClone(v.claimAtPublication) } : {}),
       ...(v.attestations !== undefined ? { attestations: structuredClone(v.attestations) } : {}),
     };
@@ -152,6 +159,7 @@ export class PrivatePackageStore {
     let versions = this.byName.get(v.name);
     if (!versions) { versions = new Map(); this.byName.set(v.name, versions); }
     versions.set(v.version, { meta, tarball: Buffer.from(v.tarball) });
+    this.setDistTag(v.name, v.distTag ?? "latest", v.version);
     return meta;
   }
 
@@ -161,6 +169,8 @@ export class PrivatePackageStore {
     manifest: Record<string, unknown>; tarball: Buffer; audit: Audit; actor: string;
     claimAtPublication?: Pick<VerifiedClaim, "namespace" | "domain" | "claimantPublicKey">;
     attestations?: unknown;
+    distTag?: string;
+    publishedAt?: string;
   }): StoredVersion {
     return this.publish(v);
   }
@@ -228,6 +238,7 @@ export class PrivatePackageStore {
     const versionDocs: Record<string, Record<string, unknown>> = {};
     let latest = "0.0.0";
     const retractions: Record<string, RetractionTombstone> = {};
+    const time: Record<string, string> = {};
     for (const [v, entry] of versions) {
       const tombstone = this.retractions.get(this.key(name, v));
       if (tombstone) {
@@ -235,15 +246,77 @@ export class PrivatePackageStore {
         continue;
       }
       versionDocs[v] = structuredClone(entry.meta.manifest);
+      time[v] = entry.meta.publishedAt;
       if (cmpSemver(v, latest) > 0) latest = v;
     }
     const active = Object.keys(versionDocs).length > 0;
+    const configuredTags = this.distTags.get(name) ?? {};
+    const tags = Object.fromEntries(Object.entries(configuredTags).filter(([, version]) => versionDocs[version] !== undefined));
+    if (active && !tags.latest) tags.latest = latest;
     return {
+      _id: name,
+      _rev: this.revision(name),
       name,
-      "dist-tags": active ? { latest } : {},
+      "dist-tags": active ? tags : {},
       versions: versionDocs,
+      time,
       ...(Object.keys(retractions).length ? { _sentinel: { retractions } } : {}),
     };
+  }
+
+  setDistTag(name: string, tag: string, version: string): void {
+    if (!/^[^\s/]+$/.test(tag)) throw new Error("invalid dist-tag");
+    if (!this.getVersion(name, version) || this.getRetraction(name, version)) throw new Error(`unknown active native version ${name}@${version}`);
+    const next = new Map(this.distTags);
+    next.set(name, { ...(next.get(name) ?? {}), [tag]: version });
+    this.persistOperationalState(this.retractions, this.downloads, this.windowHits, next);
+    this.distTags = next;
+  }
+
+  deleteDistTag(name: string, tag: string): boolean {
+    const current = this.distTags.get(name);
+    if (!current || !(tag in current)) return false;
+    const tags = { ...current };
+    delete tags[tag];
+    const next = new Map(this.distTags);
+    next.set(name, tags);
+    this.persistOperationalState(this.retractions, this.downloads, this.windowHits, next);
+    this.distTags = next;
+    return true;
+  }
+
+  updateDeprecations(name: string, revision: string, doc: Record<string, unknown>): string {
+    if (revision !== this.revision(name)) throw new PublicationConflictError("packument revision conflict");
+    const incoming = doc.versions as Record<string, Record<string, unknown>> | undefined;
+    const versions = this.byName.get(name);
+    if (!incoming || !versions || Object.keys(incoming).length !== versions.size) throw new Error("metadata update cannot add or remove versions");
+    for (const [version, entry] of versions) {
+      const candidate = incoming[version];
+      if (!candidate) throw new Error("metadata update cannot add or remove versions");
+      const currentDist = entry.meta.manifest.dist as { integrity?: unknown } | undefined;
+      const candidateDist = candidate.dist as { integrity?: unknown } | undefined;
+      if (currentDist?.integrity !== candidateDist?.integrity) throw new Error("metadata update cannot change version integrity");
+    }
+    for (const [version, entry] of versions) {
+      const candidate = incoming[version]!;
+      const manifest = structuredClone(entry.meta.manifest);
+      if (typeof candidate.deprecated === "string") manifest.deprecated = candidate.deprecated;
+      else delete manifest.deprecated;
+      entry.meta = { ...entry.meta, manifest };
+      this.persistMeta(entry.meta);
+    }
+    return this.revision(name);
+  }
+
+  revision(name: string): string {
+    const versions = this.byName.get(name);
+    if (!versions) return "0-missing";
+    const state = {
+      versions: [...versions].map(([version, entry]) => [version, entry.meta.integrity, entry.meta.manifest.deprecated ?? null]),
+      tags: this.distTags.get(name) ?? {},
+      retractions: [...this.retractions].filter(([key]) => key.startsWith(`${name}\u0000`)),
+    };
+    return `1-${createHash("sha256").update(JSON.stringify(state)).digest("hex").slice(0, 16)}`;
   }
 
   // ---- persistence (best-effort, mirrors AuditStore's style) ----
@@ -264,6 +337,7 @@ export class PrivatePackageStore {
     retractions: Map<string, RetractionTombstone>,
     downloads: Map<string, number>,
     windowHits: { age: number; downloads: number; both: number },
+    distTags: Map<string, Record<string, string>> = this.distTags,
   ): void {
     if (!this.dir) return;
     mkdirSync(this.dir, { recursive: true });
@@ -272,10 +346,11 @@ export class PrivatePackageStore {
       return { name: key.slice(0, separator), version: key.slice(separator + 1) };
     };
     const state: OperationalState = {
-      schema: 1,
+      schema: 2,
       retractions: [...retractions].map(([key, tombstone]) => ({ ...decode(key), tombstone })),
       downloads: [...downloads].map(([key, count]) => ({ ...decode(key), count })),
       windowHits: { ...windowHits },
+      distTags: [...distTags].map(([name, tags]) => ({ name, tags })),
     };
     const temp = `${this.stateFile()}.${process.pid}.${randomUUID()}.tmp`;
     try {
@@ -304,13 +379,25 @@ export class PrivatePackageStore {
     }
   }
 
+  private persistMeta(meta: StoredVersion): void {
+    if (!this.dir) return;
+    const target = join(this.dirFor(meta.name, meta.version), "meta.json");
+    const temp = `${target}.${process.pid}.${randomUUID()}.tmp`;
+    try {
+      writeFileSync(temp, JSON.stringify(meta, null, 2), { flag: "wx" });
+      renameSync(temp, target);
+    } finally {
+      try { unlinkSync(temp); } catch { /* rename succeeded or cleanup is best-effort */ }
+    }
+  }
+
   private load(dir: string): void {
     const stateFile = this.stateFile();
     if (existsSync(stateFile)) {
       let state: OperationalState;
       try { state = JSON.parse(readFileSync(stateFile, "utf8")) as OperationalState; }
       catch { throw new Error("invalid private registry operational state: expected JSON"); }
-      if (state?.schema !== 1 || !Array.isArray(state.retractions) || !Array.isArray(state.downloads) ||
+      if ((state?.schema !== 1 && state?.schema !== 2) || !Array.isArray(state.retractions) || !Array.isArray(state.downloads) ||
           !state.windowHits || typeof state.windowHits !== "object") {
         throw new Error("invalid private registry operational state: expected schema 1");
       }
@@ -342,6 +429,16 @@ export class PrivatePackageStore {
         throw new Error("invalid private registry operational state: malformed window-hit counters");
       }
       this.windowHits = { age: hits.age, downloads: hits.downloads, both: hits.both };
+      if (state.schema === 2) {
+        if (!Array.isArray(state.distTags)) throw new Error("invalid private registry operational state: malformed dist-tags");
+        for (const row of state.distTags) {
+          if (!validCoordinatePart(row?.name) || !row.tags || typeof row.tags !== "object" || Array.isArray(row.tags) ||
+              Object.entries(row.tags).some(([tag, version]) => !validCoordinatePart(tag) || !validCoordinatePart(version))) {
+            throw new Error("invalid private registry operational state: malformed dist-tags");
+          }
+          this.distTags.set(row.name, { ...row.tags });
+        }
+      }
     }
     for (const enc of readdirSync(dir)) {
       const name = decodeURIComponent(enc);
@@ -359,6 +456,12 @@ export class PrivatePackageStore {
         } catch {
           /* skip a corrupt entry */
         }
+      }
+    }
+    for (const [name, versions] of this.byName) {
+      if (!this.distTags.has(name) && versions.size) {
+        const latest = [...versions.keys()].sort(cmpSemver).at(-1)!;
+        this.distTags.set(name, { latest });
       }
     }
   }

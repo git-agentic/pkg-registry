@@ -108,6 +108,9 @@ node packages/cli/dist/index.js install lodash
 | `SENTINEL_REGISTRY` | `https://registry.npmjs.org` | upstream registry when in npm mode |
 | `SENTINEL_STORE` | _(memory only)_ | path to a JSON file to persist the audit log |
 | `SENTINEL_PRIVATE_STORE` | _(memory only)_ | directory for authoritative native tarballs + metadata; each version commits atomically |
+| `SENTINEL_REGISTRY_MODE` | `on` | `off` ignores verified claims for resolution and disables registry mutations; signed policy-private namespaces are unchanged |
+| `SENTINEL_REGISTRY_MODE_OFF_ACK` | _(unset)_ | must be exactly `1` to start in registry-off mode when native content exists |
+| `SENTINEL_REVERT_MANIFEST` | `<private-store>/revert-manifest.json` | output path for the retained-name and resolution-flip manifest emitted in registry-off mode |
 | `SENTINEL_PUBLISH_TOKENS` | _(unset ⇒ publishing disabled in open-auth mode)_ | comma-separated legacy bearer tokens accepted by `PUT /:pkg`; with role auth enabled, a `publisher` token is required instead |
 | `SENTINEL_CLAIM_CORPUS_FILE` | _(verified empty corpus)_ | versioned claim-corpus JSON; when set, `SENTINEL_CLAIM_CORPUS_PUBKEY` is required and any read/schema/signature failure is fatal |
 | `SENTINEL_CLAIM_CORPUS_SIG` | `<corpus-file>.sig` | detached Ed25519 signature over the exact corpus bytes |
@@ -134,7 +137,7 @@ node packages/cli/dist/index.js install lodash
 | `SENTINEL_MAX_UNPACKED_BYTES` | `1 GiB` | cap on total decompressed bytes when extracting a tarball's contents; over-cap aborts extraction mid-stream and the current tarball's audit gets a critical `resource-abuse` finding (BLOCK) |
 | `SENTINEL_MAX_FILE_COUNT` | `100000` | cap on the number of files unpacked from a tarball; over-cap aborts extraction mid-stream the same way as the byte cap |
 
-## Authoritative registry, verified claims, and retraction (Phases 30–32)
+## Authoritative registry, verified claims, retraction, and migration (Phases 30–33)
 
 Every package name resolves to one source class through the pure function
 `source(name, signedPolicy, claimCorpus)`: `policy-private`, then
@@ -228,6 +231,36 @@ schema failure is fatal, while matching advisories enforce 410/block-or-warn by
 default without mutating cached scores or requiring
 `SENTINEL_AUTO_QUARANTINE`.
 
+### Migration and compatibility
+
+Native packages expose full npm packuments (including `time` and `_rev`),
+abbreviated/corgi negotiation, dist-tags, legacy login/whoami, metadata-only
+deprecation, and npm/pnpm's revision-based unpublish flow. Unpublish maps to the
+same time/download-window retraction above; it never raw-deletes bytes.
+
+To import public history after a claim, run against the configured proxy:
+
+```bash
+sentinel-registry import --proxy http://localhost:4873 --package claimed-name
+```
+
+Every upstream version is fetched and audited before any is committed; a
+blocked version aborts the import, and accepted versions retain the upstream
+integrity so old lockfiles continue to verify. To leave registry mode without
+lock-in, export the retained store and then use the emitted `.tgz` files with a
+stock registry:
+
+```bash
+sentinel-registry export --store ./registry-data --out ./registry-export
+```
+
+`SENTINEL_REGISTRY_MODE=off` requires
+`SENTINEL_REGISTRY_MODE_OFF_ACK=1` when the store is non-empty. The revert
+manifest names every claimed package that would become a public mirror and
+states the safe path: add those names to the signed policy's
+`privateNamespaces` before switching off. No store, tombstone, claim, or audit
+data is deleted; switching back on restores native resolution.
+
 ## CLI
 
 ```
@@ -256,6 +289,8 @@ sentinel token verify <token> --pubkey             verify a token, print role/su
 sentinel attest-keygen --out <prefix>              generate an Ed25519 keypair for attestation signing
 sentinel attest [lockfile] --key --out [--sbom]    audit the tree, write an SBOM, sign a DSSE attestation over it
 sentinel verify-attestation <att> --key [--sbom --policy-hash --require]   offline-verify an attestation (deploy gate)
+sentinel-registry import --proxy --package [--token]  audit-gated claimed-history import
+sentinel-registry export --store --out                 lossless native package export
   -p, --proxy <url>   proxy base URL (default http://localhost:4873)
   --json              raw JSON report
 ```

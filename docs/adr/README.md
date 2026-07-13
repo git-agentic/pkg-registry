@@ -122,7 +122,7 @@ first shipped slice; Phases 31 and 32 complete claiming and retraction.
 | [0046](./0046-verified-namespace-claiming.md) | Verified namespace claiming (Phase 31) | Offline signed claim corpus; DNS TXT constitutive, OIDC = trusted publishing only; 12-month renewal, freeze-not-fallthrough; 30-day timelocked transfers/disputes; three-tier grandfathering |
 | [0047](./0047-time-locked-retraction.md) | Time-locked retraction (Phase 32) | Retract only while age < 72 h AND downloads < 1,000 (policy data); tombstones + spent identifiers, history retained; two-speed advisory emission; default serve-time quarantine overlay |
 
-## Phase 33 — registry compatibility (Proposed, design only)
+## Phase 33 — registry compatibility (Accepted, implemented)
 
 | ADR | Title | Decision in one line |
 |-----|-------|----------------------|

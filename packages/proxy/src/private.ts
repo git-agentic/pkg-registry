@@ -7,6 +7,7 @@ function sha(s: string): Buffer {
 
 export interface ParsedPublish {
   version: string;
+  distTag: string;
   manifest: Record<string, unknown>;
   tarball: Buffer;
   declaredIntegrity: string | undefined;
@@ -74,7 +75,11 @@ export function parsePublishBody(name: string, body: unknown): ParsedPublish {
   if (Object.keys(versions).length !== 1) throw new Error("publish payload must have exactly one version");
   const manifest = versions[version];
   if (!manifest) throw new Error(`publish payload missing manifest for version ${version}`);
-  if (b["dist-tags"]?.latest !== version) throw new Error("publish dist-tags.latest must match the published version");
+  const distTags = Object.entries(b["dist-tags"] ?? {}).filter(([, target]) => target === version);
+  if (distTags.length !== 1 || Object.keys(b["dist-tags"] ?? {}).length !== 1) {
+    throw new Error("publish payload must have exactly one dist-tag targeting the published version");
+  }
+  if (!/^[^\s/]+$/.test(distTags[0]![0])) throw new Error("publish payload contains an invalid dist-tag");
   if (manifest.name !== name) {
     throw new Error(`publish manifest name "${String(manifest.name)}" does not match ${name}`);
   }
@@ -84,6 +89,7 @@ export function parsePublishBody(name: string, body: unknown): ParsedPublish {
   const dist = manifest.dist as { integrity?: string } | undefined;
   return {
     version,
+    distTag: distTags[0]![0],
     manifest,
     tarball,
     declaredIntegrity: dist?.integrity,

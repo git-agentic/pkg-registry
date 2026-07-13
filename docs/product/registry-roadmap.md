@@ -1,6 +1,6 @@
 # Sentinel registry roadmap — Phases 30–33
 
-**Status:** Phases 30–32 shipped; Phase 33 proposed
+**Status:** Phases 30–33 shipped
 **Date:** 2026-07-11
 
 This is the phased plan for Sentinel's evolution from a transparent auditing
@@ -200,6 +200,8 @@ signed fleet corpus in the same atomic directory as the claim corpus.
 
 ## Phase 33 — Migration & compatibility
 
+**Status:** Complete (2026-07-13)
+
 **ADR:** [0048](../adr/0048-migration-compatibility-surface.md) ·
 **Depends on:** Phases 30–32 exits
 
@@ -234,9 +236,15 @@ mode is fail-closed, acknowledged, manifested, lossless, and lock-in-free.
   test) — source class must remain derivable from (policy, corpus) alone, so
   no store migration or restore can ever change routing.
 
+Evidence: `packages/proxy/test/compatibility-e2e.test.ts`,
+`registry-migration.test.ts`, `private-store.test.ts`, and the
+`sentinel-registry import|export` migration utility. Native packuments carry
+full metadata and negotiate corgi documents; npm's revision workflow delegates
+availability changes to the Phase 32 retraction decision. Registry-mode revert
+retains the store and emits derived resolution flips without persisting a
+source class.
+
 ## Out of scope for this roadmap
 
 Operating a public registry service and cross-instance federation. Phases
-Phase 33 remains design-only. Ruled at the map level;
-revisiting them is a new effort with a new charter, not an extension of this
-one.
+Further public-registry operation or federation requires a new charter.

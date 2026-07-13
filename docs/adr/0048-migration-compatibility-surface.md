@@ -1,6 +1,6 @@
 # ADR-0048: Migration & compatibility surface
 
-**Status:** Proposed (Phase 33 — design only, no implementation)
+**Status:** Accepted (Phase 33 — implemented 2026-07-13)
 **Date:** 2026-07-11
 
 Last of the four registry-evolution ADRs (0045–0048). Decision record for
