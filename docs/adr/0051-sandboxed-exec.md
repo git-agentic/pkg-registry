@@ -116,6 +116,22 @@ not attempt to intercept `npx`/`npm exec` transparently. The operator names
 the exact executable and arguments; `sentinel exec` does not guess what a
 package "would" run.
 
+To keep package **acquisition** on the gated path, `sentinel exec` **refuses**
+a command whose basename is a package manager — `npm`, `npx`, `yarn`, `pnpm`,
+`pnpx`, `bun`, `bunx` (matched after stripping any directory prefix and a
+`.cmd`/`.exe` suffix, case-insensitively, so `/usr/local/bin/npm` and `npm.cmd`
+are both refused) — and points the operator at `sentinel install` / `sentinel
+npx`, which route resolution through the proxy. The match is **exact on the
+basename**, not a substring, so a legitimately-named tool like `my-npm-helper`
+is unaffected. This is a guardrail against the obvious `sentinel exec -- npm
+install <pkg>` bypass, **not** an airtight boundary: a deliberate wrapper such
+as `sentinel exec -- env npm …` or `-- sh -c "npm …"` still reaches a package
+manager, because `env`/`sh` are ordinary executables and `exec` runs exactly
+the one command named (no shell, no argv interpretation). That residual is
+inherent to a single-command, no-shell interface; the primary control against
+running an unaudited package's code remains the registry gate (ADR-0049), which
+does not depend on this refusal.
+
 ### Future-resolver constraint
 
 If a later phase adds `npx`/package-manager-aware resolution on top of this
