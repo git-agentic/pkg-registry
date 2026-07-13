@@ -335,21 +335,39 @@ export function createServer(opts: ServerOptions) {
     return advisory?.integrity === report.meta.integrity ? advisory : undefined;
   }
 
-  /** Authoritative-fact overlay: immutable report copy; security blocks, other reasons warn. */
+  /** Authoritative-fact overlay: immutable report copy scored by active policy. */
   function applyRetraction(report: AuditReport): { report: AuditReport; tombstone?: RetractionTombstone } {
     const advisory = retractionFor(report);
     if (!advisory) return { report };
-    const finding: ScoredFinding = {
+    const finding: Audit["findings"][number] = {
       ruleId: "known-advisory", category: "metadata", severity: advisory.severity,
       message: `\`${advisory.name}@${advisory.version}\` was retracted (${advisory.reason}) in advisory ${advisory.id}.`,
-      onChangedFile: false, evidence: [], weight: 0, waived: false,
+      onChangedFile: false, evidence: [],
     };
-    const verdict = advisory.reason === "security"
-      ? "block" as const
-      : report.verdict === "allow" ? "warn" as const : report.verdict;
-    const alreadyPresent = report.findings.some((candidate) => candidate.ruleId === "known-advisory" && candidate.message.includes(advisory.id));
+    // Re-score the immutable fact through the active enterprise policy so rule
+    // disables, allows, severity weights, and thresholds retain their normal
+    // meaning. Strip score-only fields and any prior copy of this advisory.
+    const findings = report.findings
+      .filter((candidate) => !POLICY_SYNTHESIZED_RULE_IDS.has(candidate.ruleId))
+      .filter((candidate) => !(candidate.ruleId === "known-advisory" && candidate.message.includes(advisory.id)))
+      .map(({ weight: _weight, waived: _waived, waivedBy: _waivedBy, ...candidate }) => candidate);
+    const rescored = scoreAudit({
+      schema: 3, meta: report.meta, findings: [finding, ...findings],
+      capabilities: report.capabilities, capabilityDelta: report.capabilityDelta,
+      engine: { version: report.engine.version, rules: report.engine.rules, mode: report.engine.mode },
+      auditedAt: report.auditedAt, durationMs: report.durationMs,
+    });
+    // A security retraction is an authoritative unavailability fact and remains
+    // fail-closed even where the numeric high-severity weight would only warn.
+    const scoredRetraction = rescored.findings.find((candidate) =>
+      candidate.ruleId === "known-advisory" && candidate.message.includes(advisory.id));
+    const overlaid = advisory.reason === "security"
+      ? { ...rescored, verdict: "block" as const }
+      : scoredRetraction && !scoredRetraction.waived && rescored.verdict === "allow"
+        ? { ...rescored, verdict: "warn" as const }
+        : rescored;
     return {
-      report: { ...report, verdict, findings: alreadyPresent ? report.findings : [finding, ...report.findings] },
+      report: overlaid,
       tombstone: { retractedAt: advisory.retractedAt, reason: advisory.reason, advisoryId: advisory.id },
     };
   }
@@ -463,7 +481,9 @@ export function createServer(opts: ServerOptions) {
       try {
         const { report } = await auditVersion(pkg, v);
         const cd = await cooldownFor(pkg, v);
-        const overlaid = applyCooldown(report, cd);
+        const retraction = applyRetraction(report);
+        if (retraction.tombstone) continue;
+        const overlaid = applyCooldown(retraction.report, cd);
         if (overlaid.verdict === "allow") return { version: v, score: overlaid.score };
       } catch { /* skip an unauditeable prior version */ }
     }
@@ -799,7 +819,10 @@ export function createServer(opts: ServerOptions) {
       return res.status(403).json({ error: "authoritative publish time is invalid; retraction fails closed", code: "retraction-publish-time-invalid" });
     }
     const limits = retractionWindowOf(enterprisePolicy);
-    const cumulativeDownloads = history?.downloadCount(name, version) ?? privateStore.downloadCount(name, version);
+    const cumulativeDownloads = Math.max(
+      history?.downloadCount(name, version) ?? 0,
+      privateStore.downloadCount(name, version),
+    );
     const ageExceeded = ageHours >= limits.maxAgeHours;
     const downloadsExceeded = cumulativeDownloads >= limits.maxDownloads;
     const window = {
@@ -961,11 +984,18 @@ export function createServer(opts: ServerOptions) {
         const cd = await cooldownFor(pkg, version);
         return gateAndSend(res, pkg, version, report, tarball, priv, cd, priv ? () => {
           const servedAt = new Date(now()).toISOString();
-          if (history) history.recordDownload({
-            name: pkg, version, integrity: report.meta.integrity ?? integrityOf(tarball),
-            ...(req.get("npm-session") ? { npmSession: req.get("npm-session")! } : {}), servedAt,
-          });
-          else privateStore.recordDownload(pkg, version);
+          if (history) {
+            const fallbackBefore = privateStore.downloadCount(pkg, version);
+            const recorded = history.recordDownload({
+              name: pkg, version, integrity: report.meta.integrity ?? integrityOf(tarball),
+              ...(req.get("npm-session") ? { npmSession: req.get("npm-session")! } : {}), servedAt,
+            });
+            privateStore.ensureDownloadCountAtLeast(
+              pkg,
+              version,
+              Math.max(recorded.count, fallbackBefore + (recorded.recorded ? 1 : 0)),
+            );
+          } else privateStore.recordDownload(pkg, version);
         } : undefined);
       } catch (err) {
         return sendError(res, err);

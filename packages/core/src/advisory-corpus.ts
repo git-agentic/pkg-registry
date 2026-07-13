@@ -5,19 +5,18 @@
  * (name, version, id) triple below was fetched and cross-checked against
  * github.com/advisories at authoring time (see Task 1 report for per-entry notes).
  */
-import type { Severity } from "./types.js";
+import type { RetractionAdvisory } from "./retraction-corpus.js";
 
-export interface Advisory {
+export interface MalwareAdvisory {
   name: string;
   version: string;
   id: string;                       // advisory id, e.g. "GHSA-…" / "MAL-…"
-  severity?: Severity;              // default critical for malware entries
+  severity?: "high" | "critical"; // default critical for malware entries
   reference?: string;               // advisory URL
-  kind?: "malware" | "retraction";
-  integrity?: string;
-  reason?: "security" | "withdrawn" | "broken" | "legal";
-  retractedAt?: string;
+  kind?: "malware";
 }
+
+export type Advisory = MalwareAdvisory | RetractionAdvisory;
 
 // Well-documented, publicly-confirmed compromised releases. (name, version) pairs are
 // historical fact; ids are real GHSA identifiers for these incidents (verified against
@@ -46,22 +45,23 @@ export function buildAdvisoryIndex(advisories: readonly Advisory[]): Map<string,
 
 /** Coerce a single parsed-JSON array entry into an Advisory, or undefined if malformed. Shared by both parsers below. */
 function coerceAdvisoryEntry(e: unknown): Advisory | undefined {
-  if (e && typeof e === "object" && typeof (e as Advisory).name === "string" && typeof (e as Advisory).version === "string" && typeof (e as Advisory).id === "string") {
-    const a = e as Advisory;
-    const adv: Advisory = { name: a.name, version: a.version, id: a.id };
-    if (["info", "low", "medium", "high", "critical"].includes(a.severity ?? "")) adv.severity = a.severity;
-    if (typeof a.reference === "string") adv.reference = a.reference;
-    if (a.kind === "malware") adv.kind = "malware";
-    if (a.kind === "retraction" && typeof a.integrity === "string" &&
-        ["security", "withdrawn", "broken", "legal"].includes(a.reason ?? "") && typeof a.retractedAt === "string") {
-      adv.kind = "retraction";
-      adv.integrity = a.integrity;
-      adv.reason = a.reason;
-      adv.retractedAt = a.retractedAt;
-    }
-    return adv;
+  if (!e || typeof e !== "object") return undefined;
+  const a = e as Record<string, unknown>;
+  if (typeof a.name !== "string" || typeof a.version !== "string" || typeof a.id !== "string") return undefined;
+  if (a.kind === "retraction") {
+    if (typeof a.integrity !== "string" || typeof a.retractedAt !== "string" ||
+        !["security", "withdrawn", "broken", "legal"].includes(String(a.reason))) return undefined;
+    const reason = a.reason as RetractionAdvisory["reason"];
+    const severity = reason === "security" ? "high" : "medium";
+    if (a.severity !== severity) return undefined;
+    return { kind: "retraction", name: a.name, version: a.version, id: a.id,
+      integrity: a.integrity, retractedAt: a.retractedAt, reason, severity };
   }
-  return undefined;
+  const adv: MalwareAdvisory = { name: a.name, version: a.version, id: a.id };
+  if (a.severity === "high" || a.severity === "critical") adv.severity = a.severity;
+  if (typeof a.reference === "string") adv.reference = a.reference;
+  if (a.kind === "malware") adv.kind = "malware";
+  return adv;
 }
 
 /** Parse an operator-supplied advisory JSON array. Pure, total: drops malformed entries; [] on garbage. */

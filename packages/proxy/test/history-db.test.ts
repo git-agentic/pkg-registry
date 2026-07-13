@@ -66,8 +66,8 @@ describe("HistoryDb — schema, writes, summary", () => {
 
   test("native download counting dedupes one package version per npm session", () => {
     const db = new HistoryDb(":memory:");
-    db.recordDownload({ name: "@acme/x", version: "1.0.0", integrity: "sha512-x", npmSession: "session-a", servedAt: "2026-07-13T10:00:00Z" });
-    db.recordDownload({ name: "@acme/x", version: "1.0.0", integrity: "sha512-x", npmSession: "session-a", servedAt: "2026-07-13T10:00:01Z" });
+    assert.deepEqual(db.recordDownload({ name: "@acme/x", version: "1.0.0", integrity: "sha512-x", npmSession: "session-a", servedAt: "2026-07-13T10:00:00Z" }), { count: 1, recorded: true });
+    assert.deepEqual(db.recordDownload({ name: "@acme/x", version: "1.0.0", integrity: "sha512-x", npmSession: "session-a", servedAt: "2026-07-13T10:00:01Z" }), { count: 1, recorded: false });
     db.recordDownload({ name: "@acme/x", version: "1.0.0", integrity: "sha512-x", npmSession: "session-b", servedAt: "2026-07-13T10:00:02Z" });
     db.recordDownload({ name: "@acme/x", version: "1.0.0", integrity: "sha512-x", servedAt: "2026-07-13T10:00:03Z" });
     db.recordDownload({ name: "@acme/x", version: "1.0.0", integrity: "sha512-x", servedAt: "2026-07-13T10:00:04Z" });

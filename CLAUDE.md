@@ -244,7 +244,7 @@ a tool that guards against exactly that.
 
 ```bash
 npm run build            # tsc --build (project references) + the Linux-only native helper step
-npm test                 # hermetic engine + e2e proxy suite. 956 tests on this darwin host
+npm test                 # hermetic engine + e2e proxy suite. 962 tests on this darwin host
                          # as of 2026-07-13 (929 pass, 2 skipped) — but NEVER plan arithmetic
                          # on a written count; run npm test and use what it prints.
 npm run demo             # offline malware-detection walkthrough

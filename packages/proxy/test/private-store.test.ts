@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, test } from "node:test";
@@ -125,6 +125,19 @@ describe("PrivatePackageStore", () => {
     const b = new PrivatePackageStore(dir);
     assert.equal(b.downloadCount("@acme/z", "1.0.0"), 2);
     assert.deepEqual(b.retractionWindowHits(), { age: 1, downloads: 0, both: 0 });
+  });
+
+  test("corrupt operational security state fails closed", () => {
+    const invalidStates = [
+      { schema: 1, retractions: [{ name: "@acme/x", version: "1.0.0" }], downloads: [], windowHits: { age: 0, downloads: 0, both: 0 } },
+      { schema: 1, retractions: [], downloads: [{ name: "@acme/x", version: "1.0.0", count: -1 }], windowHits: { age: 0, downloads: 0, both: 0 } },
+      { schema: 1, retractions: [], downloads: [], windowHits: { age: 0.5, downloads: 0, both: 0 } },
+    ];
+    for (const state of invalidStates) {
+      const dir = mkdtempSync(join(tmpdir(), "sentinel-priv-corrupt-state-"));
+      writeFileSync(join(dir, ".registry-state.json"), JSON.stringify(state));
+      assert.throws(() => new PrivatePackageStore(dir), /invalid private registry operational state/);
+    }
   });
 
   test("retraction leaves stored audit and attestation bytes unchanged", () => {

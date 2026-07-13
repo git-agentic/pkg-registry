@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { knownAdvisoryRule } from "../src/rules/known-advisory.js";
-import { KNOWN_ADVISORIES, parseAdvisories, parseAdvisoriesStrict, type Advisory } from "../src/advisory-corpus.js";
+import { KNOWN_ADVISORIES, parseAdvisories, parseAdvisoriesStrict, type Advisory, type MalwareAdvisory } from "../src/advisory-corpus.js";
 import type { AuditInput, PackageMeta } from "../src/types.js";
 import { buildAudit } from "../src/audit.js";
 import { score } from "../src/score.js";
@@ -10,7 +10,7 @@ import { DEFAULT_POLICY } from "../src/policy.js";
 function input(name: string, version: string, advisories?: Advisory[]): AuditInput {
   return { meta: { name, version } as PackageMeta, files: [], mode: "full", advisories };
 }
-const A = (over: Partial<Advisory> = {}): Advisory => ({ name: "evil-pkg", version: "1.0.0", id: "MAL-TEST-0001", ...over });
+const A = (over: Partial<MalwareAdvisory> = {}): MalwareAdvisory => ({ name: "evil-pkg", version: "1.0.0", id: "MAL-TEST-0001", ...over });
 
 describe("known-advisory rule", () => {
   test("an operator-supplied advisory match → a critical metadata finding naming the id", () => {
@@ -83,6 +83,16 @@ describe("parseAdvisories", () => {
     assert.deepEqual(parseAdvisories(raw), [{ name: "a", version: "1", id: "X" }]);
     assert.deepEqual(parseAdvisories("not json"), []);
     assert.deepEqual(parseAdvisories(JSON.stringify({ not: "an array" })), []);
+  });
+
+  test("ordinary malware advisories cannot downgrade below high", () => {
+    assert.deepEqual(parseAdvisories(JSON.stringify([
+      { name: "a", version: "1", id: "X", severity: "medium" },
+      { name: "b", version: "1", id: "Y", severity: "high" },
+    ])), [
+      { name: "a", version: "1", id: "X" },
+      { name: "b", version: "1", id: "Y", severity: "high" },
+    ]);
   });
 });
 

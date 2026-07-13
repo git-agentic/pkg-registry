@@ -122,15 +122,16 @@ export class HistoryDb {
   }
 
   /** Count successful native tarball serves. npm-session retries dedupe per coordinate; requests without it count individually. */
-  recordDownload(input: { name: string; version: string; integrity: string; npmSession?: string; servedAt: string }): void {
+  recordDownload(input: { name: string; version: string; integrity: string; npmSession?: string; servedAt: string }): { count: number; recorded: boolean } {
     const material = input.npmSession === undefined
       ? `serve:${randomUUID()}`
       : `npm-session:${input.name}\u0000${input.version}\u0000${input.integrity}\u0000${input.npmSession}`;
     const dedupeKey = createHash("sha256").update(material).digest("hex");
-    this.db.prepare(
+    const result = this.db.prepare(
       `INSERT INTO download_events(dedupe_key,integrity,name,version,served_at)
        VALUES(?,?,?,?,?) ON CONFLICT(dedupe_key) DO NOTHING`,
-    ).run(dedupeKey, input.integrity, input.name, input.version, input.servedAt);
+    ).run(dedupeKey, input.integrity, input.name, input.version, input.servedAt) as { changes: number | bigint };
+    return { count: this.downloadCount(input.name, input.version), recorded: Number(result.changes) > 0 };
   }
 
   downloadCount(name: string, version: string): number {

@@ -138,6 +138,18 @@ describe("claim steward pipeline", () => {
     }), /claimed namespace/i);
   });
 
+  test("a reused corpus version is an immutable snapshot, including after restart", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "sentinel-steward-release-version-"));
+    const stateFile = join(dir, "state.json");
+    const steward = new ClaimSteward({ stateFile, lookupUpstream: absent });
+    const first = steward.release("immutable-version");
+    await steward.issueChallenge({ namespace: "later-name", domain: "later.example", claimantPublicKey: claimant.publicKey });
+    assert.deepEqual(steward.release("immutable-version").retractionRaw, first.retractionRaw);
+    assert.deepEqual(steward.release("immutable-version").raw, first.raw);
+    const restarted = new ClaimSteward({ stateFile, lookupUpstream: absent });
+    assert.deepEqual(restarted.release("immutable-version").raw, first.raw);
+  });
+
   test("challenge, renewal, and claim state survives a steward restart", async () => {
     const stateFile = join(mkdtempSync(join(tmpdir(), "sentinel-steward-state-")), "state.json");
     const first = new ClaimSteward({ now: () => Date.parse("2026-07-01T00:00:00.000Z"), id: () => "durable", stateFile, lookupUpstream: absent });

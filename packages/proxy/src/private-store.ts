@@ -41,6 +41,20 @@ interface OperationalState {
   windowHits: { age: number; downloads: number; both: number };
 }
 
+const RETRACTION_REASONS = new Set<RetractionReason>(["security", "withdrawn", "broken", "legal"]);
+
+function validCoordinatePart(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && !value.includes("\u0000");
+}
+
+function nonnegativeSafeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function canonicalInstant(value: unknown): value is string {
+  return typeof value === "string" && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
+}
+
 interface Entry { meta: StoredVersion; tarball: Buffer; }
 
 export class PublicationConflictError extends Error {}
@@ -176,6 +190,20 @@ export class PrivatePackageStore {
     return next.get(key)!;
   }
 
+  /** Persist a monotonic floor imported from a deduplicating durable history DB. */
+  ensureDownloadCountAtLeast(name: string, version: string, count: number): number {
+    if (!this.getVersion(name, version)) throw new Error(`unknown native version ${name}@${version}`);
+    if (!nonnegativeSafeInteger(count)) throw new Error("download count floor must be a nonnegative safe integer");
+    const key = this.key(name, version);
+    const current = this.downloads.get(key) ?? 0;
+    if (count <= current) return current;
+    const next = new Map(this.downloads);
+    next.set(key, count);
+    this.persistOperationalState(this.retractions, next, this.windowHits);
+    this.downloads = next;
+    return count;
+  }
+
   downloadCount(name: string, version: string): number {
     return this.downloads.get(this.key(name, version)) ?? 0;
   }
@@ -282,12 +310,38 @@ export class PrivatePackageStore {
       let state: OperationalState;
       try { state = JSON.parse(readFileSync(stateFile, "utf8")) as OperationalState; }
       catch { throw new Error("invalid private registry operational state: expected JSON"); }
-      if (state?.schema !== 1 || !Array.isArray(state.retractions) || !Array.isArray(state.downloads) || !state.windowHits) {
+      if (state?.schema !== 1 || !Array.isArray(state.retractions) || !Array.isArray(state.downloads) ||
+          !state.windowHits || typeof state.windowHits !== "object") {
         throw new Error("invalid private registry operational state: expected schema 1");
       }
-      for (const row of state.retractions) this.retractions.set(this.key(row.name, row.version), structuredClone(row.tombstone));
-      for (const row of state.downloads) this.downloads.set(this.key(row.name, row.version), row.count);
-      this.windowHits = { ...state.windowHits };
+      const seenRetractions = new Set<string>();
+      for (const row of state.retractions) {
+        const tombstone = row?.tombstone;
+        if (!validCoordinatePart(row?.name) || !validCoordinatePart(row?.version) || !tombstone ||
+            !canonicalInstant(tombstone.retractedAt) || !RETRACTION_REASONS.has(tombstone.reason) ||
+            !validCoordinatePart(tombstone.advisoryId)) {
+          throw new Error("invalid private registry operational state: malformed retraction");
+        }
+        const key = this.key(row.name, row.version);
+        if (seenRetractions.has(key)) throw new Error("invalid private registry operational state: duplicate retraction");
+        seenRetractions.add(key);
+        this.retractions.set(key, structuredClone(tombstone));
+      }
+      const seenDownloads = new Set<string>();
+      for (const row of state.downloads) {
+        if (!validCoordinatePart(row?.name) || !validCoordinatePart(row?.version) || !nonnegativeSafeInteger(row?.count)) {
+          throw new Error("invalid private registry operational state: malformed download count");
+        }
+        const key = this.key(row.name, row.version);
+        if (seenDownloads.has(key)) throw new Error("invalid private registry operational state: duplicate download count");
+        seenDownloads.add(key);
+        this.downloads.set(key, row.count);
+      }
+      const hits = state.windowHits as Record<string, unknown>;
+      if (!nonnegativeSafeInteger(hits.age) || !nonnegativeSafeInteger(hits.downloads) || !nonnegativeSafeInteger(hits.both)) {
+        throw new Error("invalid private registry operational state: malformed window-hit counters");
+      }
+      this.windowHits = { age: hits.age, downloads: hits.downloads, both: hits.both };
     }
     for (const enc of readdirSync(dir)) {
       const name = decodeURIComponent(enc);

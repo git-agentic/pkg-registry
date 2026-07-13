@@ -56,6 +56,11 @@ interface PendingGrant {
   evidenceRef: string;
 }
 
+interface ReleasedSnapshot {
+  raw: string;
+  retractionRaw: string;
+}
+
 export interface StewardOptions {
   now?: () => number;
   id?: () => string;
@@ -144,6 +149,7 @@ export class ClaimSteward {
   private readonly claims = new Map<string, VerifiedClaim>();
   private readonly pendingGrants = new Map<string, PendingGrant>();
   private readonly retractions = new Map<string, RetractionAdvisory>();
+  private readonly releases = new Map<string, ReleasedSnapshot>();
 
   constructor(options: StewardOptions) {
     this.now = options.now ?? Date.now;
@@ -284,9 +290,20 @@ export class ClaimSteward {
     corpus: ClaimCorpus; raw: Buffer; signature?: string;
     retractionCorpus: RetractionCorpus; retractionRaw: Buffer; retractionSignature?: string;
   } {
+    if (!version.trim()) throw new Error("release version must be non-empty");
+    const prior = this.releases.get(version);
+    if (prior) {
+      const raw = Buffer.from(prior.raw, "base64");
+      const retractionRaw = Buffer.from(prior.retractionRaw, "base64");
+      return {
+        corpus: parseClaimCorpus(raw), raw,
+        ...(privateKeyPem ? { signature: signClaimCorpus(raw, privateKeyPem) } : {}),
+        retractionCorpus: parseRetractionCorpus(retractionRaw), retractionRaw,
+        ...(privateKeyPem ? { retractionSignature: signRetractionCorpus(retractionRaw, privateKeyPem) } : {}),
+      };
+    }
     this.applyExpiryFreeze();
     this.materializeEffectiveChanges();
-    this.persist();
     const pendingClaims: PendingClaimGrant[] = [...this.pendingGrants.values()].map(({ claim, announcedAt, effectiveAt, evidenceRef }) => ({
       namespace: claim.namespace, domain: claim.domain, claimantPublicKey: claim.claimantPublicKey, tier: 2, challenge: claim.challenge,
       announcedAt, effectiveAt, authorizedBy: evidenceRef,
@@ -302,6 +319,8 @@ export class ClaimSteward {
       schema: 1, version, issuedAt: candidate.issuedAt, advisories: [...this.retractions.values()],
     }));
     const retractionCorpus = parseRetractionCorpus(retractionRaw);
+    this.releases.set(version, { raw: raw.toString("base64"), retractionRaw: retractionRaw.toString("base64") });
+    this.persist();
     return {
       corpus, raw, ...(privateKeyPem ? { signature: signClaimCorpus(raw, privateKeyPem) } : {}),
       retractionCorpus, retractionRaw,
@@ -361,7 +380,7 @@ export class ClaimSteward {
     let decoded: unknown;
     try { decoded = JSON.parse(readFileSync(this.stateFile, "utf8")); }
     catch { throw new Error("invalid steward state: expected JSON"); }
-    const state = decoded as { schema?: unknown; applications?: unknown; claims?: unknown; pendingGrants?: unknown; retractions?: unknown };
+    const state = decoded as { schema?: unknown; applications?: unknown; claims?: unknown; pendingGrants?: unknown; retractions?: unknown; releases?: unknown };
     if (state?.schema !== 1 || !Array.isArray(state.applications) || !Array.isArray(state.claims) || !Array.isArray(state.pendingGrants)) {
       throw new Error("invalid steward state: expected schema 1 arrays");
     }
@@ -404,6 +423,21 @@ export class ClaimSteward {
       schema: 1, version: "steward-state", issuedAt: STATE_VALIDATION_ISSUED_AT, advisories: retractions,
     }))).advisories;
     for (const advisory of parsedRetractions) this.retractions.set(advisory.id, advisory);
+    const releases = state.releases ?? [];
+    if (!Array.isArray(releases)) throw new Error("invalid steward state: releases must be an array");
+    for (const candidate of releases) {
+      const release = candidate as { version?: unknown; raw?: unknown; retractionRaw?: unknown };
+      if (typeof release.version !== "string" || !release.version.trim() || typeof release.raw !== "string" ||
+          typeof release.retractionRaw !== "string" || this.releases.has(release.version)) {
+        throw new Error("invalid steward state: malformed release snapshot");
+      }
+      try {
+        const claimCorpus = parseClaimCorpus(Buffer.from(release.raw, "base64"));
+        const retractionCorpus = parseRetractionCorpus(Buffer.from(release.retractionRaw, "base64"));
+        if (claimCorpus.version !== release.version || retractionCorpus.version !== release.version) throw new Error("version mismatch");
+      } catch { throw new Error("invalid steward state: malformed release snapshot"); }
+      this.releases.set(release.version, { raw: release.raw, retractionRaw: release.retractionRaw });
+    }
   }
 
   private persist(): void {
@@ -415,6 +449,7 @@ export class ClaimSteward {
       claims: [...this.claims.values()],
       pendingGrants: [...this.pendingGrants.values()],
       retractions: [...this.retractions.values()],
+      releases: [...this.releases].map(([version, snapshot]) => ({ version, ...snapshot })),
     });
     const temporary = `${this.stateFile}.${process.pid}.tmp`;
     writeFileSync(temporary, raw, { mode: 0o600 });

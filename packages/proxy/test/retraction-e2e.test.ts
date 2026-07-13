@@ -10,6 +10,7 @@ import { ApprovalStore } from "../src/approvals.js";
 import { PrivatePackageStore } from "../src/private-store.js";
 import { ViolationStore } from "../src/violations.js";
 import { ApprovalRequestStore } from "../src/approval-requests.js";
+import { HistoryDb } from "../src/history-db.js";
 import type { Upstream } from "../src/upstream.js";
 
 const NOW = Date.parse("2026-07-13T12:00:00.000Z");
@@ -39,7 +40,7 @@ function audit(name: string, version: string, tarball: Buffer): Audit {
   };
 }
 
-async function boot(ageHours: number, downloads: number, enterprisePolicy = policy(), retractionCorpus?: RetractionCorpus, authPublicKey?: string) {
+async function boot(ageHours: number, downloads: number, enterprisePolicy = policy(), retractionCorpus?: RetractionCorpus, authPublicKey?: string, history?: HistoryDb) {
   const privateStore = new PrivatePackageStore(undefined, () => NOW - ageHours * 3_600_000);
   const store = new AuditStore();
   for (const version of ["1.0.0", "2.0.0"]) {
@@ -56,6 +57,7 @@ async function boot(ageHours: number, downloads: number, enterprisePolicy = poli
     policy: "block", violations: new ViolationStore(), approvalRequests: new ApprovalRequestStore(), now: () => NOW,
     retractionCorpus,
     authPublicKey,
+    history,
   });
   const server = await new Promise<Server>((resolve) => { const value = app.listen(0, () => resolve(value)); });
   servers.push(server);
@@ -145,6 +147,14 @@ describe("Phase 32 time-locked retraction", () => {
     assert.equal(JSON.stringify(ctx.store.get(integrity)?.report), storedBefore);
   });
 
+  test("explain never recommends a retracted prior version", async () => {
+    const ctx = await boot(2, 0);
+    ctx.privateStore.retract({ name: "@acme/widget", version: "1.0.0", reason: "broken",
+      retractedAt: "2026-07-13T12:00:00.000Z", advisoryId: "SENTINEL-RETRACT-prior" });
+    const explained = await (await fetch(`${ctx.base}/-/explain/${encodeURIComponent("@acme/widget")}/2.0.0`)).json();
+    assert.equal(explained.lastKnownGood, null);
+  });
+
   test("successful native tarball responses count downloads; blocked retracted requests do not", async () => {
     const ctx = await boot(1, 0, policy({ maxAgeHours: 72, maxDownloads: 2 }));
     const tarballUrl = `${ctx.base}/@acme%2Fwidget/-/widget-2.0.0.tgz`;
@@ -156,6 +166,29 @@ describe("Phase 32 time-locked retraction", () => {
     assert.equal(report.findings[0].severity, "medium");
     assert.equal((await fetch(tarballUrl)).status, 410);
     assert.equal(ctx.privateStore.downloadCount("@acme/widget", "2.0.0"), 1);
+  });
+
+  test("policy weights can escalate a moderate retraction to block", async () => {
+    const enterprisePolicy = policy();
+    enterprisePolicy.scoring = {
+      ...enterprisePolicy.scoring,
+      severityWeight: { ...enterprisePolicy.scoring.severityWeight, medium: 60 },
+    };
+    const ctx = await boot(1, 0, enterprisePolicy);
+    assert.equal((await ctx.retract("withdrawn")).status, 201);
+    const report = await (await fetch(`${ctx.base}/-/audit/${encodeURIComponent("@acme/widget")}/2.0.0`)).json();
+    assert.equal(report.findings[0].weight, 60);
+    assert.equal(report.verdict, "block");
+  });
+
+  test("enabling a fresh history DB cannot reset the fallback cumulative count", async () => {
+    const history = new HistoryDb(":memory:");
+    const ctx = await boot(1, 999, policy(), undefined, undefined, history);
+    assert.equal((await fetch(`${ctx.base}/@acme%2Fwidget/-/widget-2.0.0.tgz`, { headers: { "npm-session": "new-session" } })).status, 200);
+    const response = await ctx.retract();
+    assert.equal(response.status, 403);
+    assert.equal((await response.json()).window.cumulativeDownloads, 1_000);
+    history.close();
   });
 
   test("the same signed-corpus version applies the same tombstone overlay on another instance", async () => {
