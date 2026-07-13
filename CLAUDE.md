@@ -258,8 +258,8 @@ a tool that guards against exactly that.
 
 ```bash
 npm run build            # tsc --build (project references) + the Linux-only native helper step
-npm test                 # hermetic engine + e2e proxy suite. 989 tests on this darwin host
-                         # as of 2026-07-13 (986 pass, 3 skipped) — but NEVER plan arithmetic
+npm test                 # hermetic engine + e2e proxy suite. 990 tests on this darwin host
+                         # as of 2026-07-13 (987 pass, 3 skipped) — but NEVER plan arithmetic
                          # on a written count; run npm test and use what it prints.
 npm run demo             # offline malware-detection walkthrough
 node packages/proxy/dist/index.js   # run the proxy (see README for env vars)

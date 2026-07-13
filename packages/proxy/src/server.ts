@@ -897,7 +897,7 @@ export function createServer(opts: ServerOptions) {
     return res.status(201).json({ ok: true, id: `org.couchdb.user:${username}`, rev: "1-login", token });
   });
 
-  app.get("/-/whoami", (req, res) => {
+  app.get("/-/whoami", publishRateGate, (req, res) => {
     const match = /^Bearer\s+(\S+)$/i.exec(req.headers.authorization ?? "");
     const token = match?.[1];
     purgeLegacySessions();

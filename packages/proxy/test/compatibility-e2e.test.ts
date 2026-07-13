@@ -106,6 +106,16 @@ describe("Phase 33 npm compatibility surface", () => {
     assert.equal((await request()).status, 429);
   });
 
+  test("whoami authentication is rate-limited", async () => {
+    const { base } = await boot(undefined, { publishRateLimit: { limit: 2, windowMs: 60_000 } });
+    const login = await fetch(`${base}/-/user/org.couchdb.user:alice`, { method: "PUT", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "alice", password: "publish-token" }) });
+    const token = (await login.json()).token as string;
+    const request = () => fetch(`${base}/-/whoami`, { headers: { authorization: `Bearer ${token}` } });
+    assert.equal((await request()).status, 200);
+    assert.equal((await request()).status, 429);
+  });
+
   test("npm's -rev dance maps single-version unpublish onto retraction", async () => {
     const store = new PrivatePackageStore(undefined, () => NOW);
     await seed(store);
