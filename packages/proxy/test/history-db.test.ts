@@ -63,4 +63,30 @@ describe("HistoryDb — schema, writes, summary", () => {
     assert.equal(s.quarantined, 1);
     db.close();
   });
+
+  test("native download counting dedupes one package version per npm session", () => {
+    const db = new HistoryDb(":memory:");
+    db.recordDownload({ name: "@acme/x", version: "1.0.0", integrity: "sha512-x", npmSession: "session-a", servedAt: "2026-07-13T10:00:00Z" });
+    db.recordDownload({ name: "@acme/x", version: "1.0.0", integrity: "sha512-x", npmSession: "session-a", servedAt: "2026-07-13T10:00:01Z" });
+    db.recordDownload({ name: "@acme/x", version: "1.0.0", integrity: "sha512-x", npmSession: "session-b", servedAt: "2026-07-13T10:00:02Z" });
+    db.recordDownload({ name: "@acme/x", version: "1.0.0", integrity: "sha512-x", servedAt: "2026-07-13T10:00:03Z" });
+    db.recordDownload({ name: "@acme/x", version: "1.0.0", integrity: "sha512-x", servedAt: "2026-07-13T10:00:04Z" });
+    assert.equal(db.downloadCount("@acme/x", "1.0.0"), 4);
+    db.close();
+  });
+
+  test("window-hit telemetry is append-only and never rewrites stored audit reports", () => {
+    const db = new HistoryDb(":memory:");
+    db.recordAudit(auditReport({ integrity: "sha512-immutable" }), "2026-07-13T09:00:00Z");
+    const before = JSON.stringify(db.allReports());
+    db.recordRetractionWindowHit({
+      name: "@acme/x", version: "1.0.0", ageHours: 73, downloads: 5,
+      maxAgeHours: 72, maxDownloads: 1_000, ageExceeded: true, downloadsExceeded: false,
+      attemptedAt: "2026-07-13T10:00:00Z",
+    });
+    assert.equal(db.retractionWindowHits().length, 1);
+    assert.equal(db.retractionWindowHits()[0]?.ageExceeded, true);
+    assert.equal(JSON.stringify(db.allReports()), before);
+    db.close();
+  });
 });

@@ -95,6 +95,10 @@ single-version publish PUT:
 - `PUT /:package` → an authenticated npm publish. The request is bounded before
   buffering, strictly parsed, audited synchronously, policy-gated, and committed
   atomically only for a native source class.
+- `POST /-/retractions` → an operator retraction for a native version, accepted
+  only inside the signed-policy age/download window. `GET /-/retractions`
+  exposes the operator feed, active corpus identity, counting contract, and
+  window-hit telemetry.
 
 Transparency: because we only rewrite tarball URLs and otherwise proxy the document
 verbatim, any npm/yarn/pnpm/npx client works with zero changes beyond pointing
@@ -185,6 +189,35 @@ versioned directories after 30-day announced changes (ADR-0046). Mandatory
 per-source rate-limit middleware protects both the steward control plane and
 proxy publish route. Release directory identifiers are generated independently
 of request data; the signed corpus remains the source of the release version.
+
+Phase 32 adds a second authoritative mutation whose scope is availability, not
+history. Signed policy data `retraction: { maxAgeHours, maxDownloads }`
+defaults to the exclusive bounds 72 hours and 1,000 cumulative downloads.
+Successful native tarball responses increment the counter; with SQLite, a
+repeated package-version fetch in the same `npm-session` deduplicates, while a
+request without that header counts individually. Attempts at or beyond either
+bound return 403 with the full window state and distinct bound codes, and are
+recorded as window-hit telemetry.
+
+An accepted retraction atomically persists a packument tombstone separately
+from the immutable version directory. Resolution excludes the version,
+`latest` retargets, the packument exposes
+`_sentinel.retractions[version]`, and tarball reads return 410 JSON regardless
+of proxy observe/block mode. The identifier remains spent forever, while
+tarball bytes, audit reports, publish attestations, and SQLite audit history
+remain retained byte-identically. The local advisory enters the existing
+`known-advisory` channel immediately; the immutable serve-time overlay forces
+security retractions to block and other reason codes to warn, without changing
+the cached report or depending on `SENTINEL_AUTO_QUARANTINE`.
+
+Fleet propagation uses a separate versioned retraction corpus. The steward
+queues authenticated advisories only for claimed namespaces and writes signed
+`advisories.json` beside `claims.json` in the same atomic release directory.
+The proxy verifies its raw bytes and strict schema against a pinned Ed25519 key
+before listening, records its version/hash in reports and tree results, and
+matches advisories by `(name, version, integrity)`. A matching fleet advisory
+applies the same packument exclusion and 410/report overlay as a local
+retraction (ADR-0047).
 
 ### 3.6 Sandbox enforcement (Phases 3–5, ADR-0011/0016/0017/0018)
 
@@ -516,6 +549,7 @@ as before this phase.
 | `DELETE /-/violations/:integrity` | `operator` |
 | `POST /-/approval-requests` | `agent` |
 | `POST /-/violations` | `agent` |
+| `POST /-/retractions` | `operator` |
 | `PUT /:pkg` (publish) | `publisher` (auth enabled) / legacy `requirePublishAuth` token (auth disabled) |
 
 **Reads stay open in every mode**: every `GET`, the tarball serve, packument
@@ -1429,6 +1463,7 @@ interface EnterprisePolicy {           // signed, per-enterprise (ADR-0012/0014)
   deny:  { package; reason? }[];
   privateNamespaces: string[];            // glob patterns for claimed names (ADR-0010/0015)
   publishGate?: 'allow'|'warn'|'block';    // reject publish at/above; default block (ADR-0045)
+  retraction?: { maxAgeHours: number; maxDownloads: number }; // exclusive; default 72 / 1000 (ADR-0047)
 }
 
 interface PackageMeta {

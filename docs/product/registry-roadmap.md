@@ -1,6 +1,6 @@
 # Sentinel registry roadmap — Phases 30–33
 
-**Status:** Phases 30–31 shipped; Phases 32–33 proposed
+**Status:** Phases 30–32 shipped; Phase 33 proposed
 **Date:** 2026-07-11
 
 This is the phased plan for Sentinel's evolution from a transparent auditing
@@ -191,6 +191,13 @@ default, no opt-in flag.
   unprecedented default values can be revisited with data — in policy, not
   code.
 
+Evidence: `packages/core/test/retraction-corpus.test.ts`,
+`packages/proxy/test/retraction-e2e.test.ts`, `private-store.test.ts`,
+`history-db.test.ts`, `claim-corpus-startup.test.ts`, and
+`packages/steward/test/steward.test.ts`. The proxy exposes the local operator
+feed and counting semantics at `GET /-/retractions`; the steward emits the
+signed fleet corpus in the same atomic directory as the claim corpus.
+
 ## Phase 33 — Migration & compatibility
 
 **ADR:** [0048](../adr/0048-migration-compatibility-surface.md) ·
@@ -230,6 +237,6 @@ mode is fail-closed, acknowledged, manifested, lossless, and lock-in-free.
 ## Out of scope for this roadmap
 
 Operating a public registry service and cross-instance federation. Phases
-31–33 remain design-only. Ruled at the map level;
+Phase 33 remains design-only. Ruled at the map level;
 revisiting them is a new effort with a new charter, not an extension of this
 one.

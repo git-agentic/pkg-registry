@@ -20,8 +20,9 @@ so an AI agent or a human can see the risk *before install-time code runs*.
 > detection, supply-chain identity heuristics, whole-tree lockfile auditing with
 > CycloneDX SBOM + signed VSA attestations, a CI-native GitHub Action, an
 > agent-native MCP surface, durable history/observability, and a hardened network
-> trust boundary + resource limits. Phase 30 adds deterministic native-vs-mirror
-> resolution and an audit-gated atomic npm publish path. See the decision log in
+> trust boundary + resource limits. Phases 30–32 add deterministic native-vs-mirror
+> resolution, an audit-gated atomic npm publish path, verified namespace claims,
+> and time-locked retraction. See the decision log in
 > [docs/adr/](./docs/adr/) (one ADR per phase).
 
 See **[ARCHITECTURE.md](./ARCHITECTURE.md)** for the full design (proxy, sync-vs-async
@@ -111,6 +112,9 @@ node packages/cli/dist/index.js install lodash
 | `SENTINEL_CLAIM_CORPUS_FILE` | _(verified empty corpus)_ | versioned claim-corpus JSON; when set, `SENTINEL_CLAIM_CORPUS_PUBKEY` is required and any read/schema/signature failure is fatal |
 | `SENTINEL_CLAIM_CORPUS_SIG` | `<corpus-file>.sig` | detached Ed25519 signature over the exact corpus bytes |
 | `SENTINEL_CLAIM_CORPUS_PUBKEY` | _(required with corpus file)_ | pinned steward public-key PEM |
+| `SENTINEL_RETRACTION_CORPUS_FILE` | _(verified empty corpus)_ | versioned retraction-corpus JSON; malformed/tampered input is fatal before listen |
+| `SENTINEL_RETRACTION_CORPUS_SIG` | `<corpus-file>.sig` | detached Ed25519 signature over the exact retraction-corpus bytes |
+| `SENTINEL_RETRACTION_CORPUS_PUBKEY` | _(claim-corpus key, when set)_ | pinned steward public-key PEM; explicitly required when neither it nor `SENTINEL_CLAIM_CORPUS_PUBKEY` is set |
 | `SENTINEL_VIOLATIONS` | _(memory only)_ | path to a JSON file to persist runtime-violation records (quarantine state) |
 | `SENTINEL_AUTO_QUARANTINE` | _(unset ⇒ record-only)_ | set to exactly `1` (any other value is treated as off) to let a confirmed runtime-violation report quarantine its integrity (force `block` at serve time); requires `SENTINEL_AUTH_PUBKEY` to also be set — a fatal error at startup otherwise, so auto-quarantine is only ever attributable to an authenticated caller (ADR-0040) |
 | `SENTINEL_APPROVAL_REQUESTS` | _(memory only)_ | path to a JSON file to persist pending approval requests (MCP `sentinel_request_approval` and any other caller) |
@@ -130,7 +134,7 @@ node packages/cli/dist/index.js install lodash
 | `SENTINEL_MAX_UNPACKED_BYTES` | `1 GiB` | cap on total decompressed bytes when extracting a tarball's contents; over-cap aborts extraction mid-stream and the current tarball's audit gets a critical `resource-abuse` finding (BLOCK) |
 | `SENTINEL_MAX_FILE_COUNT` | `100000` | cap on the number of files unpacked from a tarball; over-cap aborts extraction mid-stream the same way as the byte cap |
 
-## Authoritative registry and verified claims (Phases 30–31)
+## Authoritative registry, verified claims, and retraction (Phases 30–32)
 
 Every package name resolves to one source class through the pure function
 `source(name, signedPolicy, claimCorpus)`: `policy-private`, then
@@ -186,7 +190,7 @@ tracks renewal/freeze, and announces signed transfers or dispute rulings for 30
 days. The steward control plane is always rate-limited before authentication;
 the proxy publish route has a separate mandatory 60-requests/minute backstop.
 A release atomically publishes
-`<release-dir>/<release-id>/{claims.json,claims.json.sig}` as one directory; the
+`<release-dir>/<release-id>/{claims.json,claims.json.sig,advisories.json,advisories.json.sig}` as one directory; the
 signed corpus inside carries the human release version, while the filesystem
 identifier is generated independently of request data. Point
 the proxy's corpus file/signature variables at that version directory and its
@@ -194,6 +198,34 @@ public-key variable at the corresponding pinned key. Set
 `SENTINEL_STEWARD_REGISTRY` only when the steward should use an npm-compatible
 registry other than `https://registry.npmjs.org` as its authoritative evidence
 source.
+
+### Time-locked retraction API
+
+Policy data `"retraction": { "maxAgeHours": 72, "maxDownloads": 1000 }`
+sets two exclusive bounds. `POST /-/retractions` accepts
+`{ "name", "version", "reason" }`, where reason is `security`, `withdrawn`,
+`broken`, or `legal`; with role auth enabled it requires an `operator` token.
+Retraction succeeds only while both age and cumulative downloads are below
+their limits. A closed window returns 403 with the complete window state and
+distinct `retraction-age-limit-exceeded` /
+`retraction-download-limit-exceeded` entries.
+
+After success, range metadata omits the version, `latest` retargets,
+`_sentinel.retractions` records the tombstone, and the tarball returns 410 JSON.
+The identifier is permanently spent; retained tarball, audit, attestation, and
+history bytes are not rewritten. Successful native tarball responses count as
+downloads. With SQLite, repeats for one package version and `npm-session`
+dedupe; requests without `npm-session` count individually.
+`GET /-/retractions` exposes this counting contract, the local/operator advisory
+feed, active corpus identity, and window-hit telemetry.
+
+Local retractions take effect immediately. For fleet propagation, send the
+integrity-bound advisory to the steward's authenticated `POST /-/retractions`;
+its next atomic release includes signed `advisories.json`. Configure the proxy's
+`SENTINEL_RETRACTION_CORPUS_*` variables to consume it offline. Signature or
+schema failure is fatal, while matching advisories enforce 410/block-or-warn by
+default without mutating cached scores or requiring
+`SENTINEL_AUTO_QUARANTINE`.
 
 ## CLI
 
@@ -512,7 +544,7 @@ See [ADR-0033](./docs/adr/0033-policy-authoring-impact-preview.md).
 ## Control-plane authentication (Phase 12)
 
 The control plane's mutating endpoints — approvals, violation reports and
-clears, and publish — are **unauthenticated by default (open mode)**. Setting
+clears, retraction, and publish — are **unauthenticated by default (open mode)**. Setting
 `SENTINEL_AUTH_PUBKEY` on the proxy turns on signed-role-token auth for those
 routes; everything else (every `GET`, tarball fetches, packument resolution,
 and `POST /-/audit-tree`) stays open in either mode.
@@ -544,6 +576,7 @@ SENTINEL_AUTH_PUBKEY=./auth.pub.pem node packages/proxy/dist/index.js
 | `DELETE /-/violations/:integrity` | `operator` |
 | `POST /-/approval-requests` | `agent` |
 | `POST /-/violations` | `agent` |
+| `POST /-/retractions` | `operator` |
 | `PUT /:pkg` (publish) | `publisher` |
 
 A missing/malformed/expired/badly-signed token is `401`; a well-formed token

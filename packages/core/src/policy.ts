@@ -21,6 +21,8 @@ export interface EnterprisePolicy {
   treeGate?: Verdict;
   /** Verdict level at which an authoritative publish is rejected (ADR-0045). Default "block". */
   publishGate?: Verdict;
+  /** Dual-bound authoritative retraction window (ADR-0047). Both limits are exclusive. */
+  retraction?: { maxAgeHours: number; maxDownloads: number };
   /** Package patterns that MUST have a verified registry signature (ADR-0021). */
   requireSignature?: string[];
   /** Package patterns that MUST carry a provenance attestation (ADR-0021). */
@@ -58,6 +60,7 @@ export const DEFAULT_POLICY: EnterprisePolicy = {
   privateNamespaces: [],
   treeGate: "block",
   publishGate: "block",
+  retraction: { maxAgeHours: 72, maxDownloads: 1_000 },
 };
 
 /** Stable hash of a policy OBJECT (used for the in-code default; external policies hash raw bytes). */
@@ -209,6 +212,20 @@ export function parsePolicy(raw: Buffer): EnterprisePolicy {
     throw new Error(`invalid policy: publishGate must be one of ${VERDICTS.join(", ")} (got "${p.publishGate}")`);
   }
 
+  const retraction = (p as { retraction?: unknown }).retraction;
+  if (retraction !== undefined) {
+    if (!retraction || typeof retraction !== "object") {
+      throw new Error("invalid policy: retraction must be an object");
+    }
+    const { maxAgeHours, maxDownloads } = retraction as Record<string, unknown>;
+    if (typeof maxAgeHours !== "number" || !Number.isInteger(maxAgeHours) || maxAgeHours < 0 || maxAgeHours > 8_760) {
+      throw new Error("invalid policy: retraction.maxAgeHours must be an integer in [0, 8760]");
+    }
+    if (typeof maxDownloads !== "number" || !Number.isSafeInteger(maxDownloads) || maxDownloads < 0) {
+      throw new Error("invalid policy: retraction.maxDownloads must be a non-negative safe integer");
+    }
+  }
+
   // Validate requireSignature / requireProvenance if present.
   for (const field of ["requireSignature", "requireProvenance"] as const) {
     const v = (p as Record<string, unknown>)[field];
@@ -258,6 +275,7 @@ export function parsePolicy(raw: Buffer): EnterprisePolicy {
     privateNamespaces: p.privateNamespaces ?? [],
     ...(p.treeGate !== undefined ? { treeGate: p.treeGate as Verdict } : {}),
     ...(p.publishGate !== undefined ? { publishGate: p.publishGate as Verdict } : {}),
+    ...(retraction !== undefined ? { retraction: retraction as EnterprisePolicy["retraction"] } : {}),
     ...((p as { requireSignature?: string[] }).requireSignature !== undefined ? { requireSignature: (p as { requireSignature: string[] }).requireSignature } : {}),
     ...((p as { requireProvenance?: string[] }).requireProvenance !== undefined ? { requireProvenance: (p as { requireProvenance: string[] }).requireProvenance } : {}),
     ...(pi !== undefined ? { provenanceIdentities: pi as ProvenanceIdentityRequirement[] } : {}),
@@ -285,6 +303,11 @@ export function treeGateOf(policy: EnterprisePolicy): Verdict {
 /** The verdict level at which an authoritative publish is rejected. */
 export function publishGateOf(policy: EnterprisePolicy): Verdict {
   return policy.publishGate ?? "block";
+}
+
+/** Exclusive age/download limits for authoritative version retraction. */
+export function retractionWindowOf(policy: EnterprisePolicy): { maxAgeHours: number; maxDownloads: number } {
+  return policy.retraction ?? { maxAgeHours: 72, maxDownloads: 1_000 };
 }
 
 const VERDICT_RANK: Record<Verdict, number> = { allow: 0, warn: 1, block: 2 };

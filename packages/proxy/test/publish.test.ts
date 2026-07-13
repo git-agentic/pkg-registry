@@ -365,4 +365,16 @@ describe("Phase 30 authoritative publish path", () => {
       assert.deepEqual(new PrivatePackageStore(dir).versions("@acme/race").sort(), ["1.0.0", "1.0.1", "1.0.2", "1.0.3"]);
     } finally { ctx.server.close(); }
   });
+
+  test("a retracted identifier can never be republished", async () => {
+    const ctx = await boot();
+    try {
+      assert.equal((await ctx.put("@acme/spent", "1.0.0")).status, 201);
+      ctx.privateStore.retract({ name: "@acme/spent", version: "1.0.0", reason: "broken",
+        retractedAt: "2026-07-13T12:00:00.000Z", advisoryId: "SENTINEL-RETRACT-spent" });
+      const replacement = await ctx.put("@acme/spent", "1.0.0");
+      assert.equal(replacement.status, 409);
+      assert.match((await replacement.json()).error, /permanently spent/i);
+    } finally { ctx.server.close(); }
+  });
 });

@@ -21,9 +21,12 @@ export const knownAdvisoryRule: Rule = {
     ];
     const hit = candidates.find((a) => a.version === version);
     if (!hit) return [];
+    const message = hit.kind === "retraction"
+      ? `\`${hit.name}@${hit.version}\` was retracted (${hit.reason}) in advisory ${hit.id} — do not install this version.`
+      : `\`${hit.name}@${hit.version}\` is listed as known-malicious in advisory ${hit.id}${hit.reference ? ` (${hit.reference})` : ""} — do not install this version.`;
     return [mkFinding({
       ruleId: this.id, category: this.category, severity: hit.severity ?? "critical",
-      message: `\`${hit.name}@${hit.version}\` is listed as known-malicious in advisory ${hit.id}${hit.reference ? ` (${hit.reference})` : ""} — do not install this version.`,
+      message,
       evidence: [], files: input.files,
     })];
   },

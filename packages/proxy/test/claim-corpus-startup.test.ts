@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, test } from "node:test";
-import { generateKeypair, signClaimCorpus } from "@sentinel/core";
+import { generateKeypair, signClaimCorpus, signRetractionCorpus } from "@sentinel/core";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..", "..", "..");
@@ -68,5 +68,47 @@ describe("claim corpus startup", () => {
     const result = boot(env);
     assert.equal(result.ok, false);
     assert.match(result.output, /FATAL.*SENTINEL_CLAIM_CORPUS_PUBKEY/is);
+  });
+});
+
+function configuredRetractions(mode: "valid" | "tampered" | "malformed" = "valid"): Record<string, string> {
+  const { publicKey, privateKey } = generateKeypair();
+  const dir = mkdtempSync(join(tmpdir(), "sentinel-retraction-boot-"));
+  const file = join(dir, "advisories.json");
+  const raw = Buffer.from(JSON.stringify({
+    schema: 1, version: "retractions-1", issuedAt: "2026-07-13T12:00:00.000Z",
+    advisories: [{ kind: "retraction", id: "SENTINEL-RETRACT-boot", name: "@acme/x", version: "1.0.0",
+      integrity: "sha512-YWJj", reason: "security", retractedAt: "2026-07-13T11:00:00.000Z", severity: "high" }],
+  }));
+  const written = mode === "tampered" ? Buffer.from(raw.toString().replace("retractions-1", "tampered"))
+    : mode === "malformed" ? Buffer.from(JSON.stringify({ schema: 1, version: "bad", issuedAt: "not-a-date", advisories: [] }))
+    : raw;
+  writeFileSync(file, written);
+  writeFileSync(`${file}.sig`, signRetractionCorpus(mode === "tampered" ? raw : written, privateKey));
+  writeFileSync(join(dir, "pub.pem"), publicKey);
+  return { SENTINEL_RETRACTION_CORPUS_FILE: file, SENTINEL_RETRACTION_CORPUS_PUBKEY: join(dir, "pub.pem") };
+}
+
+describe("retraction corpus startup", () => {
+  test("a valid signed corpus boots and reports its version", () => {
+    const result = boot(configuredRetractions());
+    assert.equal(result.ok, true);
+    assert.match(result.output, /retraction corpus.*retractions-1/i);
+  });
+
+  test("tamper and correctly-signed malformed data are boot-time FATAL", () => {
+    for (const mode of ["tampered", "malformed"] as const) {
+      const result = boot(configuredRetractions(mode));
+      assert.equal(result.ok, false);
+      assert.match(result.output, /FATAL.*retraction corpus/is);
+    }
+  });
+
+  test("a configured corpus requires a pinned public key", () => {
+    const env = configuredRetractions();
+    delete env.SENTINEL_RETRACTION_CORPUS_PUBKEY;
+    const result = boot(env);
+    assert.equal(result.ok, false);
+    assert.match(result.output, /FATAL.*RETRACTION_CORPUS_PUBKEY/is);
   });
 });

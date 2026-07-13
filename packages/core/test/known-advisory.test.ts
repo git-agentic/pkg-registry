@@ -29,6 +29,18 @@ describe("known-advisory rule", () => {
     assert.equal(knownAdvisoryRule.run(input("evil-pkg", "1.0.0", [A({ severity: "high" })]))[0]!.severity, "high");
   });
 
+  test("a retraction advisory uses the existing rule with reason-coded messaging and severity", () => {
+    const advisory: Advisory = {
+      kind: "retraction", name: "evil-pkg", version: "1.0.0", id: "SENTINEL-RETRACT-test",
+      integrity: "sha512-YWJj", reason: "broken", retractedAt: "2026-07-13T12:00:00.000Z", severity: "medium",
+    };
+    const finding = knownAdvisoryRule.run(input("evil-pkg", "1.0.0", [advisory]))[0]!;
+    assert.equal(finding.ruleId, "known-advisory", "retractions do not create a new rule");
+    assert.equal(finding.severity, "medium");
+    assert.match(finding.message, /retracted.*broken/i);
+    assert.doesNotMatch(finding.message, /known-malicious/i);
+  });
+
   test("operator advisories MERGE with the bundled corpus (both fire)", () => {
     const bundled = KNOWN_ADVISORIES[0]!;
     assert.equal(knownAdvisoryRule.run(input(bundled.name, bundled.version)).length, 1); // bundled alone

@@ -5,12 +5,18 @@
  * (name, version, id) triple below was fetched and cross-checked against
  * github.com/advisories at authoring time (see Task 1 report for per-entry notes).
  */
+import type { Severity } from "./types.js";
+
 export interface Advisory {
   name: string;
   version: string;
   id: string;                       // advisory id, e.g. "GHSA-…" / "MAL-…"
-  severity?: "critical" | "high";   // default critical
+  severity?: Severity;              // default critical for malware entries
   reference?: string;               // advisory URL
+  kind?: "malware" | "retraction";
+  integrity?: string;
+  reason?: "security" | "withdrawn" | "broken" | "legal";
+  retractedAt?: string;
 }
 
 // Well-documented, publicly-confirmed compromised releases. (name, version) pairs are
@@ -43,8 +49,16 @@ function coerceAdvisoryEntry(e: unknown): Advisory | undefined {
   if (e && typeof e === "object" && typeof (e as Advisory).name === "string" && typeof (e as Advisory).version === "string" && typeof (e as Advisory).id === "string") {
     const a = e as Advisory;
     const adv: Advisory = { name: a.name, version: a.version, id: a.id };
-    if (a.severity === "critical" || a.severity === "high") adv.severity = a.severity;
+    if (["info", "low", "medium", "high", "critical"].includes(a.severity ?? "")) adv.severity = a.severity;
     if (typeof a.reference === "string") adv.reference = a.reference;
+    if (a.kind === "malware") adv.kind = "malware";
+    if (a.kind === "retraction" && typeof a.integrity === "string" &&
+        ["security", "withdrawn", "broken", "legal"].includes(a.reason ?? "") && typeof a.retractedAt === "string") {
+      adv.kind = "retraction";
+      adv.integrity = a.integrity;
+      adv.reason = a.reason;
+      adv.retractedAt = a.retractedAt;
+    }
     return adv;
   }
   return undefined;

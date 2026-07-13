@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import { createHash } from "node:crypto";
 import express, { type Request, type Response } from "express";
 import { rateLimit } from "express-rate-limit";
 import {
@@ -7,11 +8,15 @@ import {
   POLICY_SYNTHESIZED_RULE_IDS,
   policyHashOf,
   claimCorpusHashOfBytes,
+  retractionCorpusHashOfBytes,
+  parseRetractionCorpus,
+  EMPTY_RETRACTION_CORPUS,
   integrityOf,
   integrityOfAlgo,
   aggregateTree,
   treeGateOf,
   publishGateOf,
+  retractionWindowOf,
   verdictAtOrAbove,
   NPM_SIGNING_KEYS,
   remediate,
@@ -28,6 +33,9 @@ import {
   type Advisory,
   type VulnAdvisory,
   type ScoredFinding,
+  type RetractionAdvisory,
+  type RetractionCorpus,
+  type RetractionReason,
 } from "@sentinel/core";
 import { AuditStore } from "./store.js";
 import { resolvePublishTime, cooldownDecision, applyCooldown, blockOverlay } from "./cooldown.js";
@@ -40,7 +48,7 @@ import {
 } from "./upstream.js";
 import { ApprovalStore, type Approval } from "./approvals.js";
 import { reconcileApproval, type ApprovalState } from "./reconcile.js";
-import { PrivatePackageStore, PublicationConflictError } from "./private-store.js";
+import { PrivatePackageStore, PublicationConflictError, type RetractionTombstone } from "./private-store.js";
 import { parsePublishBody, publishTokenValid } from "./private.js";
 import {
   EMPTY_CLAIM_CORPUS,
@@ -80,6 +88,10 @@ export interface ServerOptions {
   claimCorpus?: ClaimCorpus;
   /** Hash of the verified raw corpus bytes; canonical in-memory hash for embedders. */
   claimCorpusHash?: string;
+  /** Verified offline retraction data for fleet-wide tombstone propagation. */
+  retractionCorpus?: RetractionCorpus;
+  /** Hash of the verified raw retraction-corpus bytes. */
+  retractionCorpusHash?: string;
   /** Valid bearer tokens for publishing; empty ⇒ publishing disabled. */
   publishTokens?: string[];
   /** Trusted npm registry signing keys (default: bundled npm keys). */
@@ -166,10 +178,16 @@ export function createServer(opts: ServerOptions) {
   const enterprisePolicy = opts.enterprisePolicy;
   const policyHash = opts.policyHash ?? policyHashOf(enterprisePolicy);
   const policy: ProxyPolicy = opts.policy ?? "observe";
-  const privateStore = opts.privateStore;
+  const privateStore = opts.privateStore ?? new PrivatePackageStore();
   const claimCorpus = opts.claimCorpus ?? EMPTY_CLAIM_CORPUS;
   validateClaimCorpus(claimCorpus);
   const claimCorpusHash = opts.claimCorpusHash ?? claimCorpusHashOfBytes(Buffer.from(JSON.stringify(claimCorpus)));
+  const retractionCorpus = opts.retractionCorpus ?? EMPTY_RETRACTION_CORPUS;
+  parseRetractionCorpus(Buffer.from(JSON.stringify(retractionCorpus)));
+  const retractionCorpusHash = opts.retractionCorpusHash ?? retractionCorpusHashOfBytes(Buffer.from(JSON.stringify(retractionCorpus)));
+  const corpusRetractions = new Map(
+    retractionCorpus.advisories.map((advisory) => [`${advisory.name}\u0000${advisory.version}`, advisory] as const),
+  );
   const publishTokens = opts.publishTokens ?? [];
   const signingKeys = opts.signingKeys ?? NPM_SIGNING_KEYS;
   const advisories = opts.advisories;
@@ -196,7 +214,11 @@ export function createServer(opts: ServerOptions) {
   // the currently active corpus identity rather than their original cache time.
   const withClaimCorpus = (report: AuditReport): AuditReport => ({
     ...report,
-    policy: { ...report.policy, claimCorpus: { version: claimCorpus.version, hash: claimCorpusHash } },
+    policy: {
+      ...report.policy,
+      claimCorpus: { version: claimCorpus.version, hash: claimCorpusHash },
+      retractionCorpus: { version: retractionCorpus.version, hash: retractionCorpusHash },
+    },
   });
   const scoreAudit = (audit: Audit, activePolicy = enterprisePolicy, activePolicyHash = policyHash): AuditReport =>
     withClaimCorpus(score(audit, activePolicy, activePolicyHash));
@@ -288,7 +310,7 @@ export function createServer(opts: ServerOptions) {
       meta, tarball, baselineTarball,
       signatures: vmeta.signatures, hasProvenance: vmeta.hasProvenance,
       attestations, signingKeys, trustMaterial: opts.trustMaterial,
-      releaseContext, advisories, vulnerabilities, extractLimits,
+      releaseContext, advisories: [...(advisories ?? []), ...retractionCorpus.advisories], vulnerabilities, extractLimits,
     });
     const report = scoreAudit(audit);
     store.put(report);
@@ -305,6 +327,31 @@ export function createServer(opts: ServerOptions) {
       onChangedFile: false, evidence: [], weight: 0, waived: false,
     };
     return blockOverlay(report, finding);
+  }
+
+  function retractionFor(report: AuditReport): RetractionAdvisory | undefined {
+    const advisory = privateStore.getRetractionAdvisory(report.meta.name, report.meta.version)
+      ?? corpusRetractions.get(`${report.meta.name}\u0000${report.meta.version}`);
+    return advisory?.integrity === report.meta.integrity ? advisory : undefined;
+  }
+
+  /** Authoritative-fact overlay: immutable report copy; security blocks, other reasons warn. */
+  function applyRetraction(report: AuditReport): { report: AuditReport; tombstone?: RetractionTombstone } {
+    const advisory = retractionFor(report);
+    if (!advisory) return { report };
+    const finding: ScoredFinding = {
+      ruleId: "known-advisory", category: "metadata", severity: advisory.severity,
+      message: `\`${advisory.name}@${advisory.version}\` was retracted (${advisory.reason}) in advisory ${advisory.id}.`,
+      onChangedFile: false, evidence: [], weight: 0, waived: false,
+    };
+    const verdict = advisory.reason === "security"
+      ? "block" as const
+      : report.verdict === "allow" ? "warn" as const : report.verdict;
+    const alreadyPresent = report.findings.some((candidate) => candidate.ruleId === "known-advisory" && candidate.message.includes(advisory.id));
+    return {
+      report: { ...report, verdict, findings: alreadyPresent ? report.findings : [finding, ...report.findings] },
+      tombstone: { retractedAt: advisory.retractedAt, reason: advisory.reason, advisoryId: advisory.id },
+    };
   }
 
   /** Resolve the release-cooldown decision for a coordinate (ADR — release-cooldown overlay).
@@ -328,8 +375,12 @@ export function createServer(opts: ServerOptions) {
     return cooldownDecision({ policy: enterprisePolicy, name: pkg, publishTime, now: now() });
   }
 
-  function gateAndSend(res: Response, pkg: string, version: string, report: AuditReport, tarball: Buffer, isPrivate: boolean, cooldown: { block: boolean; reason?: string }): Response | void {
-    report = applyCooldown(applyQuarantine(report), cooldown);
+  function gateAndSend(
+    res: Response, pkg: string, version: string, report: AuditReport, tarball: Buffer, isPrivate: boolean,
+    cooldown: { block: boolean; reason?: string }, onServe?: () => void,
+  ): Response | void {
+    const retraction = applyRetraction(report);
+    report = applyCooldown(applyQuarantine(retraction.report), cooldown);
     const rec = reconcile(report);
     res.setHeader("x-sentinel-score", String(report.score));
     res.setHeader("x-sentinel-verdict", report.verdict);
@@ -339,9 +390,15 @@ export function createServer(opts: ServerOptions) {
     res.setHeader("x-sentinel-approval", rec.state);
     res.setHeader("x-sentinel-policy", report.policy.version);
     res.setHeader("x-sentinel-claim-corpus", report.policy.claimCorpus?.version ?? "empty");
+    res.setHeader("x-sentinel-retraction-corpus", report.policy.retractionCorpus?.version ?? "empty");
     // legacy persisted audits may predate the provenance field
     res.setHeader("x-sentinel-provenance", report.meta.provenance ?? "unknown");
     if (isPrivate) res.setHeader("x-sentinel-private", "true");
+    if (retraction.tombstone) {
+      return res.status(410).json({
+        error: "package version retracted", package: `${pkg}@${version}`, ...retraction.tombstone,
+      });
+    }
     if (policy === "block") {
       if (report.verdict === "block") {
         return res.status(403).json({ error: "blocked by Sentinel policy", package: `${pkg}@${version}`,
@@ -353,6 +410,7 @@ export function createServer(opts: ServerOptions) {
         package: `${pkg}@${version}`, approvalRequired: rec.approvalRequired,
         findings: report.findings.map((f) => ({ ruleId: f.ruleId, severity: f.severity, message: f.message })) });
     }
+    onServe?.();
     res.setHeader("content-type", "application/octet-stream");
     return res.send(tarball);
   }
@@ -381,7 +439,7 @@ export function createServer(opts: ServerOptions) {
     try {
       const { report } = await auditVersion(pkg, version);
       const cd = await cooldownFor(pkg, version);
-      res.json(applyCooldown(report, cd));
+      res.json(applyCooldown(applyRetraction(report).report, cd));
     } catch (err) {
       sendError(res, err);
     }
@@ -420,7 +478,7 @@ export function createServer(opts: ServerOptions) {
     try {
       const { report } = await auditVersion(pkg, version);
       const cd = await cooldownFor(pkg, version);
-      const overlaid = applyCooldown(report, cd);
+      const overlaid = applyCooldown(applyRetraction(report).report, cd);
       const remediation = remediate(overlaid);
       const lastKnownGood = await findLastKnownGood(pkg, version);
       res.json({ report: overlaid, remediation, lastKnownGood });
@@ -539,7 +597,7 @@ export function createServer(opts: ServerOptions) {
       async (co) => {
         try {
           const { report: audited, tarball } = await auditVersion(co.name, co.version);
-          const quarantined = applyQuarantine(audited);
+          const quarantined = applyQuarantine(applyRetraction(audited).report);
           const cd = await cooldownFor(co.name, co.version);
           const report = applyCooldown(quarantined, cd);
           const claimed = typeof co.integrity === "string" ? co.integrity : null;
@@ -579,6 +637,7 @@ export function createServer(opts: ServerOptions) {
     const result: TreeAuditResult = {
       aggregate, packages: rows, policyHash,
       claimCorpus: { version: claimCorpus.version, hash: claimCorpusHash },
+      retractionCorpus: { version: retractionCorpus.version, hash: retractionCorpusHash },
     };
     res.json(result);
   });
@@ -589,7 +648,7 @@ export function createServer(opts: ServerOptions) {
     try {
       const { report } = await auditVersion(pkg, version);
       const cd = await cooldownFor(pkg, version);
-      const overlaid = applyCooldown(report, cd);
+      const overlaid = applyCooldown(applyRetraction(report).report, cd);
       const rec = reconcile(overlaid);
       res.json({
         meta: overlaid.meta, score: overlaid.score, verdict: overlaid.verdict,
@@ -701,9 +760,74 @@ export function createServer(opts: ServerOptions) {
     res.json({
       claims: enterprisePolicy.privateNamespaces ?? [],
       claimCorpus: { version: claimCorpus.version, hash: claimCorpusHash },
+      retractionCorpus: { version: retractionCorpus.version, hash: retractionCorpusHash },
       verifiedClaims: claimCorpus.claims.map((claim) => ({ namespace: claim.namespace, domain: claim.domain, status: claim.status })),
       packages: privateStore.names().map((name) => ({ name, versions: privateStore.versions(name) })),
     });
+  });
+
+  // ---- time-locked retraction (ADR-0047) ----
+  app.get("/-/retractions", (_req, res) => {
+    res.json({
+      advisories: [...privateStore.retractionAdvisories(), ...retractionCorpus.advisories],
+      retractionCorpus: { version: retractionCorpus.version, hash: retractionCorpusHash },
+      windowHits: history ? history.retractionWindowHits() : privateStore.retractionWindowHits(),
+      downloadCounting: "Successful native tarball responses count once; with SQLite, repeats for the same package version and npm-session are deduplicated; requests without npm-session count individually.",
+    });
+  });
+  app.post("/-/retractions", rateGate, authz.requireRole(["operator"]), (req, res) => {
+    const body = req.body as { name?: unknown; version?: unknown; reason?: unknown };
+    let name: string;
+    try { name = normalizePackageName(String(body?.name ?? "")); }
+    catch (error) { return res.status(400).json({ error: (error as Error).message }); }
+    const version = typeof body?.version === "string" ? body.version : "";
+    const reasons: RetractionReason[] = ["security", "withdrawn", "broken", "legal"];
+    if (!version || !reasons.includes(body?.reason as RetractionReason)) {
+      return res.status(400).json({ error: "retraction requires name, version, and reason(security|withdrawn|broken|legal)" });
+    }
+    if (!isNativeName(name)) return res.status(403).json({ error: "only authoritative native packages can be retracted", package: `${name}@${version}` });
+    const stored = privateStore.getVersion(name, version);
+    if (!stored) return res.status(404).json({ error: "native package version not found", package: `${name}@${version}` });
+    const existing = privateStore.getRetraction(name, version) ?? retractionCorpus.advisories.find((advisory) => advisory.name === name && advisory.version === version);
+    if (existing) return res.status(409).json({ error: "package version already retracted", package: `${name}@${version}`, tombstone: existing });
+
+    const nowMs = now();
+    const attemptedAt = new Date(nowMs).toISOString();
+    const publishedAtMs = Date.parse(stored.publishedAt);
+    const ageHours = (nowMs - publishedAtMs) / 3_600_000;
+    if (!Number.isFinite(ageHours) || ageHours < 0) {
+      return res.status(403).json({ error: "authoritative publish time is invalid; retraction fails closed", code: "retraction-publish-time-invalid" });
+    }
+    const limits = retractionWindowOf(enterprisePolicy);
+    const cumulativeDownloads = history?.downloadCount(name, version) ?? privateStore.downloadCount(name, version);
+    const ageExceeded = ageHours >= limits.maxAgeHours;
+    const downloadsExceeded = cumulativeDownloads >= limits.maxDownloads;
+    const window = {
+      publishedAt: stored.publishedAt, attemptedAt, ageHours, cumulativeDownloads,
+      maxAgeHours: limits.maxAgeHours, maxDownloads: limits.maxDownloads,
+    };
+    if (ageExceeded || downloadsExceeded) {
+      const hit = { name, version, ageHours, downloads: cumulativeDownloads, ...limits, ageExceeded, downloadsExceeded, attemptedAt };
+      if (history) history.recordRetractionWindowHit(hit);
+      else privateStore.recordRetractionWindowHit({ ageExceeded, downloadsExceeded });
+      const exceeded = [
+        ...(ageExceeded ? [{ code: "retraction-age-limit-exceeded", actual: ageHours, limit: limits.maxAgeHours }] : []),
+        ...(downloadsExceeded ? [{ code: "retraction-download-limit-exceeded", actual: cumulativeDownloads, limit: limits.maxDownloads }] : []),
+      ];
+      return res.status(403).json({ error: "retraction window closed", code: "retraction-window-closed", package: `${name}@${version}`, window, exceeded });
+    }
+
+    const reason = body.reason as RetractionReason;
+    const advisoryId = "SENTINEL-RETRACT-" + createHash("sha256")
+      .update(`${name}\u0000${version}\u0000${stored.integrity}\u0000${attemptedAt}\u0000${reason}`)
+      .digest("hex").slice(0, 24);
+    try {
+      const tombstone = privateStore.retract({ name, version, reason, retractedAt: attemptedAt, advisoryId });
+      return res.status(201).json({ retracted: true, package: `${name}@${version}`, tombstone, window });
+    } catch (error) {
+      if (error instanceof PublicationConflictError) return res.status(409).json({ error: error.message });
+      return sendError(res, error);
+    }
   });
 
   // ---- publish (PUT /:pkg) — authoritative private registry write path ----
@@ -735,6 +859,10 @@ export function createServer(opts: ServerOptions) {
       let parsed;
       try { parsed = parsePublishBody(name, req.body); }
       catch (err) { return res.status(400).json({ error: (err as Error).message, package: name }); }
+      if (privateStore.getRetraction(name, parsed.version) ||
+          retractionCorpus.advisories.some((advisory) => advisory.name === name && advisory.version === parsed.version)) {
+        return res.status(409).json({ error: "version identifier is permanently spent by retraction", package: `${name}@${parsed.version}` });
+      }
       const integrity = integrityOf(parsed.tarball);
       if (parsed.declaredIntegrity && parsed.declaredIntegrity !== integrity) {
         return res.status(400).json({ error: "integrity mismatch", package: `${name}@${parsed.version}` });
@@ -750,7 +878,7 @@ export function createServer(opts: ServerOptions) {
           meta, tarball: parsed.tarball, signatures: null, hasProvenance: parsed.attestations !== null,
           attestations: parsed.attestations, signingKeys, trustMaterial: opts.trustMaterial, extractLimits,
           requirePackageManifest: { name, version: parsed.version },
-          advisories, vulnerabilities,
+          advisories: [...(advisories ?? []), ...retractionCorpus.advisories], vulnerabilities,
         });
       } catch (err) {
         if ((err as Error).message.startsWith("malformed npm tarball:")) {
@@ -776,7 +904,8 @@ export function createServer(opts: ServerOptions) {
       }
       try {
         privateStore.publish({
-          name, version: parsed.version, integrity, manifest: parsed.manifest, tarball: parsed.tarball, audit, actor: "publisher",
+          name, version: parsed.version, integrity, manifest: parsed.manifest, tarball: parsed.tarball, audit,
+          ...(parsed.attestations !== null ? { attestations: parsed.attestations } : {}), actor: "publisher",
           ...(verifiedClaim ? { claimAtPublication: {
             namespace: verifiedClaim.namespace,
             domain: verifiedClaim.domain,
@@ -830,7 +959,14 @@ export function createServer(opts: ServerOptions) {
         const priv = isNativeName(pkg);
         const { report, tarball } = await auditVersion(pkg, version);
         const cd = await cooldownFor(pkg, version);
-        return gateAndSend(res, pkg, version, report, tarball, priv, cd);
+        return gateAndSend(res, pkg, version, report, tarball, priv, cd, priv ? () => {
+          const servedAt = new Date(now()).toISOString();
+          if (history) history.recordDownload({
+            name: pkg, version, integrity: report.meta.integrity ?? integrityOf(tarball),
+            ...(req.get("npm-session") ? { npmSession: req.get("npm-session")! } : {}), servedAt,
+          });
+          else privateStore.recordDownload(pkg, version);
+        } : undefined);
       } catch (err) {
         return sendError(res, err);
       }
@@ -843,6 +979,17 @@ export function createServer(opts: ServerOptions) {
       if (isNativeName(name)) {
         const pm = privateStore.packument(name);
         if (!pm) return res.status(404).json({ error: "native package not found", package: name });
+        for (const advisory of retractionCorpus.advisories) {
+          if (advisory.name !== name || !pm.versions[advisory.version]) continue;
+          if (privateStore.getVersion(name, advisory.version)?.integrity !== advisory.integrity) continue;
+          delete pm.versions[advisory.version];
+          pm._sentinel ??= { retractions: {} };
+          pm._sentinel.retractions[advisory.version] = {
+            retractedAt: advisory.retractedAt, reason: advisory.reason, advisoryId: advisory.id,
+          };
+        }
+        const activeVersions = Object.keys(pm.versions).sort(cmpSemver);
+        pm["dist-tags"] = activeVersions.length ? { latest: activeVersions.at(-1)! } : {};
         for (const [v, manifest] of Object.entries(pm.versions)) {
           (manifest as { dist?: { tarball?: string } }).dist = { ...(manifest as { dist?: object }).dist, tarball: `${base}/${name}/-/${shortName(name)}-${v}.tgz` };
         }

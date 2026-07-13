@@ -15,6 +15,7 @@ export {
   loadPolicy,
   treeGateOf,
   publishGateOf,
+  retractionWindowOf,
   verdictAtOrAbove,
   type EnterprisePolicy,
 } from "./policy.js";
@@ -95,6 +96,19 @@ export {
   type ClaimChangeKind,
   type ClaimCorpusIdentity,
 } from "./claim-corpus.js";
+export {
+  EMPTY_RETRACTION_CORPUS,
+  parseRetractionCorpus,
+  retractionCorpusHashOfBytes,
+  signRetractionCorpus,
+  verifyRetractionCorpusBytes,
+  loadRetractionCorpus,
+  type RetractionReason,
+  type RetractionAdvisory,
+  type RetractionCorpus,
+  type RetractionCorpusIdentity,
+  type LoadedRetractionCorpus,
+} from "./retraction-corpus.js";
 export {
   buildAuditStatement, signAttestation, verifyAttestation, attestationKeyid, pae, SENTINEL_PREDICATE_TYPE,
   type InTotoStatementV1, type AuditPredicate, type DsseEnvelope, type VerifyResult, type VerifyReason,

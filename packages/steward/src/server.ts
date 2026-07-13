@@ -4,6 +4,7 @@ import { join } from "node:path";
 import express, { type Request, type Response } from "express";
 import { rateLimit } from "express-rate-limit";
 import { ClaimSteward, type ClaimApplicationInput, type TxtResolver } from "./steward.js";
+import type { RetractionAdvisory } from "@sentinel/core";
 
 export interface StewardServerOptions {
   steward: ClaimSteward;
@@ -92,6 +93,10 @@ export function createStewardServer(options: StewardServerOptions) {
       res.json({ frozen: true });
     } catch (error) { sendError(res, error); }
   });
+  app.post("/-/retractions", (req, res) => {
+    try { options.steward.recordRetraction(req.body as RetractionAdvisory); res.status(202).json({ queued: true }); }
+    catch (error) { sendError(res, error); }
+  });
   app.post("/-/claims/releases", (req, res) => {
     try {
       const version = (req.body as { version?: unknown }).version;
@@ -107,6 +112,8 @@ export function createStewardServer(options: StewardServerOptions) {
         try {
           writeFileSync(join(staging, "claims.json"), release.raw, { flag: "wx" });
           writeFileSync(join(staging, "claims.json.sig"), release.signature!, { flag: "wx" });
+          writeFileSync(join(staging, "advisories.json"), release.retractionRaw, { flag: "wx" });
+          writeFileSync(join(staging, "advisories.json.sig"), release.retractionSignature!, { flag: "wx" });
           renameSync(staging, finalDir);
           releasePath = finalDir;
         } catch (error) {
@@ -115,7 +122,8 @@ export function createStewardServer(options: StewardServerOptions) {
         }
       }
       res.json({ version, claims: release.corpus.claims.length, pendingClaims: release.corpus.pendingClaims?.length ?? 0,
-        corpus: release.corpus, signature: release.signature, releasePath });
+        retractions: release.retractionCorpus.advisories.length, corpus: release.corpus, signature: release.signature,
+        retractionCorpus: release.retractionCorpus, retractionSignature: release.retractionSignature, releasePath });
     } catch (error) { sendError(res, error); }
   });
   return app;

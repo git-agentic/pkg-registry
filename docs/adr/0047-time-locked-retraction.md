@@ -1,6 +1,6 @@
 # ADR-0047: Time-locked retraction
 
-**Status:** Proposed (Phase 32 — design only, no implementation)
+**Status:** Accepted (Phase 32 implemented 2026-07-13)
 **Date:** 2026-07-11
 
 Third of the four registry-evolution ADRs (0045–0048). Decision record for
@@ -132,6 +132,29 @@ griefing a popular dependency out of existence is impossible by construction.
 - Retraction cannot serve as a takedown mechanism for widely-adopted
   packages, by design; legal takedowns are an operator/steward process
   outside this ADR, and the threat-model draft records that boundary.
+
+## Implementation
+
+- Signed policy data `retraction: { maxAgeHours, maxDownloads }` defaults to
+  `{72, 1000}`. `POST /-/retractions` is operator-only when role auth is
+  enabled and returns the complete window state plus distinct age/download
+  error codes on a 403.
+- `PrivatePackageStore` persists tombstones, spent identifiers, retained
+  attestations, fallback download counters, and fallback window-hit counters
+  separately from immutable version directories. Packuments omit retracted
+  versions, retarget `latest`, and expose `_sentinel.retractions`; tarballs
+  return 410 regardless of observe/block mode.
+- Successful native tarball responses count as downloads. With `HistoryDb`,
+  repeated requests for the same package version and `npm-session` dedupe;
+  requests without that header count individually. SQLite also retains
+  append-only window-hit rows. `GET /-/retractions` exposes the operator feed,
+  corpus identity, counting semantics, and telemetry.
+- The steward accepts authenticated claimed-namespace retraction advisories
+  and atomically emits `advisories.json` plus its detached Ed25519 signature
+  in the same release directory as `claims.json`. Proxies verify this corpus
+  fail-closed at boot and record its version/hash in reports and tree results.
+  The `known-advisory` rule remains the only detection rule involved; the
+  serve-time overlay is immutable and active without an opt-in flag.
 
 ## Alternatives considered
 
