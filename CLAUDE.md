@@ -29,16 +29,20 @@ phase's implementation starts.
 
 ### Current state by subsystem
 
-**Scoring & rules (`@sentinel/core`)** — 9 registered pure rules
+**Scoring & rules (`@sentinel/core`)** — 10 registered pure rules
 (`packages/core/src/rules/index.ts`): install-scripts, secret-exfil,
 network-egress, obfuscation, provenance (ADR-0021/0022), typosquat (ADR-0026),
 release-anomaly (ADR-0029), known-advisory (ADR-0034), known-vulnerability
-(semver-range CVEs, ADR-0035). Four more finding kinds are synthesized *outside*
-the rule pipeline — don't count them as rules: `resource-abuse`
-(decompression-bomb caps in `extractTarball`, ADR-0039) and `unscanned-content`
-(>2 MB / native-binary blind-spot flag, ADR-0041) inline in `runAudit`;
-`capability-novelty` from `buildAudit` (needs the post-rules delta, ADR-0029);
-`dependencyConfusion` at score time in `score.ts` (ADR-0026). Registry-signature
+(semver-range CVEs, ADR-0035), native-payload-loader (dataflow-correlated
+packaged-payload materialization-and-execution chain, ADR-0049). Five more
+finding kinds are synthesized *outside* the rule pipeline — don't count them
+as rules: `resource-abuse` (decompression-bomb caps in `extractTarball`,
+ADR-0039), `unscanned-content` (>2 MB / native-binary blind-spot flag,
+ADR-0041), and `content-mismatch` (raw-byte magic classification catching a
+binary/compressed/archive signature behind a text-looking extension,
+ADR-0049) inline in `runAudit`; `capability-novelty` from `buildAudit` (needs
+the post-rules delta, ADR-0029); `dependencyConfusion` at score time in
+`score.ts` (ADR-0026). Registry-signature
 verification is offline against configured `NPM_SIGNING_KEYS` (ADR-0021);
 provenance deep-verify binds the attestation to the *actual served bytes* and
 requires a SLSA v1 predicate for `verified` (ADR-0022, tightened by ADR-0041).
@@ -57,6 +61,12 @@ dry-run replay over stored history (ADR-0033). Violations are recorded
 integrity-keyed and quarantine is a **serve-time overlay** that never mutates the
 cached score; auto-quarantine is opt-in (`SENTINEL_AUTO_QUARANTINE=1`, requires
 auth configured, else startup FATAL) — default is record-only (ADR-0023/0040).
+A second serve-time overlay, `releaseCooldown?: { hours, exempt }` (policy
+data, `packages/core/src/policy.ts`, ADR-0050), holds freshly-published
+versions for a configured window; fail-closed on a missing/unparseable
+publish time, `matchPackage`-exempt bypasses, no wall-clock in the engine
+(the proxy injects `now` via `ServerOptions.now`), overlaid across the
+tarball gate, `/-/audit`, `/-/explain`, `/-/audit-tree`, and `/-/manifest`.
 Opt-in Ed25519 role-token auth gates the mutating routes; reads stay open
 (ADR-0025). Opt-in `node:sqlite` history DB + `/-/metrics`, `/-/history`,
 `/-/violations/timeline` (ADR-0028). Outbound tarball fetches are pinned to the
@@ -84,11 +94,14 @@ advisory-only on both platforms by decision. The sandbox is also a sensor:
 reported best-effort to `POST /-/violations` — a swallowed denial evades
 telemetry, not containment (ADR-0023). Enforced installs run every lifecycle
 script under the sandbox via `npm_config_script_shell` interposition
-(`sentinel install --enforce`, ADR-0019).
+(`sentinel install --enforce`, ADR-0019). `runArgv` (no-shell, execFile-style,
+shared profile/deny-set/telemetry with `run`) backs `sentinel exec`, extending
+containment to Sentinel-mediated command execution — imports/`npx` run
+outside `exec` remain uncontained (ADR-0051).
 
 **CLI / CI / MCP** — `sentinel` CLI: `audit-tree`, `explain`, `stats`/`history`,
 `policy init|validate|preview|keygen|sign|verify`, `attest-keygen`/`attest`/
-`verify-attestation`, `run-scripts`, `install --enforce`. `@sentinel/action`
+`verify-attestation`, `run-scripts`, `install --enforce`, `exec`. `@sentinel/action`
 (bin `sentinel-ci`) self-boots the proxy in-process for CI, writes SBOM +
 GitHub-native outputs, idempotent PR comment (ADR-0030). `sentinel-mcp` exposes
 read tools plus a single write tool that only ever *requests* approval — a human
@@ -121,6 +134,15 @@ enforcement is tested with benign probe packages.
 7. **Claimed names are authoritative, not passthrough.** Names matching the signed
    policy's `privateNamespaces` are served only from the private store and never from
    public npm (fail-closed). Everything else still passes through (ADR-0010/0015).
+8. **Native-payload loader chains are critically flagged independent of
+   lifecycle scripts, baseline, or known indicators.** Sentinel must critically
+   flag a **dataflow-correlated** packaged-payload materialization-and-execution
+   chain — its correlation established by require/import **binding-resolved**
+   primitives, **lexically-scoped** (kill-on-reassign) taint, and a
+   **package-relative READ origin** — independent of lifecycle scripts, baseline
+   availability, advisories, filenames, or known indicators; and separately
+   expose raw-content/extension mismatches for every file, including oversized
+   ones (ADR-0049).
 
 ## How to extend
 
@@ -146,6 +168,13 @@ enforcement is tested with benign probe packages.
   `npm run fixtures` after editing fixtures.
 - Tests must stay hermetic: use `LocalFixtureUpstream`, never hit live npm in
   `npm test`.
+- **Signature assets** (files that must begin with real magic bytes to exercise
+  content classification) cannot carry an in-band `SYNTHETIC FIXTURE` text header.
+  They are inert raw data — magic header + zero filler — generated at build time
+  by `scripts/make-fixtures.ts` from a committed `*.asset` family descriptor, and
+  marked **out-of-band** by an adjacent `SYNTHETIC-FIXTURE.txt` manifest. The
+  materialized binary (e.g. `dist/intro.js`) is gitignored; only the descriptor +
+  manifest are committed. These assets contain no runnable payload.
 
 ## Stack & versions (July 2026)
 

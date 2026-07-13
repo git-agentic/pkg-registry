@@ -12,6 +12,7 @@ import type {
   AuditInput,
   AuditReport,
   Capability,
+  ExtractionObservations,
   Finding,
   PackageFile,
   PackageMeta,
@@ -45,9 +46,10 @@ export function buildAudit(
     releaseContext?: ReleaseContext;
     advisories?: Advisory[];
     vulnerabilities?: VulnAdvisory[];
+    extractionObservations?: ExtractionObservations;
   } = { mode: "full", durationMs: 0 },
 ): Audit {
-  const input: AuditInput = { meta, files, mode: opts.mode, releaseContext: opts.releaseContext, advisories: opts.advisories, vulnerabilities: opts.vulnerabilities };
+  const input: AuditInput = { meta, files, mode: opts.mode, releaseContext: opts.releaseContext, advisories: opts.advisories, vulnerabilities: opts.vulnerabilities, extractionObservations: opts.extractionObservations };
   const ruleFindings = runRules(input);
   const capabilities = extractCapabilities(input);
   const capabilityDelta = opts.baselineCapabilities
@@ -142,7 +144,12 @@ export async function runAudit(input: AuditTarballInput): Promise<Audit> {
     provenanceIdentity: prov.identity,
   };
 
-  const audit = buildAudit(meta, extracted.files, { mode, durationMs: Date.now() - started, baselineCapabilities, releaseContext: input.releaseContext, advisories: input.advisories, vulnerabilities: input.vulnerabilities });
+  const extractionObservations = {
+    contentMismatch: extracted.contentMismatch,
+    contentMismatchTotals: extracted.contentMismatchTotals,
+    unscannedTotals: extracted.unscannedTotals,
+  };
+  const audit = buildAudit(meta, extracted.files, { mode, durationMs: Date.now() - started, baselineCapabilities, releaseContext: input.releaseContext, advisories: input.advisories, vulnerabilities: input.vulnerabilities, extractionObservations });
   if (integrityMismatch) {
     audit.findings.push({
       ruleId: "integrity-mismatch", category: "provenance", severity: "critical",
@@ -172,6 +179,18 @@ export async function runAudit(input: AuditTarballInput): Promise<Audit> {
         ? `${count} executable-looking file(s) (${mb} MB) were not scanned, including ${nativeCount} native/binary, and the package runs install scripts`
         : `${count} executable-looking file(s) (${mb} MB) were not scanned (${nativeCount} native, ${count - nativeCount} large-code)`,
       onChangedFile: false, evidence: [],
+    });
+  }
+  if (extracted.contentMismatchTotals.count > 0) {
+    const EXEC = new Set(["elf", "macho", "pe", "wasm"]);
+    const kinds = Object.keys(extracted.contentMismatchTotals.byKind);
+    const anyExec = kinds.some((k) => EXEC.has(k));
+    const sample = extracted.contentMismatch.slice(0, 3).map((e) => ({ file: e.path, snippet: `${e.detectedKind} bytes behind ${e.declaredExt}` }));
+    audit.findings.push({
+      ruleId: "content-mismatch", category: "metadata",
+      severity: anyExec ? "medium" : "low",
+      message: `${extracted.contentMismatchTotals.count} file(s) have binary/compressed content behind a text-looking extension (${kinds.join(", ")}) — possible concealed payload container`,
+      onChangedFile: false, evidence: sample,
     });
   }
   if (prov.rootStale) {

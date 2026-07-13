@@ -1,0 +1,7 @@
+{
+  "name": "loader-native-require",
+  "version": "1.0.0",
+  "description": "SYNTHETIC FIXTURE — native require(writtenPath) loader. Inert. Never executed.",
+  "main": "index.js",
+  "license": "MIT"
+}

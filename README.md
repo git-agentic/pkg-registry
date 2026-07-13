@@ -135,6 +135,7 @@ sentinel audit-tree [lockfile]   audit an entire resolved tree (npm/yarn/pnpm); 
   --omit <type>                    omit a dependency group (only 'dev' is supported)
 sentinel install [args…]         npm install routed through the proxy
 sentinel npx     [args…]         npx routed through the proxy
+sentinel exec [--approve <cap...>] -- <command> [args...]   run one command under the sandbox (no shell)
 sentinel violations              list runtime violations recorded by the proxy (quarantined builds)
 sentinel stats                    durable audit/violation metrics (requires SENTINEL_HISTORY_DB on the proxy)
 sentinel history [--verdict --name --limit]   list recorded audits (requires SENTINEL_HISTORY_DB)
@@ -308,6 +309,39 @@ a true subcommand impractical). See
   (ADR-0043, ADR-0044).
 
 A denied credential read surfaces as a confirmed runtime violation on Seatbelt (EPERM); on bubblewrap the read is *contained* (a `--tmpfs` mask yields `ENOENT`) but not classified — an accepted telemetry asymmetry (ADR-0023). Both backends contain; only the telemetry differs.
+
+### `sentinel exec` (Phase 36, ADR-0051)
+
+```
+sentinel exec [--approve <cap...>] -- <command> [args...]
+```
+
+Runs one command under the same sandbox enforced installs use —
+`createSandbox()` picks Seatbelt/bubblewrap, `--approve kind:target` approves
+capabilities via the same parser `run-scripts`/`install --enforce` use
+(`network:host`, `process:curl`, `env:NAME`, `filesystem:/path`), the
+environment is scrubbed fail-closed the same way, and `cwd`/`projectRoot` are
+both the current directory. The command runs **without a shell**
+(`execFile`-style — `Sandbox.runArgv`, not `run`'s `/bin/sh -c`), so argument
+boundaries are preserved exactly as given after `--`. Exit code and
+stdout/stderr are passed through; the exit code is set via `process.exitCode`
+(not `process.exit()`) so buffered output finishes draining before the
+process exits, avoiding truncation of piped output.
+
+```bash
+sentinel exec -- node -e "console.log(1)"
+sentinel exec --approve network:api.example.com -- node fetch-thing.js
+```
+
+**Scope limitation, stated plainly:** `sentinel exec` protects only
+Sentinel-mediated execution — the exact command run through this CLI. A raw
+`require()`/`import` performed outside `sentinel exec`, and `npx foo` run
+directly (not through this command), are **not** contained. This is
+defense-in-depth *behind* the registry-gate static detection (rules,
+magic-byte classification, `native-payload-loader`, ADR-0049), which is the
+primary and independently-sufficient control — a package that should be
+blocked is blocked at audit time regardless of whether anything downstream is
+sandboxed. See [ADR-0051](./docs/adr/0051-sandboxed-exec.md).
 
 ### Runtime violation telemetry (Phase 10)
 
@@ -728,11 +762,80 @@ composition analysis (SCA), not just malware detection.
 
 See [ADR-0035](./docs/adr/0035-known-vulnerability-sca.md).
 
+## Concealed native-payload detection (Phase 34)
+
+A supply-chain incident shipped a compromised package whose loader unpacked
+and launched a concealed native binary — first from an npm `preinstall`
+hook, then, in a second generation, inlined directly into the package's
+entry point and CLI with no lifecycle script at all. Phase 34 closes both
+the classification gap and the detection gap:
+
+- **Raw-byte magic classification** — every packaged file is classified by a
+  bounded 512-byte sniff of its actual bytes (ELF/Mach-O/PE/WASM/gzip/xz/
+  zstd/bzip2/ZIP), not by its declared extension or size. A binary,
+  compressed, or archive signature hiding behind a text-looking extension
+  (e.g. a `.js` file that's really an ELF binary) surfaces as a
+  `content-mismatch` finding; a correctly-declared native/compressed/archive
+  asset produces no finding at all.
+- **`native-payload-loader` rule** — an AST-based (acorn) rule that flags a
+  **dataflow-correlated** chain: a packaged file is read, decoded, written
+  to disk, and the written file is launched. It's `critical` only when the
+  values/paths are actually linked end to end (not merely present in the
+  same file); a matching TypeScript/JSX file that acorn can't parse falls
+  back to an independent regex scan capped below critical.
+
+Both signals are **static and deterministic** — no lifecycle script needs to
+run, no baseline/previous version is required, and no advisory feed or known
+indicator list is consulted. See
+[ADR-0049](./docs/adr/0049-native-payload-loader-detection.md).
+
+## Release cooldown (Phase 35)
+
+The same jscrambler incident published all five malicious versions within
+hours of each other — a cheap, shape-independent mitigant for that pattern is
+simply holding freshly-published versions for a window, giving the ecosystem
+time to catch and pull a bad release before it reaches an installer. This is
+signed **policy data**, not an environment variable, so it's configured in
+the enterprise policy alongside weights and thresholds:
+
+```json
+{
+  "schema": 1,
+  "version": "2026-07-acme",
+  "releaseCooldown": {
+    "hours": 72,
+    "exempt": ["@my-org/*"]
+  }
+}
+```
+
+- **Fail-closed by default.** A version inside the cooldown window is served
+  a `block` verdict, regardless of its score — and so is any version whose
+  publish time can't be resolved or parsed at all, so an attacker can't
+  defeat the cooldown by omitting the timestamp.
+- **`exempt` is a real hole, kept narrow on purpose.** Anything matching an
+  exempt glob (`matchPackage`, the same anchored-glob matcher
+  `privateNamespaces` uses) bypasses the window from the moment it's
+  published — useful for a fast emergency-fix release, but a standing risk
+  decision per entry. Prefer specific package names or a tight internal
+  namespace over a broad wildcard.
+- **`SENTINEL_POLICY=block` vs `observe`.** Under `block` (non-default), a
+  cooldown-held version 403s at the tarball route exactly like any other
+  blocked verdict. Under `observe` (default), the held verdict is reported
+  everywhere — headers, `/-/audit`, `/-/explain`, `/-/audit-tree`,
+  `/-/manifest` — but the tarball is still served, same as any other
+  observe-mode block reason.
+- **Serve-time overlay, like quarantine** — no wall-clock read happens
+  inside the scoring engine; the cached audit score is never mutated, and a
+  request past the window re-derives `allow` from the same unchanged report.
+
+See [ADR-0050](./docs/adr/0050-release-cooldown-overlay.md).
+
 ## Phase log
 
 The build history lives in the [ADR index](./docs/adr/README.md) — one decision
-record per phase, from the auditing-proxy wedge (ADR-0001) through the Landlock
-Linux exec floor (ADR-0044). See [ARCHITECTURE.md](./ARCHITECTURE.md) for the
+record per phase, from the auditing-proxy wedge (ADR-0001) through the
+release-cooldown overlay (ADR-0050). See [ARCHITECTURE.md](./ARCHITECTURE.md) for the
 current design as a whole; the old narrative phase log is archived in
 [docs/archive/](./docs/archive/).
 

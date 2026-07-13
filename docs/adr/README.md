@@ -122,6 +122,24 @@ Design bundle for the proxy → first-class registry evolution
 | [0047](./0047-time-locked-retraction.md) | Time-locked retraction (Phase 32) | Retract only while age < 72 h AND downloads < 1,000 (policy data); tombstones + spent identifiers, history retained; two-speed advisory emission; default serve-time quarantine overlay |
 | [0048](./0048-migration-compatibility-surface.md) | Migration & compatibility surface (Phase 33) | Small MUST-implement route contract (unpublish = retraction UI); fail-closed escape hatch with acknowledgment + revert manifest, retention + export; derived source class, integrity-preserving imports |
 
+## Phase 34 — native-payload-loader detection (Accepted, implemented)
+
+| ADR | Title | Decision in one line |
+|-----|-------|----------------------|
+| [0049](./0049-native-payload-loader-detection.md) | Native-payload-loader detection | Raw-byte magic classification (`content-mismatch`) + a dataflow-correlated `native-payload-loader` rule critically flag a disguised packaged-payload materialization-and-execution chain, independent of lifecycle scripts |
+
+## Phase 35 — release-cooldown overlay (Accepted, implemented)
+
+| ADR | Title | Decision in one line |
+|-----|-------|----------------------|
+| [0050](./0050-release-cooldown-overlay.md) | Release-cooldown overlay | Policy-data `releaseCooldown` (`hours` + `exempt` globs) holds freshly-published versions via a serve-time proxy overlay (no core wall-clock, cached score untouched); per-origin publish-time source; fail-closed on missing/unparseable time; overlaid across the tarball gate, `/-/audit`, `/-/explain`, `/-/audit-tree`, `/-/manifest` |
+
+## Phase 36 — sandboxed exec (Accepted, implemented)
+
+| ADR | Title | Decision in one line |
+|-----|-------|----------------------|
+| [0051](./0051-sandboxed-exec.md) | Sandboxed `sentinel exec` | `Sandbox.runArgv` (no-shell, execFile-style) + `sentinel exec -- <cmd>` reuse the approved-capability model, scrubbed env, and violation telemetry to contain Sentinel-mediated command execution; scoped to explicit invocations only — raw `require()`/`npx` outside it stay uncontained, defense-in-depth behind the ADR-0049 registry gate |
+
 ## Conventions
 
 - One decision per record; number sequentially; never renumber.

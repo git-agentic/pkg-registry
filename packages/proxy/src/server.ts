@@ -23,8 +23,10 @@ import {
   type ReleaseContext,
   type Advisory,
   type VulnAdvisory,
+  type ScoredFinding,
 } from "@sentinel/core";
 import { AuditStore } from "./store.js";
+import { resolvePublishTime, cooldownDecision, applyCooldown, blockOverlay } from "./cooldown.js";
 import {
   cmpSemver,
   HttpError,
@@ -87,6 +89,8 @@ export interface ServerOptions {
   autoQuarantine?: boolean;
   /** Decompression-bomb extraction caps (ADR-0039). Undefined ⇒ core defaults. */
   extractLimits?: { maxUnpackedBytes?: number; maxFileCount?: number };
+  /** Injectable clock (ms) for the release-cooldown overlay. Default Date.now. */
+  now?: () => number;
 }
 
 const TARBALL_RE = /^(.+)\/-\/([^/]+\.tgz)$/;
@@ -145,6 +149,7 @@ export function createServer(opts: ServerOptions) {
   const publicBaseUrl = opts.publicBaseUrl;
   const maxTreePackages = opts.maxTreePackages ?? 5000;
   const extractLimits = opts.extractLimits;
+  const now = opts.now ?? Date.now;
   const authz = makeAuthz(opts.authPublicKey);
   // Auto-quarantine only when the operator opted in AND auth is enabled (so every
   // quarantine is attributable to a verified token). Open mode never quarantines.
@@ -245,16 +250,37 @@ export function createServer(opts: ServerOptions) {
   function applyQuarantine(report: AuditReport): AuditReport {
     const rec = violations.get(report.meta.integrity);
     if (!rec?.quarantined) return report;
-    const finding = {
+    const finding: ScoredFinding = {
       ruleId: "runtime-violation", category: "install-script" as const, severity: "critical" as const,
       message: `runtime violation: ${rec.kind} access to ${rec.target ?? rec.deniedResource ?? "a denied resource"} blocked at install time — build quarantined`,
       onChangedFile: false, evidence: [], weight: 0, waived: false,
     };
-    return { ...report, verdict: "block", findings: [finding, ...report.findings] };
+    return blockOverlay(report, finding);
   }
 
-  function gateAndSend(res: Response, pkg: string, version: string, report: AuditReport, tarball: Buffer, isPrivate: boolean): Response | void {
-    report = applyQuarantine(report);
+  /** Resolve the release-cooldown decision for a coordinate (ADR — release-cooldown overlay).
+   *  No-op ({ block: false }) when the policy has no `releaseCooldown`, so this is inert by
+   *  default. Publish-time origin mirrors the trust boundary elsewhere in this file: a claimed
+   *  name resolves from the (authoritative) private store, everything else from the public
+   *  packument's `time` map. */
+  async function cooldownFor(pkg: string, version: string): Promise<{ block: boolean; reason?: string }> {
+    if (!enterprisePolicy.releaseCooldown) return { block: false };
+    let publishTime: string | null = null;
+    if (isClaimed(pkg, enterprisePolicy)) {
+      publishTime = resolvePublishTime({ isPrivate: true, privatePublishedAt: privateStore.getVersion(pkg, version)?.publishedAt });
+    } else {
+      try {
+        const pm = await upstream.getPackument(pkg);
+        publishTime = resolvePublishTime({ isPrivate: false, publicTime: pm.time?.[version] });
+      } catch {
+        publishTime = null;
+      }
+    }
+    return cooldownDecision({ policy: enterprisePolicy, name: pkg, publishTime, now: now() });
+  }
+
+  function gateAndSend(res: Response, pkg: string, version: string, report: AuditReport, tarball: Buffer, isPrivate: boolean, cooldown: { block: boolean; reason?: string }): Response | void {
+    report = applyCooldown(applyQuarantine(report), cooldown);
     const rec = reconcile(report);
     res.setHeader("x-sentinel-score", String(report.score));
     res.setHeader("x-sentinel-verdict", report.verdict);
@@ -304,7 +330,8 @@ export function createServer(opts: ServerOptions) {
     const version = req.params[1] ?? "";
     try {
       const { report } = await auditVersion(pkg, version);
-      res.json(report);
+      const cd = await cooldownFor(pkg, version);
+      res.json(applyCooldown(report, cd));
     } catch (err) {
       sendError(res, err);
     }
@@ -327,7 +354,9 @@ export function createServer(opts: ServerOptions) {
     for (const v of priors) {
       try {
         const { report } = await auditVersion(pkg, v);
-        if (report.verdict === "allow") return { version: v, score: report.score };
+        const cd = await cooldownFor(pkg, v);
+        const overlaid = applyCooldown(report, cd);
+        if (overlaid.verdict === "allow") return { version: v, score: overlaid.score };
       } catch { /* skip an unauditeable prior version */ }
     }
     return null;
@@ -340,9 +369,11 @@ export function createServer(opts: ServerOptions) {
     const version = req.params[1] ?? "";
     try {
       const { report } = await auditVersion(pkg, version);
-      const remediation = remediate(report);
+      const cd = await cooldownFor(pkg, version);
+      const overlaid = applyCooldown(report, cd);
+      const remediation = remediate(overlaid);
       const lastKnownGood = await findLastKnownGood(pkg, version);
-      res.json({ report, remediation, lastKnownGood });
+      res.json({ report: overlaid, remediation, lastKnownGood });
     } catch (err) {
       sendError(res, err);
     }
@@ -458,7 +489,9 @@ export function createServer(opts: ServerOptions) {
       async (co) => {
         try {
           const { report: audited, tarball } = await auditVersion(co.name, co.version);
-          const report = applyQuarantine(audited);
+          const quarantined = applyQuarantine(audited);
+          const cd = await cooldownFor(co.name, co.version);
+          const report = applyCooldown(quarantined, cd);
           const claimed = typeof co.integrity === "string" ? co.integrity : null;
           // Verify same-algorithm: recompute the SERVED bytes' digest in the lockfile's
           // own algorithm so a legacy sha1/sha256 pin is genuinely checked (not skipped —
@@ -502,11 +535,13 @@ export function createServer(opts: ServerOptions) {
     const version = req.params[1] ?? "";
     try {
       const { report } = await auditVersion(pkg, version);
-      const rec = reconcile(report);
+      const cd = await cooldownFor(pkg, version);
+      const overlaid = applyCooldown(report, cd);
+      const rec = reconcile(overlaid);
       res.json({
-        meta: report.meta, score: report.score, verdict: report.verdict,
-        findings: report.findings, capabilities: report.capabilities,
-        capabilityDelta: report.capabilityDelta,
+        meta: overlaid.meta, score: overlaid.score, verdict: overlaid.verdict,
+        findings: overlaid.findings, capabilities: overlaid.capabilities,
+        capabilityDelta: overlaid.capabilityDelta,
         approvalRequired: rec.approvalRequired, approvalState: rec.state,
         inheritedFrom: rec.inheritedFrom,
       });
@@ -682,7 +717,8 @@ export function createServer(opts: ServerOptions) {
       try {
         const priv = isClaimed(pkg, enterprisePolicy);
         const { report, tarball } = await auditVersion(pkg, version);
-        return gateAndSend(res, pkg, version, report, tarball, priv);
+        const cd = await cooldownFor(pkg, version);
+        return gateAndSend(res, pkg, version, report, tarball, priv, cd);
       } catch (err) {
         return sendError(res, err);
       }

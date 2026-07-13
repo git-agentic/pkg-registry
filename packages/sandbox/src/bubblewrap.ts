@@ -61,6 +61,17 @@ function safeRealpath(p: string): string {
 /** Enforces a generated bwrap profile via `bwrap`. Fails closed on non-Linux, missing bwrap, or refused namespace. */
 export class BubblewrapSandbox implements Sandbox {
   run(cmd: string, opts: { cwd: string; approved: Capability[]; homeDir: string; env?: NodeJS.ProcessEnv; projectRoot?: string }): SandboxResult {
+    return this.execWithTail(["/bin/sh", "-c", cmd], opts);
+  }
+
+  runArgv(file: string, args: string[], opts: { cwd: string; approved: Capability[]; homeDir: string; env?: NodeJS.ProcessEnv; projectRoot?: string }): SandboxResult {
+    return this.execWithTail([file, ...args], opts);
+  }
+
+  /** Shared by `run` and `runArgv`: build the bwrap mount/deny args, prepend the Landlock
+   * helper when active, and invoke `bwrap` with the given argv tail (either `/bin/sh -c cmd`
+   * or `file ...args`) as the final command run inside the sandbox. */
+  private execWithTail(tail: string[], opts: { cwd: string; approved: Capability[]; homeDir: string; env?: NodeJS.ProcessEnv; projectRoot?: string }): SandboxResult {
     if (process.platform !== "linux") {
       throw new Error(`bubblewrap enforcement unavailable on ${process.platform} (Linux required)`);
     }
@@ -82,9 +93,9 @@ export class BubblewrapSandbox implements Sandbox {
           landlockHelperPath(),
           ...landlockAllowPaths(opts.approved, { homeDir: opts.homeDir, nodePrefix, projectRoot })
             .flatMap((p) => ["--allow", p]),
-          "--", "/bin/sh", "-c", cmd,
+          "--", ...tail,
         ]
-      : ["/bin/sh", "-c", cmd];
+      : tail;
 
     const args = [
       ...generateBwrapArgs(opts.approved, {

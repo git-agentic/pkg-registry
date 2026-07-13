@@ -177,3 +177,16 @@ describe("treeGate policy field", () => {
     assert.throws(() => parsePolicy(bad), /treeGate/);
   });
 });
+
+describe("releaseCooldown policy field", () => {
+  const base = { schema: 1, version: "t", scoring: { severityWeight: { info:0, low:4, medium:12, high:25, critical:55 }, diffMultiplier: 1.6, thresholds: { allow: 80, warn: 50 }, hardBlockSeverity: "critical" } };
+  const parse = (extra: object) => parsePolicy(Buffer.from(JSON.stringify({ ...base, ...extra })));
+  test("valid cooldown parses", () => {
+    const p = parse({ releaseCooldown: { hours: 72, exempt: ["@acme/*"] } });
+    assert.deepEqual(p.releaseCooldown, { hours: 72, exempt: ["@acme/*"] });
+  });
+  test("hours must be positive", () => assert.throws(() => parse({ releaseCooldown: { hours: 0 } }), /releaseCooldown/));
+  test("hours must be finite and bounded", () => assert.throws(() => parse({ releaseCooldown: { hours: 100000 } }), /releaseCooldown/));
+  test("exempt must be string[]", () => assert.throws(() => parse({ releaseCooldown: { hours: 24, exempt: [1] } }), /releaseCooldown/));
+  test("absent cooldown ⇒ undefined (no behavior change)", () => assert.equal(parse({}).releaseCooldown, undefined));
+});

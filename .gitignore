@@ -10,3 +10,7 @@ fixtures/registry.json
 sentinel-sbom.json
 .superpowers/
 policy/keys/
+
+# macOS
+.DS_Store
+**/.DS_Store

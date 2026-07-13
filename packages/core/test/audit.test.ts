@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { before, describe, test } from "node:test";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
+import { gzipSync } from "node:zlib";
 import { create } from "tar";
 import { auditTarball, runAudit, integrityOf, NPM_SIGNING_KEYS, type AuditReport, type NpmSigningKey, type RegistrySignature } from "../src/index.js";
 import { ensureFixtures, tarball } from "./helpers.js";
@@ -29,12 +30,38 @@ async function makeTgz(files: Record<string, string>): Promise<Buffer> {
 
 const metaFor = (name: string) => ({ name, version: "1.0.0", author: null, maintainers: [] as string[], license: null, hasInstallScripts: false });
 
-const baseMeta = {
+const baseMetaFields = {
   author: null,
   maintainers: [] as string[],
   license: null,
   hasInstallScripts: false,
 };
+
+// Build an in-memory .tgz from a { path -> Buffer } map (binary-safe).
+// Copied from extract.test.ts (Task 2) so audit.test.ts can build binary-content fixtures.
+async function makeTgzBinary(files: Record<string, Buffer>): Promise<Buffer> {
+  const { mkdtempSync, writeFileSync, mkdirSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join, dirname } = await import("node:path");
+  const dir = mkdtempSync(join(tmpdir(), "sentinel-audit-bin-"));
+  try {
+    for (const [p, c] of Object.entries(files)) {
+      const full = join(dir, p);
+      mkdirSync(dirname(full), { recursive: true });
+      writeFileSync(full, c);
+    }
+    const chunks: Buffer[] = [];
+    const stream = create({ cwd: dir, gzip: true }, Object.keys(files));
+    for await (const ch of stream) chunks.push(Buffer.from(ch));
+    return Buffer.concat(chunks);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function baseMeta(name: string, version: string) {
+  return { name, version, author: null, maintainers: [], license: null, hasInstallScripts: false, integrity: null };
+}
 
 // A synthetic registry-signing key used to make these fixtures resolve to
 // signature: "verified" through the real runAudit verification path. These
@@ -56,7 +83,7 @@ async function audit(name: string, version: string, baselineVersion?: string): P
   const tgz = tarball(name, version);
   const integrity = integrityOf(tgz);
   return auditTarball({
-    meta: { name, version, ...baseMeta, integrity },
+    meta: { name, version, ...baseMetaFields, integrity },
     tarball: tgz,
     baselineTarball: baselineVersion ? tarball(name, baselineVersion) : undefined,
     signatures: [signFor(name, version, integrity)],
@@ -244,5 +271,31 @@ describe("task 3: unscanned-content finding", () => {
     const report = await auditTarball({ meta: { ...metaFor("d"), hasInstallScripts: true }, tarball: tgz });
     const f = report.findings.find((x) => x.ruleId === "unscanned-content");
     assert.ok(f && f.severity === "medium", "native + packument-only install-script signal should still escalate to medium");
+  });
+});
+
+describe("content-mismatch extraction finding", () => {
+  test("executable magic behind .js → medium content-mismatch finding", async () => {
+    const elf = Buffer.concat([Buffer.from([0x7f,0x45,0x4c,0x46]), Buffer.alloc(1000)]);
+    const tgz = await makeTgzBinary({
+      "package/package.json": Buffer.from(JSON.stringify({ name: "x", version: "1.0.0", main: "index.js" })),
+      "package/index.js": Buffer.from("module.exports=1\n"),
+      "package/dist/payload.js": elf,
+    });
+    const audit = await runAudit({ meta: baseMeta("x", "1.0.0"), tarball: tgz });
+    const f = audit.findings.find((x) => x.ruleId === "content-mismatch");
+    assert.ok(f, "expected a content-mismatch finding");
+    assert.equal(f!.severity, "medium");
+  });
+
+  test("gzip-only behind .js → low content-mismatch finding", async () => {
+    const gz = gzipSync(Buffer.from("y".repeat(80)));
+    const tgz = await makeTgzBinary({
+      "package/package.json": Buffer.from(JSON.stringify({ name: "y", version: "1.0.0" })),
+      "package/asset.js": gz,
+    });
+    const audit = await runAudit({ meta: baseMeta("y", "1.0.0"), tarball: tgz });
+    const f = audit.findings.find((x) => x.ruleId === "content-mismatch");
+    assert.equal(f!.severity, "low");
   });
 });

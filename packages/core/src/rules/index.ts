@@ -2,6 +2,7 @@ import type { Rule } from "../types.js";
 import { installScriptsRule } from "./install-scripts.js";
 import { knownAdvisoryRule } from "./known-advisory.js";
 import { knownVulnerabilityRule } from "./known-vulnerability.js";
+import { nativePayloadLoaderRule } from "./native-payload-loader.js";
 import { networkEgressRule } from "./network-egress.js";
 import { obfuscationRule } from "./obfuscation.js";
 import { provenanceRule } from "./provenance.js";
@@ -20,6 +21,7 @@ export const RULES: Rule[] = [
   releaseAnomalyRule,
   knownAdvisoryRule,
   knownVulnerabilityRule,
+  nativePayloadLoaderRule,
 ];
 
 export {
@@ -32,4 +34,5 @@ export {
   releaseAnomalyRule,
   knownAdvisoryRule,
   knownVulnerabilityRule,
+  nativePayloadLoaderRule,
 };

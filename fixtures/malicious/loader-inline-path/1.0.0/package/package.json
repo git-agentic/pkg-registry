@@ -1,0 +1,7 @@
+{
+  "name": "loader-inline-path",
+  "version": "1.0.0",
+  "description": "SYNTHETIC FIXTURE — inline-repeat write/launch path loader. Inert. Never executed.",
+  "main": "index.js",
+  "license": "MIT"
+}

@@ -6,7 +6,7 @@
       "expect": { "verdict": "allow" },
       "versions": {
         "1.0.0": { "signature": "valid", "provenance": false },
-        "1.0.1": { "signature": "valid", "provenance": false }
+        "1.0.1": { "signature": "valid", "provenance": false, "time": "2026-07-10T00:00:00.000Z" }
       }
     },
     "net-fetch-lite": {
@@ -103,6 +103,16 @@
       "versions": {
         "1.0.0": { "signature": "valid", "provenance": false, "time": "2025-03-01T00:00:00.000Z", "maintainers": ["newdev"] }
       }
-    }
+    },
+    "payload-loader-preinstall": { "class": "malicious", "expect": { "1.0.0": "block" }, "versions": { "1.0.0": { "signature": "valid", "provenance": false } } },
+    "payload-loader-entry": { "class": "malicious", "expect": { "1.0.0": "block" }, "versions": { "1.0.0": { "signature": "valid", "provenance": false } } },
+    "payload-loader-bin": { "class": "malicious", "expect": { "1.0.0": "block" }, "versions": { "1.0.0": { "signature": "valid", "provenance": false } } },
+    "loader-lookalike": { "class": "benign", "expect": { "verdict": "allow" }, "versions": { "1.0.0": { "signature": "valid", "provenance": false } } },
+    "custom-reader": { "class": "benign", "expect": { "verdict": "allow" }, "versions": { "1.0.0": { "signature": "valid", "provenance": false } } },
+    "external-file-tool": { "class": "benign", "expect": { "verdict": "allow" }, "versions": { "1.0.0": { "signature": "valid", "provenance": false } } },
+    "scoped-names": { "class": "benign", "expect": { "verdict": "allow" }, "versions": { "1.0.0": { "signature": "valid", "provenance": false } } },
+    "loader-inline-path": { "class": "malicious", "expect": { "1.0.0": "block" }, "versions": { "1.0.0": { "signature": "valid", "provenance": false } } },
+    "loader-base64": { "class": "malicious", "expect": { "1.0.0": "block" }, "versions": { "1.0.0": { "signature": "valid", "provenance": false } } },
+    "loader-native-require": { "class": "malicious", "expect": { "1.0.0": "block" }, "versions": { "1.0.0": { "signature": "valid", "provenance": false } } }
   }
 }

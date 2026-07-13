@@ -3,6 +3,7 @@ import { describe, test } from "node:test";
 import { gzipSync } from "node:zlib";
 import { create } from "tar";
 import { extractTarball } from "../src/extract.js";
+import { classifyContent } from "../src/detect/magic.js";
 
 // Build an in-memory .tgz from a { path -> contents } map, npm-style (package/ prefix).
 async function makeTgz(files: Record<string, string>): Promise<Buffer> {
@@ -10,6 +11,27 @@ async function makeTgz(files: Record<string, string>): Promise<Buffer> {
   const { tmpdir } = await import("node:os");
   const { join, dirname } = await import("node:path");
   const dir = mkdtempSync(join(tmpdir(), "sentinel-extract-"));
+  try {
+    for (const [p, c] of Object.entries(files)) {
+      const full = join(dir, p);
+      mkdirSync(dirname(full), { recursive: true });
+      writeFileSync(full, c);
+    }
+    const chunks: Buffer[] = [];
+    const stream = create({ cwd: dir, gzip: true }, Object.keys(files));
+    for await (const ch of stream) chunks.push(Buffer.from(ch));
+    return Buffer.concat(chunks);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// Build an in-memory .tgz from a { path -> Buffer } map (binary-safe).
+async function makeTgzBinary(files: Record<string, Buffer>): Promise<Buffer> {
+  const { mkdtempSync, writeFileSync, mkdirSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join, dirname } = await import("node:path");
+  const dir = mkdtempSync(join(tmpdir(), "sentinel-extract-bin-"));
   try {
     for (const [p, c] of Object.entries(files)) {
       const full = join(dir, p);
@@ -241,5 +263,51 @@ describe("extractTarball caps", () => {
     assert.ok(!r.unscanned.some((u) => u.kind === "native"), "the native entry landed after the cap and is absent from the detail list");
     assert.equal(r.unscannedTotals.native, 1, "totals.native must still count the native entry dropped from the capped list");
     assert.equal(r.unscannedTotals.count, 101, "totals.count must include the entry dropped from the capped list");
+  });
+});
+
+describe("content/extension mismatch", () => {
+  test("gzip bytes behind .js → mismatch (compressed), not retained as text", async () => {
+    const gz = gzipSync(Buffer.from("x".repeat(50)));
+    // makeTgzBinary lets a file hold raw bytes; see helper below.
+    const tgz = await makeTgzBinary({ "package/dist/intro.js": gz, "package/index.js": Buffer.from("module.exports=1\n") });
+    const r = await extractTarball(tgz);
+    assert.equal(r.files.find((f) => f.path === "package/dist/intro.js"), undefined, "disguised binary must NOT be retained as text");
+    assert.equal(r.contentMismatchTotals.count, 1);
+    assert.equal(r.contentMismatchTotals.byKind.gzip, 1);
+    const entry = r.contentMismatch.find((e) => e.path === "package/dist/intro.js");
+    assert.ok(entry && entry.detectedKind === "gzip" && entry.declaredExt === ".js");
+  });
+
+  test("ELF bytes behind .js under 2 MB → mismatch (executable), not retained as text", async () => {
+    const elf = Buffer.concat([Buffer.from([0x7f,0x45,0x4c,0x46]), Buffer.alloc(1000, 0x00)]);
+    const tgz = await makeTgzBinary({ "package/dist/setup.js": elf });
+    const r = await extractTarball(tgz);
+    assert.equal(r.files.length, 0);
+    assert.equal(r.contentMismatchTotals.byKind.elf, 1);
+  });
+
+  test("correctly-declared .node native binary → no mismatch (unchanged accounting)", async () => {
+    const elf = Buffer.concat([Buffer.from([0x7f,0x45,0x4c,0x46]), Buffer.alloc(1000, 0x00)]);
+    const tgz = await makeTgzBinary({ "package/build/Release/addon.node": elf });
+    const r = await extractTarball(tgz);
+    assert.equal(r.contentMismatchTotals.count, 0, "correctly-declared native binary is not a mismatch");
+    assert.equal(r.unscannedTotals.native, 1);
+  });
+
+  test("ordinary JS is still retained and scanned", async () => {
+    const tgz = await makeTgzBinary({ "package/index.js": Buffer.from("const x = require('fs')\n") });
+    const r = await extractTarball(tgz);
+    assert.ok(r.files.find((f) => f.path === "package/index.js"));
+    assert.equal(r.contentMismatchTotals.count, 0);
+  });
+
+  test("mismatch is detected for an OVERSIZED (>2 MB) disguised file too", async () => {
+    // 3 MB: gzip magic prefix + filler, behind .js — sniff runs on the bounded prefix regardless of size.
+    const big = Buffer.concat([Buffer.from([0x1f, 0x8b, 0x08]), Buffer.alloc(3 * 1024 * 1024, 0x00)]);
+    const tgz = await makeTgzBinary({ "package/dist/huge.js": big });
+    const r = await extractTarball(tgz);
+    assert.equal(r.files.find((f) => f.path === "package/dist/huge.js"), undefined, "oversized binary not retained as text");
+    assert.equal(r.contentMismatchTotals.byKind.gzip, 1, "oversized disguised file still recorded as a mismatch");
   });
 });

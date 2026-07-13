@@ -1,0 +1,7 @@
+{
+  "name": "custom-reader",
+  "version": "1.0.0",
+  "description": "SYNTHETIC FIXTURE — false-positive control: user object with fs-like method names, not a Node module binding.",
+  "main": "index.js",
+  "license": "MIT"
+}

@@ -1,0 +1,7 @@
+{
+  "name": "payload-loader-bin",
+  "version": "1.0.0",
+  "description": "SYNTHETIC FIXTURE — Gen-2 bin-entry loader. Inert. Never executed.",
+  "bin": { "ldr": "bin/cli.js" },
+  "license": "MIT"
+}

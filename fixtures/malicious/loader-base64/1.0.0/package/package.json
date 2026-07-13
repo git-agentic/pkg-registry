@@ -1,0 +1,7 @@
+{
+  "name": "loader-base64",
+  "version": "1.0.0",
+  "description": "SYNTHETIC FIXTURE — base64 Buffer.from decode loader. Inert. Never executed.",
+  "main": "index.js",
+  "license": "MIT"
+}

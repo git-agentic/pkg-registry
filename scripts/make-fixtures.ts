@@ -62,6 +62,35 @@ interface RegistryDoc {
   >;
 }
 
+// Minimal magic table for fixture synthesis (kept local; deterministic).
+const FAMILY_MAGIC: Record<string, number[]> = {
+  gzip: [0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00],
+  elf: [0x7f, 0x45, 0x4c, 0x46],
+  macho: [0xfe, 0xed, 0xfa, 0xcf],
+};
+
+/**
+ * Materialize any `*.asset` descriptors under a version's `package/` tree into
+ * their real bytes (magic header + inert zero filler) before packing. Keeps the
+ * committed fixture to a one-word family descriptor; the generated binary is
+ * gitignored (fixtures/.gitignore).
+ */
+function materializeAssets(pkgDir: string): void {
+  const walk = (d: string) => {
+    for (const name of readdirSync(d)) {
+      const full = join(d, name);
+      if (statSync(full).isDirectory()) { walk(full); continue; }
+      if (!name.endsWith(".asset")) continue;
+      const family = readFileSync(full, "utf8").trim();
+      const magic = FAMILY_MAGIC[family];
+      if (!magic) throw new Error(`unknown fixture asset family: ${family} in ${full}`);
+      const target = full.replace(/\.asset$/, ""); // dist/intro.js.asset -> dist/intro.js
+      writeFileSync(target, Buffer.concat([Buffer.from(magic), Buffer.alloc(2048, 0x00)]));
+    }
+  };
+  walk(pkgDir);
+}
+
 function authorString(a: unknown): string | null {
   if (!a) return null;
   if (typeof a === "string") return a;
@@ -112,6 +141,7 @@ function main(): void {
 
       const tarballName = `${name}-${version}.tgz`;
       const tarballPath = join(OUT_DIR, tarballName);
+      materializeAssets(join(versionDir, "package"));
       // Deterministic build: `portable` normalizes tar headers (uid/gid/uname/gname),
       // `gzip.portable` zeroes the gzip mtime/OS bytes, and a fixed `mtime` overrides
       // per-file timestamps. Without these, every rebuild yields different bytes →

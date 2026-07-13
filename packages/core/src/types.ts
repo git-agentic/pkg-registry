@@ -159,6 +159,23 @@ export interface PackageFile {
   changed: boolean;
 }
 
+/** A file whose raw-byte signature disagrees with its text-looking extension (ADR-0049). */
+export interface ContentMismatchEntry {
+  path: string;
+  /** The declared extension including the dot, lowercased, e.g. ".js". */
+  declaredExt: string;
+  /** The sniffed DetectedKind (e.g. "gzip", "elf", "pe", "mz", "cafebabe"). */
+  detectedKind: string;
+  size: number;
+}
+
+/** Policy-independent facts observed during extraction, passed to rules (ADR-0049). */
+export interface ExtractionObservations {
+  contentMismatch: ContentMismatchEntry[];
+  contentMismatchTotals: { count: number; byKind: Record<string, number> };
+  unscannedTotals: { count: number; native: number; bytes: number };
+}
+
 /** Immutable cross-version context for release-anomaly scoring (Phase 16). All optional;
  *  absent ⇒ the release-anomaly rule is inert. Derived from the packument, never the clock. */
 export interface ReleaseContext {
@@ -185,6 +202,8 @@ export interface AuditInput {
   advisories?: Advisory[];
   /** Operator-supplied known vulnerabilities, merged with the bundled corpus (Phase 22). */
   vulnerabilities?: VulnAdvisory[];
+  /** Facts from the extractor (content mismatch, unscanned totals) — ADR-0049. Absent ⇒ rules see none. */
+  extractionObservations?: ExtractionObservations;
 }
 
 /** A pure, deterministic detection rule. */
