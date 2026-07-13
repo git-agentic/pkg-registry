@@ -191,6 +191,9 @@ export function createServer(opts: ServerOptions) {
 
   const registrySource = (name: string) => source(name, enterprisePolicy, claimCorpus);
   const isNativeName = (name: string) => isNativeSource(registrySource(name));
+  // Audit bytes are policy/corpus-independent cache data. A report represents
+  // the decision context at response time, so cached audits deliberately carry
+  // the currently active corpus identity rather than their original cache time.
   const withClaimCorpus = (report: AuditReport): AuditReport => ({
     ...report,
     policy: { ...report.policy, claimCorpus: { version: claimCorpus.version, hash: claimCorpusHash } },

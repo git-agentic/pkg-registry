@@ -126,8 +126,9 @@ export function corroboratesClaimDomain(upstreamPackument: unknown, claimDomain:
 }
 
 /**
- * Steward-side state machine. Network access is confined to verifyChallenge's
- * injected DNS lookup; release output is static signed data for offline fleets.
+ * Steward-side state machine. Network access is confined to the injected
+ * upstream-evidence and DNS lookups; release output is static signed data for
+ * offline fleets.
  */
 export class ClaimSteward {
   private readonly now: () => number;
@@ -239,6 +240,7 @@ export class ClaimSteward {
   renew(namespace: string, challengeId: string): void {
     const claim = this.claim(namespace);
     const application = this.application(challengeId);
+    if (application.namespace !== namespace) throw new Error("renewal challenge namespace mismatch");
     if (!application.verifiedAt || application.domain !== claim.domain) throw new Error("renewal requires a passed challenge by the same domain");
     claim.challenge = this.proof(application);
     claim.renewalDueAt = renewalDue(application.verifiedAt);

@@ -128,6 +128,20 @@ describe("claim steward pipeline", () => {
     assert.equal(restarted.release("after-restart").corpus.claims[0]?.renewalDueAt, "2027-07-01T00:00:00.000Z");
   });
 
+  test("renewal requires a passed challenge for the same namespace as well as the same domain", async () => {
+    const steward = new ClaimSteward({ now: () => Date.parse("2026-07-01T00:00:00.000Z"), lookupUpstream: absent });
+    const first = await steward.issueChallenge({ namespace: "first-name", domain: "shared.example", claimantPublicKey: claimant.publicKey });
+    await steward.verifyChallenge(first.id, async () => [[first.txtValue]]);
+    steward.approve(first.id);
+    const second = await steward.issueChallenge({ namespace: "second-name", domain: "shared.example", claimantPublicKey: claimant.publicKey });
+    await steward.verifyChallenge(second.id, async () => [[second.txtValue]]);
+    steward.approve(second.id);
+
+    assert.throws(() => steward.renew("second-name", first.id), /namespace mismatch/);
+    steward.renew("second-name", second.id);
+    assert.equal(steward.release("renewed").corpus.claims.find((claim) => claim.namespace === "second-name")?.status, "active");
+  });
+
   test("only steward-owned upstream evidence selects Tier 3, including adjudicated long-dead placeholders", async () => {
     const longDead = new ClaimSteward({ lookupUpstream: async () => ({ kind: "long-dead-placeholder", packument: { name: "retired", deprecated: "retired" } }) });
     const app = await longDead.issueChallenge({ namespace: "retired", domain: "retired.example", claimantPublicKey: claimant.publicKey });

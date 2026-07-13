@@ -16,7 +16,8 @@ export interface ParsedPublish {
 
 /**
  * Parse an npm publish payload (PUT /:pkg). Each publish carries exactly one new
- * version, identified by the single `_attachments` key `<name>-<version>.tgz`.
+ * version, identified by one `<name>-<version>.tgz` attachment, plus at most one
+ * optional matching `<name>-<version>.sigstore` provenance attachment.
  */
 export function parsePublishBody(name: string, body: unknown): ParsedPublish {
   const b = body as {
