@@ -34,11 +34,35 @@ describe("PrivatePackageStore", () => {
     const a = new PrivatePackageStore(dir);
     put(a, "@acme/y", "2.0.0", "bytes-y");
     a.setDistTag("@acme/y", "stable", "2.0.0");
+    const update = a.packument("@acme/y")!;
+    update.versions["2.0.0"]!.deprecated = "use @acme/z";
+    a.updateDeprecations("@acme/y", update._rev, update as unknown as Record<string, unknown>);
+    assert.equal(a.deleteDistTag("@acme/y", "latest"), true);
     const b = new PrivatePackageStore(dir);  // fresh instance, same dir
     assert.equal(b.has("@acme/y"), true);
     assert.equal(b.getTarball("@acme/y", "2.0.0")?.toString(), "bytes-y");
     assert.equal(b.getVersion("@acme/y", "2.0.0")?.integrity, "sha512-2.0.0");
     assert.equal(b.packument("@acme/y")?.["dist-tags"].stable, "2.0.0");
+    assert.equal(b.packument("@acme/y")?.["dist-tags"].latest, undefined, "explicit tag deletion survives reload");
+    assert.equal(b.packument("@acme/y")?.versions["2.0.0"]?.deprecated, "use @acme/z");
+  });
+
+  test("later publications beat older tag overrides and deprecation removal advances the revision", () => {
+    const s = new PrivatePackageStore();
+    put(s, "@acme/order", "1.0.0");
+    assert.equal(s.deleteDistTag("@acme/order", "latest"), true);
+    put(s, "@acme/order", "2.0.0");
+    assert.equal(s.packument("@acme/order")?.["dist-tags"].latest, "2.0.0");
+
+    const deprecated = s.packument("@acme/order")!;
+    deprecated.versions["1.0.0"]!.deprecated = "old";
+    s.updateDeprecations("@acme/order", deprecated._rev, deprecated as unknown as Record<string, unknown>);
+    const beforeRemoval = s.packument("@acme/order")!;
+    delete beforeRemoval.versions["1.0.0"]!.deprecated;
+    const beforeRevision = beforeRemoval._rev;
+    const afterRevision = s.updateDeprecations("@acme/order", beforeRevision, beforeRemoval as unknown as Record<string, unknown>);
+    assert.notEqual(afterRevision, beforeRevision);
+    assert.equal(s.packument("@acme/order")?.versions["1.0.0"]?.deprecated, undefined);
   });
 
   test("preserves claim attribution as an immutable publication-time snapshot", () => {

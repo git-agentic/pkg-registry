@@ -104,6 +104,10 @@ exists, emits a revert manifest, retains all data, and restores native
 resolution when re-enabled. `sentinel-registry export` emits retained
 tarballs and packuments; `sentinel-registry import` performs an audit-gated,
 integrity-preserving public-history import.
+`npm run compat:clients` exercises real npm, pnpm, Yarn Berry, and bun binaries;
+it runs each client's exposed mutation commands (Berry has no unpublish; bun
+has neither dist-tag nor unpublish), while the wire suite covers the complete
+shared route contract.
 
 **Claim steward (`@sentinel/steward`)** — authenticated operational service for
 exact-apex DNS TXT challenges, steward-fetched three-tier grandfathering,
@@ -254,8 +258,8 @@ a tool that guards against exactly that.
 
 ```bash
 npm run build            # tsc --build (project references) + the Linux-only native helper step
-npm test                 # hermetic engine + e2e proxy suite. 978 tests on this darwin host
-                         # as of 2026-07-13 (976 pass, 2 skipped) — but NEVER plan arithmetic
+npm test                 # hermetic engine + e2e proxy suite. 984 tests on this darwin host
+                         # as of 2026-07-13 (982 pass, 2 skipped) — but NEVER plan arithmetic
                          # on a written count; run npm test and use what it prints.
 npm run demo             # offline malware-detection walkthrough
 node packages/proxy/dist/index.js   # run the proxy (see README for env vars)

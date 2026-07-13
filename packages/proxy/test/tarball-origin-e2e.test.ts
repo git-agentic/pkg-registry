@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createServer as createHttpServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { after, before, beforeEach, describe, test } from "node:test";
+import { gzipSync } from "node:zlib";
 import { NpmUpstream, HttpError } from "../src/upstream.js";
 
 const TARBALL_BYTES = "fake-tarball-bytes";
@@ -12,6 +13,7 @@ function listen(server: Server): Promise<string> {
 
 describe("NpmUpstream tarball origin pinning (hermetic local registry)", () => {
   let canaryHit = false;
+  let compatibilityRequest: Buffer | undefined;
   let canary: Server, registry: Server;
   let canaryBase = "", registryBase = "";
 
@@ -25,6 +27,19 @@ describe("NpmUpstream tarball origin pinning (hermetic local registry)", () => {
 
     // Registry: packuments name a tarball URL per package.
     registry = createHttpServer((req, res) => {
+      if (req.url === "/-/npm/v1/security/advisories/bulk") {
+        const chunks: Buffer[] = [];
+        req.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+        req.on("end", () => {
+          compatibilityRequest = Buffer.concat(chunks);
+          const encoded = gzipSync(Buffer.from("encoded-response"));
+          res.statusCode = 207;
+          res.setHeader("content-encoding", "gzip");
+          res.setHeader("content-length", encoded.length);
+          res.end(encoded);
+        });
+        return;
+      }
       const pkg = (req.url ?? "").split("/")[1] ?? "";
       if (pkg === "good-pkg" || pkg === "evil-pkg" || pkg === "redirect-pkg") {
         const tarball = pkg === "good-pkg"
@@ -65,6 +80,18 @@ describe("NpmUpstream tarball origin pinning (hermetic local registry)", () => {
     const up = new NpmUpstream(registryBase);
     const buf = await up.getTarball("good-pkg", "1.0.0");
     assert.equal(buf.toString(), TARBALL_BYTES);
+  });
+
+  test("compatibility proxy preserves encoded request and response bytes", async () => {
+    const up = new NpmUpstream(registryBase);
+    const requestBody = gzipSync(Buffer.from("encoded-request"));
+    const response = await up.proxyRegistryRequest("/-/npm/v1/security/advisories/bulk", {
+      method: "POST", headers: { "content-encoding": "gzip", "content-length": String(requestBody.length), "accept-encoding": "gzip" }, body: requestBody,
+    });
+    assert.deepEqual(compatibilityRequest, requestBody);
+    assert.equal(response.status, 207);
+    assert.equal(response.headers["content-encoding"], "gzip");
+    assert.deepEqual(response.body, gzipSync(Buffer.from("encoded-response")));
   });
 
   test("cross-origin tarball URL is refused with 502 — and never requested", async () => {

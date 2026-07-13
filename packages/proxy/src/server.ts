@@ -20,6 +20,7 @@ import {
   verdictAtOrAbove,
   NPM_SIGNING_KEYS,
   remediate,
+  verifyToken,
   parsePolicy,
   type Audit,
   type AuditReport,
@@ -138,6 +139,18 @@ export interface ServerOptions {
 const TARBALL_RE = /^(.+)\/-\/([^/]+\.tgz)$/;
 const CORGI = "application/vnd.npm.install-v1+json";
 
+/** Verify every supported token in an SRI string without normalizing the
+ * upstream value. Legacy registries may legitimately publish sha1/sha256 or
+ * multi-algorithm SRI, and lockfiles depend on receiving it verbatim. */
+function integrityMatches(tarball: Buffer, declared: string): boolean {
+  const tokens = declared.trim().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return false;
+  return tokens.every((token) => {
+    const match = /^(sha1|sha256|sha512)-/.exec(token);
+    return match !== null && integrityOfAlgo(tarball, match[1] as "sha1" | "sha256" | "sha512") === token;
+  });
+}
+
 /** Derive the release-vs-history context for a version from its packument (Phase 16). Pure. */
 export function buildReleaseContext(pm: UpstreamPackument, version: string): ReleaseContext {
   const prev = previousVersion(Object.keys(pm.versions), version);
@@ -210,6 +223,52 @@ export function createServer(opts: ServerOptions) {
   const autoQuarantineEnabled = Boolean(opts.autoQuarantine) && authz.enabled;
   const app = express();
   app.disable("x-powered-by");
+
+  // npm-compatible endpoints are a byte-preserving tunnel to the configured
+  // upstream. Register them before JSON parsing so whitespace, encodings, and
+  // non-JSON request bodies are not rewritten by Sentinel.
+  const hopByHopHeaders = new Set([
+    "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer",
+    "transfer-encoding", "upgrade", "host",
+  ]);
+  async function proxyCompatibility(req: Request, res: Response): Promise<void> {
+    if (!upstream.proxyRegistryRequest) {
+      res.status(501).json({ error: "upstream does not support compatibility-route proxying" });
+      return;
+    }
+    const headers: Record<string, string> = {};
+    for (const [name, value] of Object.entries(req.headers)) {
+      if (hopByHopHeaders.has(name) || value === undefined) continue;
+      headers[name] = Array.isArray(value) ? value.join(", ") : value;
+    }
+    try {
+      let body: Buffer | undefined;
+      if (req.method !== "GET" && req.method !== "HEAD") {
+        const chunks: Buffer[] = [];
+        let size = 0;
+        for await (const chunk of req) {
+          const bytes = Buffer.from(chunk as Uint8Array);
+          size += bytes.length;
+          if (size > 128 * 1024 * 1024) throw new HttpError(413, "compatibility request exceeds 128 MiB");
+          chunks.push(bytes);
+        }
+        if (size) body = Buffer.concat(chunks);
+      }
+      const response = await upstream.proxyRegistryRequest(req.originalUrl, {
+        method: req.method, headers, ...(body ? { body } : {}),
+      });
+      for (const [name, value] of Object.entries(response.headers)) {
+        if (!hopByHopHeaders.has(name.toLowerCase())) res.setHeader(name, value);
+      }
+      res.status(response.status).send(response.body);
+    } catch (error) { sendError(res, error); }
+  }
+  app.get("/-/v1/search", proxyCompatibility);
+  app.post("/-/npm/v1/security/advisories/bulk", proxyCompatibility);
+  app.get("/-/npm/v1/keys", proxyCompatibility);
+  app.get(/^\/-\/npm\/v1\/attestations\/.+$/, proxyCompatibility);
+  app.post("/-/v1/login", proxyCompatibility);
+
   const jsonSmall = express.json({ limit: "1mb" });
   app.use((req, res, next) => (req.method === "PUT" ? next() : jsonSmall(req, res, next)));
   const jsonPublish = express.json({ limit: opts.maxPublishBytes ?? 64 * 1024 * 1024, strict: false });
@@ -468,29 +527,6 @@ export function createServer(opts: ServerOptions) {
   app.get("/-/health", (_req, res) => {
     res.json({ ok: true, upstream: upstream.name, policy });
   });
-
-  async function proxyCompatibility(req: Request, res: Response): Promise<void> {
-    if (!upstream.proxyRegistryRequest) {
-      res.status(501).json({ error: "upstream does not support compatibility-route proxying" });
-      return;
-    }
-    const headers = Object.fromEntries(["accept", "content-type", "user-agent"].flatMap((name) => {
-      const value = req.get(name);
-      return value ? [[name, value]] : [];
-    }));
-    const body = req.method === "GET" || req.method === "HEAD" ? undefined : Buffer.from(JSON.stringify(req.body ?? {}));
-    try {
-      const response = await upstream.proxyRegistryRequest(req.originalUrl, { method: req.method, headers, ...(body ? { body } : {}) });
-      for (const [name, value] of Object.entries(response.headers)) res.setHeader(name, value);
-      res.status(response.status).send(response.body);
-    } catch (error) { sendError(res, error); }
-  }
-
-  app.get("/-/v1/search", proxyCompatibility);
-  app.post("/-/npm/v1/security/advisories/bulk", proxyCompatibility);
-  app.get("/-/npm/v1/keys", proxyCompatibility);
-  app.get(/^\/-\/npm\/v1\/attestations\/.+$/, proxyCompatibility);
-  app.post("/-/v1/login", proxyCompatibility);
 
   // Pre-install verdict for the CLI / dashboard. No bytes served.
   app.get(/^\/-\/audit\/(.+)\/([^/]+)$/, async (req, res) => {
@@ -850,7 +886,11 @@ export function createServer(opts: ServerOptions) {
   app.get("/-/whoami", (req, res) => {
     const match = /^Bearer\s+(\S+)$/i.exec(req.headers.authorization ?? "");
     const token = match?.[1];
-    const username = token ? (legacyIdentities.get(token) ?? (publishTokens.includes(token) ? "publisher" : undefined)) : undefined;
+    let username = token ? (legacyIdentities.get(token) ?? (publishTokens.includes(token) ? "publisher" : undefined)) : undefined;
+    if (!username && token && opts.authPublicKey) {
+      const verified = verifyToken(token, opts.authPublicKey);
+      if (verified.ok) username = verified.sub;
+    }
     if (!username) return res.status(401).json({ error: "authentication required" });
     return res.json({ username });
   });
@@ -913,8 +953,8 @@ export function createServer(opts: ServerOptions) {
         const tarball = await upstream.getTarball(name, version);
         const declared = (manifest.dist as { integrity?: string } | undefined)?.integrity;
         const integrity = integrityOf(tarball);
-        if (declared && declared !== integrity) {
-          return res.status(400).json({ error: "upstream history integrity mismatch", package: `${name}@${version}`, declared, computed: integrity });
+        if (declared && !integrityMatches(tarball, declared)) {
+          return res.status(400).json({ error: "upstream history integrity mismatch", package: `${name}@${version}`, declared });
         }
         const normalized = pm.versions[version]!;
         const attestations = await upstream.getAttestations(name, version);
@@ -931,9 +971,17 @@ export function createServer(opts: ServerOptions) {
         }
         staged.push({ version, manifest, tarball, audit, ...(pm.time?.[version] ? { publishedAt: pm.time[version] } : {}) });
       }
+      const importedTags = Object.entries(pm.doc["dist-tags"] ?? {});
+      if (importedTags.some(([, version]) => !staged.some((item) => item.version === version))) {
+        return res.status(400).json({ error: "upstream dist-tag targets a missing history version", package: name });
+      }
       for (const item of staged) {
+        const primaryTag = importedTags.find(([, version]) => version === item.version)?.[0];
         privateStore.publish({ name, version: item.version, integrity: integrityOf(item.tarball), manifest: item.manifest,
-          tarball: item.tarball, audit: item.audit, actor: "imported", publishedAt: item.publishedAt });
+          tarball: item.tarball, audit: item.audit, actor: "imported", publishedAt: item.publishedAt, distTag: primaryTag ?? null });
+      }
+      for (const [tag, version] of importedTags) {
+        if (privateStore.packument(name)?.["dist-tags"][tag] !== version) privateStore.setDistTag(name, tag, version);
       }
       return res.status(201).json({ imported: true, package: name, versions: staged.map((item) => item.version) });
     } catch (error) { return sendError(res, error); }
@@ -948,10 +996,13 @@ export function createServer(opts: ServerOptions) {
       downloadCounting: "Successful native tarball responses count once; with SQLite, repeats for the same package version and npm-session are deduplicated; requests without npm-session count individually.",
     });
   });
-  function retractNative(name: string, version: string, reason: RetractionReason, res: Response): Response | void {
-    if (!isNativeName(name)) return res.status(403).json({ error: "only authoritative native packages can be retracted", package: `${name}@${version}` });
+  type RetractionPreparation = { ok: true; name: string; version: string; reason: RetractionReason; attemptedAt: string;
+    advisoryId: string; window: Record<string, unknown> } | { ok: false; status: number; body: Record<string, unknown> };
+
+  function prepareRetraction(name: string, version: string, reason: RetractionReason): RetractionPreparation {
+    if (!isNativeName(name)) return { ok: false, status: 403, body: { error: "only authoritative native packages can be retracted", package: `${name}@${version}` } };
     const stored = privateStore.getVersion(name, version);
-    if (!stored) return res.status(404).json({ error: "native package version not found", package: `${name}@${version}` });
+    if (!stored) return { ok: false, status: 404, body: { error: "native package version not found", package: `${name}@${version}` } };
     const localRetraction = privateStore.getRetraction(name, version);
     const corpusRetraction = retractionCorpus.advisories.find((advisory) =>
       advisory.name === name && advisory.version === version && advisory.integrity === stored.integrity);
@@ -960,14 +1011,14 @@ export function createServer(opts: ServerOptions) {
       reason: corpusRetraction.reason,
       advisoryId: corpusRetraction.id,
     } : undefined);
-    if (existing) return res.status(409).json({ error: "package version already retracted", package: `${name}@${version}`, tombstone: existing });
+    if (existing) return { ok: false, status: 409, body: { error: "package version already retracted", package: `${name}@${version}`, tombstone: existing } };
 
     const nowMs = now();
     const attemptedAt = new Date(nowMs).toISOString();
     const publishedAtMs = Date.parse(stored.publishedAt);
     const ageHours = (nowMs - publishedAtMs) / 3_600_000;
     if (!Number.isFinite(ageHours) || ageHours < 0) {
-      return res.status(403).json({ error: "authoritative publish time is invalid; retraction fails closed", code: "retraction-publish-time-invalid" });
+      return { ok: false, status: 403, body: { error: "authoritative publish time is invalid; retraction fails closed", code: "retraction-publish-time-invalid" } };
     }
     const limits = retractionWindowOf(enterprisePolicy);
     const historyDownloads = history?.downloadCount(name, version) ?? 0;
@@ -989,15 +1040,24 @@ export function createServer(opts: ServerOptions) {
         ...(ageExceeded ? [{ code: "retraction-age-limit-exceeded", actual: ageHours, limit: limits.maxAgeHours }] : []),
         ...(downloadsExceeded ? [{ code: "retraction-download-limit-exceeded", actual: cumulativeDownloads, limit: limits.maxDownloads }] : []),
       ];
-      return res.status(403).json({ error: "retraction window closed", code: "retraction-window-closed", package: `${name}@${version}`, window, exceeded });
+      return { ok: false, status: 403, body: {
+        error: `retraction window closed (retraction-window-closed; maxAgeHours=${limits.maxAgeHours}; maxDownloads=${limits.maxDownloads})`,
+        code: "retraction-window-closed", package: `${name}@${version}`, window, exceeded,
+      } };
     }
 
     const advisoryId = "SENTINEL-RETRACT-" + createHash("sha256")
       .update(`${name}\u0000${version}\u0000${stored.integrity}\u0000${attemptedAt}\u0000${reason}`)
       .digest("hex").slice(0, 24);
+    return { ok: true, name, version, reason, attemptedAt, advisoryId, window };
+  }
+
+  function retractNative(name: string, version: string, reason: RetractionReason, res: Response): Response | void {
+    const prepared = prepareRetraction(name, version, reason);
+    if (!prepared.ok) return res.status(prepared.status).json(prepared.body);
     try {
-      const tombstone = privateStore.retract({ name, version, reason, retractedAt: attemptedAt, advisoryId });
-      return res.status(201).json({ retracted: true, package: `${name}@${version}`, tombstone, window });
+      const tombstone = privateStore.retract({ name, version, reason, retractedAt: prepared.attemptedAt, advisoryId: prepared.advisoryId });
+      return res.status(201).json({ retracted: true, package: `${name}@${version}`, tombstone, window: prepared.window });
     } catch (error) {
       if (error instanceof PublicationConflictError) return res.status(409).json({ error: error.message });
       return sendError(res, error);
@@ -1043,9 +1103,21 @@ export function createServer(opts: ServerOptions) {
     try { name = normalizePackageName(decodeURIComponent(req.params[0] ?? "")); }
     catch (error) { return res.status(400).json({ error: (error as Error).message }); }
     if (req.params[1] !== privateStore.revision(name)) return res.status(409).json({ error: "packument revision conflict" });
-    const active = privateStore.packument(name) ? Object.keys(privateStore.packument(name)!.versions) : [];
-    if (active.length !== 1) return res.status(400).json({ error: "whole-package unpublish requires exactly one active version; retract versions individually" });
-    return retractNative(name, active[0]!, "withdrawn", res);
+    const packument = privateStore.packument(name);
+    const active = packument ? Object.keys(packument.versions) : [];
+    if (!active.length) return res.status(404).json({ error: "native package has no active versions", package: name });
+    const prepared = active.map((version) => prepareRetraction(name, version, "withdrawn"));
+    const rejected = prepared.find((item) => !item.ok);
+    if (rejected && !rejected.ok) return res.status(rejected.status).json(rejected.body);
+    try {
+      const accepted = prepared.filter((item): item is Extract<RetractionPreparation, { ok: true }> => item.ok);
+      const tombstones = privateStore.retractMany(accepted.map((item) => ({ name, version: item.version, reason: item.reason,
+        retractedAt: item.attemptedAt, advisoryId: item.advisoryId })));
+      return res.status(201).json({ retracted: true, package: name, versions: accepted.map((item, index) => ({ version: item.version, tombstone: tombstones[index] })) });
+    } catch (error) {
+      if (error instanceof PublicationConflictError) return res.status(409).json({ error: error.message });
+      return sendError(res, error);
+    }
   });
 
   // ---- publish (PUT /:pkg) — authoritative private registry write path ----

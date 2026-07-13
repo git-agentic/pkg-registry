@@ -2,6 +2,8 @@ import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 import type { RegistrySignature } from "@sentinel/core";
 import { assertAllowedTarballUrl } from "./net-config.js";
 import { readBodyCapped } from "./limits.js";
@@ -176,18 +178,33 @@ export class NpmUpstream implements Upstream {
   async proxyRegistryRequest(pathAndQuery: string, init: { method: string; headers: Record<string, string>; body?: Buffer }) {
     const target = new URL(pathAndQuery, `${this.registry}/`);
     if (target.origin !== this.registryOrigin) throw new HttpError(502, "refusing compatibility proxy outside registry origin");
-    const res = await this.fetchPinned(target.href, `compatibility route ${target.pathname}`, {
-      method: init.method,
-      headers: init.headers,
-      ...(init.body ? { body: init.body } : {}),
+    return new Promise<{ status: number; headers: Record<string, string>; body: Buffer }>((resolve, reject) => {
+      const request = (target.protocol === "https:" ? httpsRequest : httpRequest)(target, {
+        method: init.method, headers: init.headers,
+      }, (response) => {
+        const chunks: Buffer[] = [];
+        let size = 0;
+        response.on("data", (chunk: Buffer) => {
+          size += chunk.length;
+          if (size > this.maxPackumentBytes) {
+            response.destroy(new Error(`compatibility route ${target.pathname} exceeds ${this.maxPackumentBytes} bytes`));
+            return;
+          }
+          chunks.push(Buffer.from(chunk));
+        });
+        response.on("error", (error) => reject(new HttpError(502, `upstream compatibility route: ${error.message}`)));
+        response.on("end", () => {
+          const headers: Record<string, string> = {};
+          for (const [name, value] of Object.entries(response.headers)) {
+            if (value !== undefined) headers[name] = Array.isArray(value) ? value.join(", ") : value;
+          }
+          resolve({ status: response.statusCode ?? 502, headers, body: Buffer.concat(chunks) });
+        });
+      });
+      request.on("error", (error) => reject(new HttpError(502, `upstream compatibility route: ${error.message}`)));
+      if (init.body) request.write(init.body);
+      request.end();
     });
-    const body = await readBodyCapped(res, this.maxPackumentBytes, `compatibility route ${target.pathname}`);
-    const headers: Record<string, string> = {};
-    for (const name of ["content-type", "content-encoding", "etag", "last-modified", "cache-control", "retry-after", "location"]) {
-      const value = res.headers.get(name);
-      if (value !== null) headers[name] = value;
-    }
-    return { status: res.status, headers, body };
   }
 }
 

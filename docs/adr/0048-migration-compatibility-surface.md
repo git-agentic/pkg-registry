@@ -55,10 +55,12 @@ transparency (ADR-0005) for the mirrored kind or integrity-keyed caching
      the window state past 72 h ∧ 1,000), tombstoning on success. There is no
      raw delete distinct from retraction. `npm deprecate` (metadata-only
      packument overwrite) remains freely available.
-   - *Test: a compat matrix per client (npm/pnpm/Berry/bun) × operation
-     (install, publish, dist-tag, unpublish-in-window, unpublish-past-window)
-     against a native namespace; byte-identical passthrough for proxied
-     routes.*
+   - *Test: real npm/pnpm/Berry/bun binaries perform install and publish, and
+     every mutation their CLI actually exposes (npm/pnpm/Berry dist-tag;
+     npm/pnpm unpublish in-window and past-window). Berry exposes no
+     unpublish command and bun exposes neither dist-tag nor unpublish, so
+     those non-existent CLI cells are N/A; byte-identical request/response
+     wire tests cover every shared proxied route.*
 2. **The escape hatch: pure-proxy mode is one fail-closed switch, and
    reverting is loud, lossless, and lock-in-free.** Registry mode off ⇒ the
    claim corpus is ignored by resolution and the publish/retraction/claim

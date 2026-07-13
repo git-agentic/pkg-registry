@@ -237,6 +237,10 @@ Native packages expose full npm packuments (including `time` and `_rev`),
 abbreviated/corgi negotiation, dist-tags, legacy login/whoami, metadata-only
 deprecation, and npm/pnpm's revision-based unpublish flow. Unpublish maps to the
 same time/download-window retraction above; it never raw-deletes bytes.
+The compatibility harness drives real npm, pnpm, Yarn Berry, and bun binaries.
+Mutation coverage follows the commands each client exposes (Berry has no
+unpublish command; bun has neither dist-tag nor unpublish), with shared routes
+covered independently by byte-preserving wire tests.
 
 To import public history after a claim, run against the configured proxy:
 

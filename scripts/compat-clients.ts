@@ -41,6 +41,7 @@ const clients: { name: string; bin: string; args: string[]; publish: string[]; p
     publish: ["publish", "--registry", base, "--no-git-checks"], mutations: [["dist-tag", "add", "@compat/pnpm@1.0.0", "stable", "--registry", base], ["unpublish", "@compat/pnpm@1.0.0", "--force", "--registry", base]] },
   { name: "yarn-berry", bin: "npx", args: ["--yes", "@yarnpkg/cli-dist@4.9.2", "add", "leftpad-lite@1.0.1"],
     publish: ["--yes", "@yarnpkg/cli-dist@4.9.2", "npm", "publish"],
+    mutations: [["--yes", "@yarnpkg/cli-dist@4.9.2", "npm", "tag", "add", "@compat/yarn-berry@1.0.0", "stable"]],
     preparePublish: ["--yes", "@yarnpkg/cli-dist@4.9.2", "install", "--no-immutable", "--mode=skip-build"],
     config: (dir) => writeFileSync(join(dir, ".yarnrc.yml"), `npmRegistryServer: "${base}"\nnpmAuthToken: "publish-token"\nnpmAlwaysAuth: true\nunsafeHttpWhitelist:\n  - 127.0.0.1\nenableScripts: false\nenableGlobalCache: false\nglobalFolder: .yarn/global\ncacheFolder: .yarn/cache\n`) },
   { name: "bun", bin: "bun", args: ["add", "leftpad-lite@1.0.1", "--registry", base, "--ignore-scripts"], publish: ["publish", "--registry", base] },
@@ -73,7 +74,28 @@ try {
   }
   for (const { client, dir, env } of pendingMutations) {
     for (const mutation of client.mutations ?? []) await run(client.bin, mutation, { cwd: dir, timeout: 60_000, env });
-    console.log(`compat dist-tag/unpublish: ${client.name} ✓`);
+    console.log(`compat client-exposed mutations: ${client.name} ✓`);
+  }
+  for (const client of clients.filter((candidate) => candidate.name === "npm" || candidate.name === "pnpm")) {
+    const packageName = `@compat/expired-${client.name}`;
+    store.publish({ name: packageName, version: "1.0.0", integrity,
+      manifest: { name: packageName, version: "1.0.0", dist: { integrity } }, tarball, audit, actor: "compat",
+      publishedAt: new Date(Date.now() - 73 * 3_600_000).toISOString() });
+    const dir = await mkdtemp(join(tmpdir(), `sentinel-expired-${client.name}-`));
+    writeFileSync(join(dir, ".npmrc"), `registry=${base}/\n${tokenLine}\n`);
+    const args = ["unpublish", `${packageName}@1.0.0`, "--force", "--registry", base];
+    const ageHitsBefore = store.retractionWindowHits().age;
+    let rejected = false;
+    try { await run(client.bin, args, { cwd: dir, timeout: 60_000, env: { ...process.env, CI: "1" } }); }
+    catch (error) {
+      rejected = true;
+      const output = `${(error as { stdout?: string }).stdout ?? ""}\n${(error as { stderr?: string }).stderr ?? ""}`;
+      const expected = client.name === "npm" ? /retraction window closed|retraction-window-closed/i : /forbidden|permission to unpublish/i;
+      if (!expected.test(output)) throw error;
+    }
+    if (!rejected) throw new Error(`${client.name} unexpectedly unpublished a package past the retraction window`);
+    if (store.retractionWindowHits().age <= ageHitsBefore) throw new Error(`${client.name} rejection did not exercise the age-window state`);
+    console.log(`compat past-window rejection: ${client.name} ✓`);
   }
 } finally {
   server.close();

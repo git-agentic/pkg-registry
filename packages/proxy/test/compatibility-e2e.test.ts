@@ -5,7 +5,8 @@ import { fileURLToPath } from "node:url";
 import { after, describe, test } from "node:test";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
-import { DEFAULT_POLICY, generateKeypair, integrityOf, runAudit, type ClaimCorpus, type EnterprisePolicy } from "@sentinel/core";
+import { gzipSync } from "node:zlib";
+import { DEFAULT_POLICY, generateKeypair, integrityOf, integrityOfAlgo, runAudit, signToken, type ClaimCorpus, type EnterprisePolicy } from "@sentinel/core";
 import { createServer } from "../src/server.js";
 import { AuditStore } from "../src/store.js";
 import { ApprovalStore } from "../src/approvals.js";
@@ -21,13 +22,13 @@ const policy: EnterprisePolicy = { ...DEFAULT_POLICY, privateNamespaces: ["@acme
 const servers: Server[] = [];
 after(() => servers.forEach((server) => server.close()));
 
-async function seed(store: PrivatePackageStore, name = "@acme/widget", version = "1.0.0") {
+async function seed(store: PrivatePackageStore, name = "@acme/widget", version = "1.0.0", publishedAt?: string) {
   const tarball = readFileSync(join(FIXTURES, ".tarballs", "leftpad-lite-1.0.1.tgz"));
   const integrity = integrityOf(tarball);
   const audit = await runAudit({ meta: { name, version, author: null, maintainers: [], license: null,
     hasInstallScripts: false, integrity }, tarball });
   store.publish({ name, version, integrity, manifest: { name, version, dependencies: { x: "1" }, dist: { integrity } },
-    tarball, audit, actor: "test" });
+    tarball, audit, actor: "test", ...(publishedAt ? { publishedAt } : {}) });
 }
 
 async function boot(store = new PrivatePackageStore(undefined, () => NOW), overrides: Partial<Parameters<typeof createServer>[0]> = {}) {
@@ -79,6 +80,13 @@ describe("Phase 33 npm compatibility surface", () => {
     assert.equal((await (await fetch(`${base}/@acme%2fwidget?write=true`)).json()).versions["1.0.0"].deprecated, "use v2");
   });
 
+  test("whoami echoes the subject of a signed role token", async () => {
+    const keys = generateKeypair();
+    const { base } = await boot(undefined, { authPublicKey: keys.publicKey });
+    const token = signToken({ role: "publisher", sub: "release-bot", ttlSeconds: 60 }, keys.privateKey);
+    assert.deepEqual(await (await fetch(`${base}/-/whoami`, { headers: { authorization: `Bearer ${token}` } })).json(), { username: "release-bot" });
+  });
+
   test("npm's -rev dance maps single-version unpublish onto retraction", async () => {
     const store = new PrivatePackageStore(undefined, () => NOW);
     await seed(store);
@@ -104,17 +112,64 @@ describe("Phase 33 npm compatibility surface", () => {
     assert.equal(body.window.maxAgeHours, 72);
   });
 
-  test("designated proxy routes preserve upstream response bytes", async () => {
+  test("whole-package unpublish retracts all versions atomically", async () => {
+    const store = new PrivatePackageStore(undefined, () => NOW);
+    await seed(store, "@acme/widget", "1.0.0");
+    await seed(store, "@acme/widget", "2.0.0");
+    const { base } = await boot(store);
+    const revision = (await (await fetch(`${base}/@acme%2fwidget?write=true`)).json())._rev;
+    const response = await fetch(`${base}/@acme%2fwidget/-rev/${revision}`, { method: "DELETE", headers: { authorization: "Bearer publish-token" } });
+    assert.equal(response.status, 201, await response.clone().text());
+    assert.deepEqual(Object.keys((await (await fetch(`${base}/@acme%2fwidget?write=true`)).json()).versions), []);
+  });
+
+  test("whole-package unpublish does not partially retract when one version is outside the window", async () => {
+    const store = new PrivatePackageStore(undefined, () => NOW);
+    await seed(store, "@acme/widget", "1.0.0", new Date(NOW - 73 * 3_600_000).toISOString());
+    await seed(store, "@acme/widget", "2.0.0", new Date(NOW - 2 * 3_600_000).toISOString());
+    const { base } = await boot(store);
+    const revision = (await (await fetch(`${base}/@acme%2fwidget?write=true`)).json())._rev;
+    const response = await fetch(`${base}/@acme%2fwidget/-rev/${revision}`, { method: "DELETE", headers: { authorization: "Bearer publish-token" } });
+    assert.equal(response.status, 403);
+    assert.deepEqual(Object.keys(store.packument("@acme/widget")!.versions).sort(), ["1.0.0", "2.0.0"]);
+  });
+
+  test("all designated proxy routes preserve request and response bytes and end-to-end headers", async () => {
     const expected = Buffer.from("{\n  \"order\": [3, 2, 1]\n}\n");
+    const seen: { path: string; method: string; headers: Record<string, string>; body?: Buffer }[] = [];
     const upstream: Upstream = {
       name: "proxy-probe",
       async getPackument() { throw new Error("unused"); }, async getTarball() { throw new Error("unused"); }, async getAttestations() { return null; },
-      async proxyRegistryRequest(path) { assert.match(path, /^\/-\/v1\/search/); return { status: 207, headers: { "content-type": "application/json" }, body: expected }; },
+      async proxyRegistryRequest(path, init) { seen.push({ path, ...init }); return { status: 207, headers: { "content-type": "application/json", etag: "probe" }, body: expected }; },
     };
     const { base } = await boot(undefined, { upstream });
-    const response = await fetch(`${base}/-/v1/search?text=x`);
-    assert.equal(response.status, 207);
-    assert.deepEqual(Buffer.from(await response.arrayBuffer()), expected);
+    const raw = Buffer.from("{ \n  \"lodash\" : [\"1.0.0\"] \n}\n");
+    const gzipped = gzipSync(raw);
+    const routes = [
+      { path: "/-/v1/search?text=x", method: "GET" },
+      { path: "/-/npm/v1/security/advisories/bulk", method: "POST", body: gzipped, encoding: "gzip" },
+      { path: "/-/npm/v1/keys", method: "GET" },
+      { path: "/-/npm/v1/attestations/%40acme%2Fwidget@1.0.0", method: "GET" },
+      { path: "/-/v1/login", method: "POST", body: raw },
+    ];
+    for (const route of routes) {
+      const response = await fetch(`${base}${route.path}`, { method: route.method, headers: {
+        authorization: "Bearer upstream-token", "if-none-match": "old-etag", "content-type": "application/json", "x-probe": "preserve",
+        ...(route.encoding ? { "content-encoding": route.encoding } : {}),
+      }, ...(route.body ? { body: route.body } : {}) });
+      assert.equal(response.status, 207);
+      assert.equal(response.headers.get("etag"), "probe");
+      assert.deepEqual(Buffer.from(await response.arrayBuffer()), expected);
+    }
+    assert.deepEqual(seen.map((call) => call.path), routes.map((route) => route.path));
+    for (const [index, call] of seen.entries()) {
+      assert.equal(call.headers.authorization, "Bearer upstream-token");
+      assert.equal(call.headers["if-none-match"], "old-etag");
+      assert.equal(call.headers["x-probe"], "preserve");
+      assert.equal(call.headers["content-encoding"], routes[index]!.encoding);
+      assert.equal(call.headers.host, undefined);
+      assert.deepEqual(call.body, routes[index]!.body);
+    }
   });
 
   test("audit-gated history import preserves pre-claim integrity", async () => {
@@ -124,16 +179,59 @@ describe("Phase 33 npm compatibility surface", () => {
       challenge: { method: "dns-txt", id: "c", verifiedAt: "2026-07-12T00:00:00.000Z" }, renewalDueAt: "2027-07-12T00:00:00.000Z",
     }] };
     const fixture = new LocalFixtureUpstream(FIXTURES);
-    const before = await fixture.getPackument("leftpad-lite");
-    const expectedIntegrity = before.doc.versions["1.0.1"]!.dist.integrity;
+    const bytes = await fixture.getTarball("leftpad-lite", "1.0.1");
+    const expectedIntegrity = integrityOfAlgo(bytes, "sha1");
+    const legacyUpstream: Upstream = {
+      name: "legacy-integrity",
+      async getPackument(name) {
+        const packument = structuredClone(await fixture.getPackument(name));
+        packument.doc.versions["1.0.1"]!.dist.integrity = expectedIntegrity;
+        packument.doc["dist-tags"] = { latest: "1.0.0", legacy: "1.0.1" };
+        return packument;
+      },
+      getTarball: (name, version) => fixture.getTarball(name, version),
+      getAttestations: (name, version) => fixture.getAttestations(name, version),
+    };
     const { base } = await boot(new PrivatePackageStore(undefined, () => NOW), {
-      enterprisePolicy: { ...DEFAULT_POLICY, privateNamespaces: [] }, claimCorpus,
+      enterprisePolicy: { ...DEFAULT_POLICY, privateNamespaces: [] }, claimCorpus, upstream: legacyUpstream,
     });
     assert.equal((await fetch(`${base}/leftpad-lite`)).status, 404);
     const imported = await fetch(`${base}/-/registry/import`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "leftpad-lite" }) });
     assert.equal(imported.status, 201, await imported.text());
     const after = await (await fetch(`${base}/leftpad-lite`)).json();
     assert.equal(after.versions["1.0.1"].dist.integrity, expectedIntegrity);
+    assert.deepEqual(after["dist-tags"], { latest: "1.0.0", legacy: "1.0.1" });
     assert.equal((await fetch(after.versions["1.0.1"].dist.tarball)).status, 200);
+  });
+
+  test("mode on/off/on restarts preserve native packument bytes on the same origin", async () => {
+    const native = new PrivatePackageStore(undefined, () => NOW);
+    await seed(native, "leftpad-lite", "9.0.0");
+    const claimantPublicKey = generateKeypair().publicKey;
+    const claimCorpus: ClaimCorpus = { schema: 1, version: "roundtrip", issuedAt: "2026-07-13T00:00:00.000Z", claims: [{
+      namespace: "leftpad-lite", domain: "example.test", claimantPublicKey, status: "active",
+      challenge: { method: "dns-txt", id: "c", verifiedAt: "2026-07-12T00:00:00.000Z" }, renewalDueAt: "2027-07-12T00:00:00.000Z",
+    }] };
+    const makeApp = (registryMode: "on" | "off") => createServer({ upstream: new LocalFixtureUpstream(FIXTURES),
+      store: new AuditStore(), approvals: new ApprovalStore(), privateStore: native,
+      enterprisePolicy: { ...DEFAULT_POLICY, privateNamespaces: [] }, claimCorpus, registryMode,
+      policy: "observe", now: () => NOW, violations: new ViolationStore(), approvalRequests: new ApprovalRequestStore() });
+    const listen = (mode: "on" | "off", port: number) => new Promise<Server>((resolve) => {
+      const server = makeApp(mode).listen(port, "127.0.0.1", () => resolve(server));
+    });
+    const close = (server: Server) => new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    const first = await listen("on", 0);
+    const port = (first.address() as AddressInfo).port;
+    const url = `http://127.0.0.1:${port}/leftpad-lite`;
+    const before = Buffer.from(await (await fetch(url)).arrayBuffer());
+    await close(first);
+    const off = await listen("off", port);
+    const publicBytes = Buffer.from(await (await fetch(url)).arrayBuffer());
+    await close(off);
+    assert.notDeepEqual(publicBytes, before);
+    const restored = await listen("on", port);
+    const after = Buffer.from(await (await fetch(url)).arrayBuffer());
+    await close(restored);
+    assert.deepEqual(after, before);
   });
 });

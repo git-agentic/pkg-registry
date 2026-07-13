@@ -220,9 +220,14 @@ mode is fail-closed, acknowledged, manifested, lossless, and lock-in-free.
   binaries against a Sentinel instance in CI.
 
 **Exit criteria:**
-- The compat matrix is green: each client × {install, publish, dist-tag,
-  unpublish-in-window, unpublish-past-window} against a native namespace;
-  unpublish-past-window surfaces the 403 window state through the client.
+- The compat matrix is green for every operation each real binary exposes:
+  npm/pnpm/Yarn Berry/bun install and publish; npm/pnpm/Berry dist-tag; and
+  npm/pnpm unpublish in-window plus past-window. npm prints the detailed
+  window error; pnpm deliberately reduces any registry 403 to
+  `ERR_PNPM_FORBIDDEN`, so the harness also asserts that its real request
+  advanced the server's age-window counter. Berry has no unpublish command and bun has neither a
+  dist-tag nor unpublish command; their shared registry routes remain covered
+  by the byte-preserving wire-contract suite rather than fictional CLI cells.
 - Every proxied route is byte-identical passthrough (diff test against the
   upstream response).
 - Flipping registry mode off with native content and no acknowledgment is a
@@ -236,13 +241,15 @@ mode is fail-closed, acknowledged, manifested, lossless, and lock-in-free.
   test) — source class must remain derivable from (policy, corpus) alone, so
   no store migration or restore can ever change routing.
 
-Evidence: `packages/proxy/test/compatibility-e2e.test.ts`,
-`registry-migration.test.ts`, `private-store.test.ts`, and the
-`sentinel-registry import|export` migration utility. Native packuments carry
-full metadata and negotiate corgi documents; npm's revision workflow delegates
-availability changes to the Phase 32 retraction decision. Registry-mode revert
-retains the store and emits derived resolution flips without persisting a
-source class.
+Evidence: `npm run compat:clients` drives the four real binaries and their
+exposed mutations, including past-window failures through npm and pnpm;
+`packages/proxy/test/compatibility-e2e.test.ts`, `registry-migration.test.ts`,
+`private-store.test.ts`, and the `sentinel-registry import|export` migration
+utility cover the complete wire and migration contracts. Native packuments
+carry full metadata and negotiate corgi documents; npm's revision workflow
+delegates availability changes to the Phase 32 retraction decision.
+Registry-mode revert retains the store, includes claimed-but-unpublished
+selectors in its derived resolution flips, and never persists a source class.
 
 ## Out of scope for this roadmap
 
