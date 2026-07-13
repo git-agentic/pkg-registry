@@ -109,15 +109,21 @@ not yet built · `Superseded` / `Deprecated` — replaced; see the linked succes
 | [0043](./0043-linux-exec-carveout-advisory-floor.md) | Linux exec carve-out, advisory floor (Phase 29) | bwrap masks exfil-tool literals with `/dev/null` binds; no bwrap `noexec` primitive exists, so the floor stays advisory |
 | [0044](./0044-landlock-linux-exec-floor.md) | Landlock Linux exec floor | A from-source `landlock-exec` helper enforces the exec floor where kernel + toolchain allow; fail-open pre-checked detection, advisory fallback otherwise |
 
-## Phase 30+ — registry evolution (Proposed, design only)
+## Phase 30 — registry write path (Accepted, implemented)
 
 Design bundle for the proxy → first-class registry evolution
 ([roadmap](../product/registry-roadmap.md), wayfinder map
-[#33](https://github.com/git-agentic/pkg-registry/issues/33)). No implementation yet.
+[#33](https://github.com/git-agentic/pkg-registry/issues/33)). Phase 30 is the
+first shipped slice; later phases remain proposed.
 
 | ADR | Title | Decision in one line |
 |-----|-------|----------------------|
 | [0045](./0045-registry-write-path-resolution-merge.md) | Registry write path & deterministic resolution merge (Phase 30) | Name-level partition (policy → claim → mirror, first match); publish requires a claim; `publishGate` policy data; sync fail-closed gate, p50 ≤ 1 s / p99 ≤ 15 s |
+
+## Phases 31–33 — registry evolution (Proposed, design only)
+
+| ADR | Title | Decision in one line |
+|-----|-------|----------------------|
 | [0046](./0046-verified-namespace-claiming.md) | Verified namespace claiming (Phase 31) | Offline signed claim corpus; DNS TXT constitutive, OIDC = trusted publishing only; 12-month renewal, freeze-not-fallthrough; 30-day timelocked transfers/disputes; three-tier grandfathering |
 | [0047](./0047-time-locked-retraction.md) | Time-locked retraction (Phase 32) | Retract only while age < 72 h AND downloads < 1,000 (policy data); tombstones + spent identifiers, history retained; two-speed advisory emission; default serve-time quarantine overlay |
 | [0048](./0048-migration-compatibility-surface.md) | Migration & compatibility surface (Phase 33) | Small MUST-implement route contract (unpublish = retraction UI); fail-closed escape hatch with acknowledgment + revert manifest, retention + export; derived source class, integrity-preserving imports |

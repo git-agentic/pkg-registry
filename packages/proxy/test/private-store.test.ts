@@ -38,4 +38,24 @@ describe("PrivatePackageStore", () => {
     assert.equal(b.getTarball("@acme/y", "2.0.0")?.toString(), "bytes-y");
     assert.equal(b.getVersion("@acme/y", "2.0.0")?.integrity, "sha512-2.0.0");
   });
+
+  test("atomic publish-if-absent rejects a duplicate without replacing bytes", () => {
+    const s = new PrivatePackageStore();
+    const first = { name: "@acme/x", version: "1.0.0", integrity: "sha512-first",
+      manifest: { name: "@acme/x", version: "1.0.0", dist: {} }, tarball: Buffer.from("first"), audit, actor: "ci" };
+    s.publish(first);
+    assert.throws(() => s.publish({ ...first, integrity: "sha512-second", tarball: Buffer.from("second") }), /already published/);
+    assert.equal(s.getTarball("@acme/x", "1.0.0")?.toString(), "first");
+  });
+
+  test("persistence failure leaves no visible in-memory or on-disk publication", () => {
+    const s = new PrivatePackageStore("/dev/null/sentinel-registry-store");
+    assert.throws(() => s.publish({
+      name: "@acme/fail", version: "1.0.0", integrity: "sha512-fail",
+      manifest: { name: "@acme/fail", version: "1.0.0", dist: {} },
+      tarball: Buffer.from("bytes"), audit, actor: "ci",
+    }));
+    assert.equal(s.has("@acme/fail"), false);
+    assert.equal(s.packument("@acme/fail"), undefined);
+  });
 });

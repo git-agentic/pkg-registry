@@ -31,6 +31,7 @@ export { createServer } from "./server.js";
 export { AuditStore } from "./store.js";
 export { ApprovalStore } from "./approvals.js";
 export { PrivatePackageStore } from "./private-store.js";
+export * from "./resolution.js";
 export { ViolationStore } from "./violations.js";
 export { ApprovalRequestStore } from "./approval-requests.js";
 export * from "./upstream.js";

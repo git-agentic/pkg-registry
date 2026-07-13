@@ -95,6 +95,8 @@ export interface AuditTarballInput {
   vulnerabilities?: VulnAdvisory[];
   /** Decompression-bomb caps for extraction (ADR-0039). Undefined ⇒ core defaults. */
   extractLimits?: { maxUnpackedBytes?: number; maxFileCount?: number };
+  /** Publish-only strictness: require a parseable npm manifest matching this coordinate. */
+  requirePackageManifest?: { name: string; version: string };
 }
 
 /** Extract + diff + run rules + capabilities → policy-independent {@link Audit}. */
@@ -112,6 +114,24 @@ export async function runAudit(input: AuditTarballInput): Promise<Audit> {
   }
 
   const extracted = await extractTarball(input.tarball, baseline, limits);
+  // A cap breach is already a deterministic critical resource-abuse result; do
+  // not replace that complete report with a secondary "missing manifest" parse
+  // error caused by the intentionally-truncated extraction.
+  if (input.requirePackageManifest && !extracted.truncated) {
+    const file = extracted.files.find((f) => f.path === "package/package.json");
+    if (!file) throw new Error("malformed npm tarball: missing readable package/package.json");
+    let manifest: { name?: unknown; version?: unknown };
+    try { manifest = JSON.parse(file.content) as { name?: unknown; version?: unknown }; }
+    catch { throw new Error("malformed npm tarball: package/package.json is not valid JSON"); }
+    if (typeof manifest.name !== "string" || typeof manifest.version !== "string") {
+      throw new Error("malformed npm tarball: package/package.json requires string name and version");
+    }
+    if (manifest.name !== input.requirePackageManifest.name || manifest.version !== input.requirePackageManifest.version) {
+      throw new Error(
+        `malformed npm tarball: package/package.json identity ${manifest.name}@${manifest.version} does not match publish target ${input.requirePackageManifest.name}@${input.requirePackageManifest.version}`,
+      );
+    }
+  }
   // Always recompute from the served bytes (ADR-0022): the claimed integrity is
   // an assertion to CHECK, not a value to trust. Mismatch ⇒ critical finding.
   const actualIntegrity = integrityOf(input.tarball);

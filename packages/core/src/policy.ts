@@ -19,6 +19,8 @@ export interface EnterprisePolicy {
   privateNamespaces: string[];
   /** Verdict level at which a whole-tree audit trips the gate (ADR-0020). Default "block". */
   treeGate?: Verdict;
+  /** Verdict level at which an authoritative publish is rejected (ADR-0045). Default "block". */
+  publishGate?: Verdict;
   /** Package patterns that MUST have a verified registry signature (ADR-0021). */
   requireSignature?: string[];
   /** Package patterns that MUST carry a provenance attestation (ADR-0021). */
@@ -55,6 +57,7 @@ export const DEFAULT_POLICY: EnterprisePolicy = {
   deny: [],
   privateNamespaces: [],
   treeGate: "block",
+  publishGate: "block",
 };
 
 /** Stable hash of a policy OBJECT (used for the in-code default; external policies hash raw bytes). */
@@ -202,6 +205,10 @@ export function parsePolicy(raw: Buffer): EnterprisePolicy {
     throw new Error(`invalid policy: treeGate must be one of ${VERDICTS.join(", ")} (got "${p.treeGate}")`);
   }
 
+  if (p.publishGate !== undefined && !VERDICTS.includes(p.publishGate as string)) {
+    throw new Error(`invalid policy: publishGate must be one of ${VERDICTS.join(", ")} (got "${p.publishGate}")`);
+  }
+
   // Validate requireSignature / requireProvenance if present.
   for (const field of ["requireSignature", "requireProvenance"] as const) {
     const v = (p as Record<string, unknown>)[field];
@@ -250,6 +257,7 @@ export function parsePolicy(raw: Buffer): EnterprisePolicy {
     deny: p.deny ?? [],
     privateNamespaces: p.privateNamespaces ?? [],
     ...(p.treeGate !== undefined ? { treeGate: p.treeGate as Verdict } : {}),
+    ...(p.publishGate !== undefined ? { publishGate: p.publishGate as Verdict } : {}),
     ...((p as { requireSignature?: string[] }).requireSignature !== undefined ? { requireSignature: (p as { requireSignature: string[] }).requireSignature } : {}),
     ...((p as { requireProvenance?: string[] }).requireProvenance !== undefined ? { requireProvenance: (p as { requireProvenance: string[] }).requireProvenance } : {}),
     ...(pi !== undefined ? { provenanceIdentities: pi as ProvenanceIdentityRequirement[] } : {}),
@@ -272,4 +280,16 @@ export function loadPolicy(opts: { file: string; sig: string; publicKeyPem: stri
 /** The verdict level at which `audit-tree` gates. Policy data, default "block". */
 export function treeGateOf(policy: EnterprisePolicy): Verdict {
   return policy.treeGate ?? "block";
+}
+
+/** The verdict level at which an authoritative publish is rejected. */
+export function publishGateOf(policy: EnterprisePolicy): Verdict {
+  return policy.publishGate ?? "block";
+}
+
+const VERDICT_RANK: Record<Verdict, number> = { allow: 0, warn: 1, block: 2 };
+
+/** True when `verdict` is at least as severe as `gate`. Pure and shared by policy gates. */
+export function verdictAtOrAbove(verdict: Verdict, gate: Verdict): boolean {
+  return VERDICT_RANK[verdict] >= VERDICT_RANK[gate];
 }

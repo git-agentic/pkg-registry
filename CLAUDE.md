@@ -20,12 +20,12 @@ control plane.
 We are the Socket/Chainguard wedge: **do not** try to replace npm. Resolve and
 serve real packages transparently; only attach signal.
 
-A **Proposed, design-only registry-evolution bundle** exists (Phases 30–33:
-write path, verified namespace claiming, time-locked retraction,
-migration/compat) — see [docs/product/registry-roadmap.md](./docs/product/registry-roadmap.md),
-ADR-0045–0048, and threat-model DRAFT §6. **No implementation exists**; don't
-treat those ADRs as shipped behavior, and flip each to Accepted only when its
-phase's implementation starts.
+Registry evolution has begun: **Phase 30 is implemented** (authoritative write
+path, deterministic name-level source partition, atomic native publication,
+and synchronous `publishGate`; ADR-0045). Phases 31–33 remain design-only:
+verified claim-corpus loading/issuance, time-locked retraction, and migration/
+compatibility. See [docs/product/registry-roadmap.md](./docs/product/registry-roadmap.md),
+ADR-0045–0048, and threat-model §6. Do not treat ADR-0046–0048 as shipped.
 
 ### Current state by subsystem
 
@@ -76,6 +76,13 @@ request coalescing, and an opt-in token-bucket rate limiter round out resource
 robustness; install-gate paths are never rate-limited (ADR-0037).
 `packages/proxy/src/index.ts`'s `main()` is entrypoint-guarded — importing
 `@sentinel/proxy` must never boot a server as a side effect (ADR-0030).
+Phase 30 generalizes private publishing into an authoritative native write path:
+pure `source(name, signedPolicy, claimCorpus)` selects policy-private →
+verified-claim → public-mirror without version merging; native names never fall
+through upstream; `publishGate` is signed policy data (default `block`); PUT
+audits synchronously, returns the full report on rejection, and atomically
+publishes tarball+metadata only after the gate passes. The default claim corpus
+is empty; Phase 31's signed corpus loader and steward service are not shipped.
 
 **Sandbox (`@sentinel/sandbox`)** — `createSandbox()` selects Seatbelt (darwin)
 or bubblewrap (linux); one approved-capability model, fail-closed contract
@@ -131,9 +138,10 @@ enforcement is tested with benign probe packages.
    the npm path — it breaks resolution (dependencies, peer deps, etc.).
 6. **Rules fail open individually, the audit never crashes.** `runRules` wraps each
    rule in try/catch. A buggy rule must not take down an install.
-7. **Claimed names are authoritative, not passthrough.** Names matching the signed
-   policy's `privateNamespaces` are served only from the private store and never from
-   public npm (fail-closed). Everything else still passes through (ADR-0010/0015).
+7. **Native names are authoritative, not passthrough.** Names selected as
+   `policy-private` or `verified-claim` are served only from the native store and
+   never from public npm (fail-closed). Source selection is pure policy → claim →
+   mirror and never depends on store contents (ADR-0010/0015/0045).
 8. **Native-payload loader chains are critically flagged independent of
    lifecycle scripts, baseline, or known indicators.** Sentinel must critically
    flag a **dataflow-correlated** packaged-payload materialization-and-execution

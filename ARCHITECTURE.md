@@ -1,8 +1,7 @@
 # Sentinel — Architecture
 
 > An agent-auditable security layer for the npm ecosystem: a **transparent
-> auditing proxy** in front of `registry.npmjs.org` (the Socket/Chainguard
-> wedge), a signed per-enterprise **policy** with a private-namespace override
+> auditing mirror plus authoritative native write path**, a signed per-enterprise **policy** with a private-namespace override
 > and an install-time **permission manifest**, and a cross-platform
 > **capability sandbox** that enforces approved manifests at install time.
 
@@ -26,11 +25,12 @@ risk signaling. The concrete attack surface we target:
 | Malicious release of a trusted package | `event-stream` → `flatmap-stream` (2018), `ua-parser-js` (2021) | Diff-audit every version; flag obfuscation, egress, secret access in install scripts |
 | Install-time code execution | `pre/post-install` exfil scripts | Static detection of lifecycle scripts + dangerous patterns; approval gate + deny-by-default sandbox enforcement (§3.3, §3.6+) |
 | Secret / token exfiltration | `~/.npmrc`, `AWS_SECRET_*`, `.aws/credentials`, env enumeration | `secret-exfil` rule correlates secret reads with network egress; sandbox env scrub + credential-path denies |
-| Dependency confusion / name-squatting | Alex Birsan 2021 | Private-namespace override — private always wins (§3.5); `typosquat`/`dependencyConfusion` heuristics |
+| Dependency confusion / name-squatting | Alex Birsan 2021 | Deterministic name-level source partition — native always wins and sources never merge (§3.5); `typosquat`/`dependencyConfusion` heuristics |
 | Unsigned / tampered artifacts | — | Surface signature/provenance status pre-install; deep provenance verify bound to served bytes |
 
-**Non-goals:** we do not replace npm and we do not rewrite tarballs. We resolve
-and serve real packages transparently and attach a verdict; execution is
+**Non-goals:** we do not operate a public npm replacement and we do not rewrite
+tarballs. Unclaimed names remain a transparent npm mirror; claimed names can be
+published authoritatively to Sentinel's native store. Execution is
 sandboxed only at install time (lifecycle scripts) — runtime behavior after a
 package is installed and approved is out of scope.
 
@@ -77,8 +77,8 @@ Four packages (npm workspaces monorepo):
 
 ## 3. Proxy design
 
-The proxy implements only the parts of the [npm registry API](https://github.com/npm/registry)
-a client touches during install:
+The registry implements the npm surface needed for install plus the captured
+single-version publish PUT:
 
 - `GET /:package` → the **packument** (all versions + metadata). We pass the
   upstream document through largely untouched so resolution/semver stays npm's job,
@@ -89,6 +89,9 @@ a client touches during install:
   The proxy fetches the upstream tarball, runs the audit, records the verdict, sets
   `x-sentinel-score` / `x-sentinel-verdict` response headers, and (under a `block`
   policy) can refuse with `403` instead of streaming bytes.
+- `PUT /:package` → an authenticated npm publish. The request is bounded before
+  buffering, strictly parsed, audited synchronously, policy-gated, and committed
+  atomically only for a native source class.
 
 Transparency: because we only rewrite tarball URLs and otherwise proxy the document
 verbatim, any npm/yarn/pnpm/npx client works with zero changes beyond pointing
@@ -143,15 +146,31 @@ default. Every report carries `policy: { version, hash }` and the tarball respon
 sets `x-sentinel-policy`. (Distinct from the `SENTINEL_POLICY` env var, which selects
 the `observe`/`block` proxy mode.)
 
-### 3.5 Private namespace (Phase 2.3, ADR-0010/0015)
+### 3.5 Authoritative namespaces and registry write path (Phases 2.3/30, ADR-0010/0015/0045)
 
-Names matching the signed policy's `privateNamespaces` globs are served
-authoritatively from a `PrivatePackageStore` and NEVER from public npm (fail-closed:
-unpublished claimed name ⇒ 404). `npm publish` (`PUT /:pkg`, bearer-token auth before
-body parse, 64MB limit) is audited + policy-gated (a `block` verdict is rejected).
-Private installs use the same score + approval gate as public, with `x-sentinel-private`.
-Non-claimed names pass through transparently (the scoped exception to ADR-0005).
-`GET /-/private` reports claims + published packages.
+`source(name, signedPolicy, claimCorpus)` is pure and total over valid inputs.
+It selects exactly one class, first match wins: `policy-private` →
+`verified-claim` → `public-mirror`. Store contents never participate, and a
+packument never merges versions or dist-tags across classes. Both native classes
+serve only from `PrivatePackageStore`; an unpublished name is 404 without any
+upstream call. Public-mirror packuments preserve the upstream document and rewrite
+only `dist.tarball`.
+
+`npm publish` (`PUT /:pkg`) authenticates before a bounded 64 MiB JSON parse,
+normalizes and validates the target name, requires exactly one manifest and one
+canonical-base64 attachment, recomputes integrity, and runs the existing offline
+audit synchronously with strict package-manifest validation. A scanner error,
+malformed archive, or extraction cap never allows publication. Signed policy data
+`publishGate` (`allow | warn | block`, default `block`) rejects reports at or above
+the configured level and returns the complete `AuditReport`. Passing publications
+stage tarball and metadata together and atomically rename the complete version
+directory before memory visibility; a store-authoritative duplicate check makes
+concurrent same-version PUTs one-success/one-409. `GET /-/private` reports policy
+claims, supplied verified claims, and native inventory.
+
+Phase 30 defines the `ClaimCorpus` input and defaults it empty. It does not load or
+verify a signed global corpus; issuance, signature verification, freeze/renewal,
+and trusted-publisher semantics remain Phase 31 (ADR-0046, Proposed).
 
 ### 3.6 Sandbox enforcement (Phases 3–5, ADR-0011/0016/0017/0018)
 
@@ -1395,6 +1414,7 @@ interface EnterprisePolicy {           // signed, per-enterprise (ADR-0012/0014)
   allow: { package; rules; reason? }[];   // package: anchored glob; rules: ruleId|category
   deny:  { package; reason? }[];
   privateNamespaces: string[];            // glob patterns for claimed names (ADR-0010/0015)
+  publishGate?: 'allow'|'warn'|'block';    // reject publish at/above; default block (ADR-0045)
 }
 
 interface PackageMeta {

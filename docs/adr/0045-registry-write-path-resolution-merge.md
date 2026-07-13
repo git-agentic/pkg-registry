@@ -1,6 +1,6 @@
 # ADR-0045: Registry write path and deterministic resolution merge
 
-**Status:** Proposed (Phase 30 — design only, no implementation)
+**Status:** Accepted (Phase 30 — implemented 2026-07-13)
 **Date:** 2026-07-11
 
 First of the four registry-evolution ADRs (0045–0048). Decision record for
@@ -102,6 +102,23 @@ Six rules, each with its testable statement.
 - Publishing takes on availability duties for claimed names (already accepted
   in ADR-0015's consequences); durability/GC remain deferred to
   implementation phases, with exit criteria in the roadmap.
+
+## Implementation
+
+- `packages/proxy/src/resolution.ts` defines the data-only `ClaimCorpus` input
+  and the pure `source()` partition. Phase 30 accepts already-verified claim
+  entries programmatically; Phase 31 still owns corpus signature verification,
+  loading, issuance, renewal, freeze, and transfer semantics.
+- `EnterprisePolicy.publishGate` is validated with the other signed policy
+  fields and defaults to `block`. Publish rejects a report at or above the gate
+  and returns that complete `AuditReport`.
+- `PrivatePackageStore.publish()` stages tarball and metadata in a temporary
+  version directory, atomically renames the complete directory, then exposes it
+  in memory. Duplicate publication is store-authoritative, so concurrent PUTs
+  cannot replace a version or lose sibling versions.
+- `npm run benchmark:publish` measures the complete HTTP PUT-through-response
+  path over all fixture-corpus tarballs plus an 8 MiB synthetic package against an
+  injected 9 MiB extraction cap; CI runs it on Node 22 and 24.
 
 ## Alternatives considered
 

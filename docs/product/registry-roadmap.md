@@ -1,6 +1,6 @@
 # Sentinel registry roadmap — Phases 30–33
 
-**Status:** Proposed (design only — no implementation exists for any phase below)
+**Status:** Phase 30 shipped; Phases 31–33 proposed
 **Date:** 2026-07-11
 
 This is the phased plan for Sentinel's evolution from a transparent auditing
@@ -56,6 +56,8 @@ Two load-bearing rules recur in every phase below, stated once here in full:
 
 ## Phase 30 — Registry write path & deterministic resolution merge
 
+**Status:** Complete (2026-07-13)
+
 **ADR:** [0045](../adr/0045-registry-write-path-resolution-merge.md) ·
 **Depends on:** nothing new (generalizes ADR-0015)
 
@@ -67,13 +69,13 @@ is exactly today's behavior, and publishing works against policy-private
 namespaces (they are claims for publishability purposes) — so it has no
 dependency on the Phase 31 steward service.
 
-**Entry criteria** (all testable):
-- ADR-0045 reviewed and status-checked (Proposed → Accepted at implementation start).
-- A latency-benchmark harness exists in CI that can time `PUT` → verdict on
+**Entry criteria** (satisfied):
+- ADR-0045 reviewed and status-checked (Accepted).
+- A latency-benchmark harness exists in CI that times `PUT` → verdict on
   the fixture corpus and on a cap-adjacent synthetic package.
 - The claim-corpus input is defined as data (may be the empty corpus).
 
-**Exit criteria** (all testable):
+**Exit criteria** (satisfied and pinned by tests):
 - `source(name)` is a pure function of (signed policy, claim corpus): a
   property test evaluates the precedence order deterministically for
   generated (policy, claim-set, name) triples.
@@ -88,6 +90,11 @@ dependency on the Phase 31 steward service.
 - The `scoring is deterministic across runs` test extends to publish: same
   bytes + same policy ⇒ same publish outcome.
 - The malicious fixture is still blocked — on install *and* on publish.
+
+Evidence: `packages/proxy/test/resolution.test.ts`, `publish.test.ts`,
+`private-serve.test.ts`, `private-store.test.ts`, and
+`npm run benchmark:publish`. The Phase 30 corpus input is deliberately
+data-only and defaults empty; signed corpus loading remains Phase 31.
 
 ## Phase 31 — Verified namespace claiming
 
@@ -210,7 +217,7 @@ mode is fail-closed, acknowledged, manifested, lossless, and lock-in-free.
 
 ## Out of scope for this roadmap
 
-Operating a public registry service, cross-instance federation, and any
-implementation work (this bundle is documents only). Ruled at the map level;
+Operating a public registry service and cross-instance federation. Phases
+31–33 remain design-only. Ruled at the map level;
 revisiting them is a new effort with a new charter, not an extension of this
 one.

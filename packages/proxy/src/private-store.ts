@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Buffer } from "node:buffer";
 import type { Audit } from "@sentinel/core";
@@ -21,6 +21,8 @@ export interface PrivatePackument {
 }
 
 interface Entry { meta: StoredVersion; tarball: Buffer; }
+
+export class PublicationConflictError extends Error {}
 
 /** Authoritative store for published private packages: tarball bytes + manifest + the
  * policy-independent Audit. Optional filesystem persistence (`<dir>/<enc>/<version>/`). */
@@ -55,20 +57,33 @@ export class PrivatePackageStore {
     return this.byName.get(name)?.get(version)?.meta.audit;
   }
 
-  put(v: {
+  publish(v: {
     name: string; version: string; integrity: string;
     manifest: Record<string, unknown>; tarball: Buffer; audit: Audit; actor: string;
   }): StoredVersion {
+    if (this.getVersion(v.name, v.version) || (this.dir && existsSync(this.dirFor(v.name, v.version)))) {
+      throw new PublicationConflictError(`version already published: ${v.name}@${v.version}`);
+    }
     const meta: StoredVersion = {
       name: v.name, version: v.version, integrity: v.integrity,
       manifest: v.manifest, audit: v.audit, actor: v.actor,
       publishedAt: new Date().toISOString(),
     };
+    this.persistAtomic(meta, v.tarball);
+    // Memory visibility is the commit point for in-memory stores and follows the
+    // atomic directory rename for persistent stores. No caller can see half a version.
     let versions = this.byName.get(v.name);
     if (!versions) { versions = new Map(); this.byName.set(v.name, versions); }
-    versions.set(v.version, { meta, tarball: v.tarball });
-    this.persist(meta, v.tarball);
+    versions.set(v.version, { meta, tarball: Buffer.from(v.tarball) });
     return meta;
+  }
+
+  /** Backwards-compatible seed helper; production publish uses the same atomic primitive. */
+  put(v: {
+    name: string; version: string; integrity: string;
+    manifest: Record<string, unknown>; tarball: Buffer; audit: Audit; actor: string;
+  }): StoredVersion {
+    return this.publish(v);
   }
 
   packument(name: string): PrivatePackument | undefined {
@@ -77,7 +92,7 @@ export class PrivatePackageStore {
     const versionDocs: Record<string, Record<string, unknown>> = {};
     let latest = "0.0.0";
     for (const [v, entry] of versions) {
-      versionDocs[v] = entry.meta.manifest;
+      versionDocs[v] = structuredClone(entry.meta.manifest);
       if (cmpSemver(v, latest) > 0) latest = v;
     }
     return { name, "dist-tags": { latest }, versions: versionDocs };
@@ -89,16 +104,21 @@ export class PrivatePackageStore {
     return join(this.dir!, encodeURIComponent(name), encodeURIComponent(version));
   }
 
-  private persist(meta: StoredVersion, tarball: Buffer): void {
+  private persistAtomic(meta: StoredVersion, tarball: Buffer): void {
     if (!this.dir) return;
+    const packageDir = join(this.dir, encodeURIComponent(meta.name));
+    const finalDir = this.dirFor(meta.name, meta.version);
+    let staging: string | undefined;
     try {
-      const d = this.dirFor(meta.name, meta.version);
-      mkdirSync(d, { recursive: true });
-      writeFileSync(join(d, "package.tgz"), tarball);
+      mkdirSync(packageDir, { recursive: true });
+      staging = mkdtempSync(join(packageDir, ".publish-"));
+      writeFileSync(join(staging, "package.tgz"), tarball, { flag: "wx" });
       const { ...metaJson } = meta;
-      writeFileSync(join(d, "meta.json"), JSON.stringify(metaJson, null, 2));
-    } catch {
-      /* best-effort */
+      writeFileSync(join(staging, "meta.json"), JSON.stringify(metaJson, null, 2), { flag: "wx" });
+      renameSync(staging, finalDir);
+      staging = undefined;
+    } finally {
+      if (staging) rmSync(staging, { recursive: true, force: true });
     }
   }
 

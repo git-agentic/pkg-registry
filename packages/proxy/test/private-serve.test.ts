@@ -13,7 +13,7 @@ import { ApprovalStore } from "../src/approvals.js";
 import { PrivatePackageStore } from "../src/private-store.js";
 import { ViolationStore } from "../src/violations.js";
 import { ApprovalRequestStore } from "../src/approval-requests.js";
-import { LocalFixtureUpstream } from "../src/upstream.js";
+import { LocalFixtureUpstream, type Upstream } from "../src/upstream.js";
 import { DEFAULT_POLICY, runAudit, integrityOf, type EnterprisePolicy } from "@sentinel/core";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -23,7 +23,7 @@ function ensure() { if (!existsSync(join(FIXTURES, "registry.json")) || !existsS
 const policy = (ns: string[]): EnterprisePolicy => ({ ...DEFAULT_POLICY, privateNamespaces: ns });
 
 describe("private serve routing", () => {
-  let server: Server; let base: string; let priv: PrivatePackageStore;
+  let server: Server; let base: string; let priv: PrivatePackageStore; let fixtureUpstream: LocalFixtureUpstream;
 
   before(async () => {
     ensure();
@@ -36,8 +36,9 @@ describe("private serve routing", () => {
     priv.put({ name: "@acme/widget", version: "1.0.0", integrity: integrityOf(tgz),
       manifest: { name: "@acme/widget", version: "1.0.0", dist: {} }, tarball: tgz, audit, actor: "seed" });
 
+    fixtureUpstream = new LocalFixtureUpstream(FIXTURES);
     const app = createServer({
-      upstream: new LocalFixtureUpstream(FIXTURES),
+      upstream: fixtureUpstream,
       store: new AuditStore(), approvals: new ApprovalStore(), privateStore: priv,
       enterprisePolicy: policy(["@acme/*"]), policy: "block",
       violations: new ViolationStore(),
@@ -71,6 +72,15 @@ describe("private serve routing", () => {
   test("non-claimed name still passes through to public (fixtures)", async () => {
     const doc = await (await fetch(`${base}/leftpad-lite`)).json();
     assert.ok(doc.versions["1.0.1"], "public passthrough unchanged");
+  });
+
+  test("mirrored packument changes only dist.tarball URLs", async () => {
+    const expected = structuredClone((await fixtureUpstream.getPackument("leftpad-lite")).doc);
+    for (const [version, manifest] of Object.entries(expected.versions)) {
+      manifest.dist.tarball = `${base}/leftpad-lite/-/leftpad-lite-${version}.tgz`;
+    }
+    const actual = await (await fetch(`${base}/leftpad-lite`)).json();
+    assert.deepEqual(actual, JSON.parse(JSON.stringify(expected)));
   });
 
   test("/-/audit of a claimed published package returns its report without hitting upstream", async () => {
@@ -115,5 +125,52 @@ describe("private serve routing", () => {
     const data = await (await fetch(`${base}/-/private`)).json();
     assert.deepEqual(data.claims, ["@acme/*"]);
     assert.ok(data.packages.some((p: { name: string }) => p.name === "@acme/widget"));
+  });
+});
+
+describe("Phase 30 packument source isolation", () => {
+  test("native source never merges upstream versions or tarball URLs", async () => {
+    ensure();
+    const tgz = readFileSync(join(FIXTURES, ".tarballs", "leftpad-lite-1.0.1.tgz"));
+    const priv = new PrivatePackageStore();
+    const audit = await runAudit({ meta: { name: "leftpad-lite", version: "9.0.0", author: null, maintainers: [],
+      license: null, hasInstallScripts: false, signature: "unsigned", provenance: "absent", integrity: integrityOf(tgz) }, tarball: tgz });
+    priv.put({ name: "leftpad-lite", version: "9.0.0", integrity: integrityOf(tgz),
+      manifest: { name: "leftpad-lite", version: "9.0.0", dist: { tarball: "https://upstream.invalid/should-not-survive" } },
+      tarball: tgz, audit, actor: "seed" });
+    const app = createServer({ upstream: new LocalFixtureUpstream(FIXTURES), store: new AuditStore(), approvals: new ApprovalStore(),
+      privateStore: priv, enterprisePolicy: policy(["leftpad-lite"]), policy: "block",
+      violations: new ViolationStore(), approvalRequests: new ApprovalRequestStore() });
+    const server = await new Promise<Server>((resolve) => { const s = app.listen(0, () => resolve(s)); });
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    try {
+      const doc = await (await fetch(`${base}/leftpad-lite`)).json();
+      assert.deepEqual(Object.keys(doc.versions), ["9.0.0"]);
+      assert.deepEqual(doc["dist-tags"], { latest: "9.0.0" });
+      assert.equal(doc.versions["1.0.1"], undefined);
+      assert.equal(doc.versions["9.0.0"].dist.tarball, `${base}/leftpad-lite/-/leftpad-lite-9.0.0.tgz`);
+    } finally { server.close(); }
+  });
+
+  test("verified-claimed but unpublished name returns 404 without touching upstream", async () => {
+    ensure();
+    const inner = new LocalFixtureUpstream(FIXTURES);
+    let calls = 0;
+    const upstream: Upstream = {
+      name: "counting",
+      async getPackument(name) { calls++; return inner.getPackument(name); },
+      async getTarball(name, version) { calls++; return inner.getTarball(name, version); },
+      async getAttestations(name, version) { calls++; return inner.getAttestations(name, version); },
+    };
+    const app = createServer({ upstream, store: new AuditStore(), approvals: new ApprovalStore(),
+      privateStore: new PrivatePackageStore(), enterprisePolicy: policy([]), claimCorpus: { claims: [{ namespace: "leftpad-lite" }] },
+      policy: "block", violations: new ViolationStore(), approvalRequests: new ApprovalRequestStore() });
+    const server = await new Promise<Server>((resolve) => { const s = app.listen(0, () => resolve(s)); });
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    try {
+      assert.equal((await fetch(`${base}/leftpad-lite`)).status, 404);
+      assert.equal((await fetch(`${base}/leftpad-lite/-/leftpad-lite-1.0.1.tgz`)).status, 404);
+      assert.equal(calls, 0);
+    } finally { server.close(); }
   });
 });
