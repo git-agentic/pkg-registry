@@ -272,7 +272,19 @@ export function createServer(opts: ServerOptions) {
   const jsonSmall = express.json({ limit: "1mb" });
   app.use((req, res, next) => (req.method === "PUT" ? next() : jsonSmall(req, res, next)));
   const jsonPublish = express.json({ limit: opts.maxPublishBytes ?? 64 * 1024 * 1024, strict: false });
-  const legacyIdentities = new Map<string, string>();
+  const legacyIdentities = new Map<string, { username: string; expiresAt: number }>();
+  const legacySessionTtlMs = 60 * 60_000;
+  const maxLegacySessions = 1_024;
+
+  function purgeLegacySessions(): void {
+    const current = now();
+    for (const [token, session] of legacyIdentities) if (session.expiresAt <= current) legacyIdentities.delete(token);
+  }
+
+  function activeLegacyTokens(): string[] {
+    purgeLegacySessions();
+    return [...legacyIdentities.keys()];
+  }
 
   const resolutionCorpus = registryMode === "on" ? claimCorpus : EMPTY_CLAIM_CORPUS;
   const registrySource = (name: string) => source(name, enterprisePolicy, resolutionCorpus);
@@ -855,7 +867,7 @@ export function createServer(opts: ServerOptions) {
   });
 
   function requirePublishAuth(req: Request, res: Response, next: () => void): void {
-    if (!publishTokenValid(req.headers.authorization, [...publishTokens, ...legacyIdentities.keys()])) {
+    if (!publishTokenValid(req.headers.authorization, [...publishTokens, ...activeLegacyTokens()])) {
       res.status(401).json({ error: "authentication required to publish" });
       return;
     }
@@ -869,7 +881,7 @@ export function createServer(opts: ServerOptions) {
 
   // Lowest-common-denominator client authentication. The generated token is
   // process-local and deliberately scoped to this registry instance.
-  app.put(/^\/-\/user\/org\.couchdb\.user:([^/]+)(?:\/-rev\/[^/]+)?$/, jsonPublish, (req, res) => {
+  app.put(/^\/-\/user\/org\.couchdb\.user:([^/]+)(?:\/-rev\/[^/]+)?$/, publishRateGate, jsonPublish, (req, res) => {
     const username = decodeURIComponent(req.params[0] ?? "");
     const body = req.body as { name?: unknown; password?: unknown };
     if (!username || body?.name !== username || typeof body.password !== "string" || !body.password) {
@@ -878,15 +890,18 @@ export function createServer(opts: ServerOptions) {
     if (!publishTokenValid(`Bearer ${body.password}`, publishTokens)) {
       return res.status(401).json({ error: "invalid legacy registry credentials" });
     }
+    purgeLegacySessions();
+    while (legacyIdentities.size >= maxLegacySessions) legacyIdentities.delete(legacyIdentities.keys().next().value!);
     const token = randomBytes(32).toString("base64url");
-    legacyIdentities.set(token, username);
+    legacyIdentities.set(token, { username, expiresAt: now() + legacySessionTtlMs });
     return res.status(201).json({ ok: true, id: `org.couchdb.user:${username}`, rev: "1-login", token });
   });
 
   app.get("/-/whoami", (req, res) => {
     const match = /^Bearer\s+(\S+)$/i.exec(req.headers.authorization ?? "");
     const token = match?.[1];
-    let username = token ? (legacyIdentities.get(token) ?? (publishTokens.includes(token) ? "publisher" : undefined)) : undefined;
+    purgeLegacySessions();
+    let username = token ? (legacyIdentities.get(token)?.username ?? (publishTokens.includes(token) ? "publisher" : undefined)) : undefined;
     if (!username && token && opts.authPublicKey) {
       const verified = verifyToken(token, opts.authPublicKey);
       if (verified.ok) username = verified.sub;
@@ -904,7 +919,7 @@ export function createServer(opts: ServerOptions) {
     return pm ? res.json(pm["dist-tags"]) : res.status(404).json({ error: "native package not found", package: name });
   });
 
-  app.put(/^\/-\/package\/(.+)\/dist-tags\/([^/]+)$/, registryMutationEnabled, publishAuth, jsonPublish, (req, res) => {
+  app.put(/^\/-\/package\/(.+)\/dist-tags\/([^/]+)$/, registryMutationEnabled, publishRateGate, publishAuth, jsonPublish, (req, res) => {
     let name: string;
     try { name = normalizePackageName(decodeURIComponent(req.params[0] ?? "")); }
     catch (error) { return res.status(400).json({ error: (error as Error).message }); }
@@ -915,7 +930,7 @@ export function createServer(opts: ServerOptions) {
     } catch (error) { return res.status(404).json({ error: (error as Error).message }); }
   });
 
-  app.delete(/^\/-\/package\/(.+)\/dist-tags\/([^/]+)$/, registryMutationEnabled, publishAuth, (req, res) => {
+  app.delete(/^\/-\/package\/(.+)\/dist-tags\/([^/]+)$/, registryMutationEnabled, publishRateGate, publishAuth, (req, res) => {
     let name: string;
     try { name = normalizePackageName(decodeURIComponent(req.params[0] ?? "")); }
     catch (error) { return res.status(400).json({ error: (error as Error).message }); }
@@ -1080,7 +1095,7 @@ export function createServer(opts: ServerOptions) {
   // npm/pnpm single-version unpublish first stage: accept the client's
   // revision-bearing packument rewrite, then perform the actual retraction on
   // the tarball DELETE below. No bytes are deleted by either route.
-  app.put(/^\/(.+)\/-rev\/([^/]+)$/, registryMutationEnabled, publishAuth, jsonPublish, (req, res) => {
+  app.put(/^\/(.+)\/-rev\/([^/]+)$/, registryMutationEnabled, retractionRateGate, publishAuth, jsonPublish, (req, res) => {
     let name: string;
     try { name = normalizePackageName(decodeURIComponent(req.params[0] ?? "")); }
     catch (error) { return res.status(400).json({ error: (error as Error).message }); }
@@ -1088,7 +1103,7 @@ export function createServer(opts: ServerOptions) {
     return res.json({ ok: true, id: name, rev: privateStore.revision(name) });
   });
 
-  app.delete(/^\/(.+)\/-\/([^/]+\.tgz)\/-rev\/([^/]+)$/, registryMutationEnabled, publishAuth, (req, res) => {
+  app.delete(/^\/(.+)\/-\/([^/]+\.tgz)\/-rev\/([^/]+)$/, registryMutationEnabled, retractionRateGate, publishAuth, (req, res) => {
     let name: string;
     try { name = normalizePackageName(decodeURIComponent(req.params[0] ?? "")); }
     catch (error) { return res.status(400).json({ error: (error as Error).message }); }
@@ -1098,7 +1113,7 @@ export function createServer(opts: ServerOptions) {
     return retractNative(name, version, "withdrawn", res);
   });
 
-  app.delete(/^\/(.+)\/-rev\/([^/]+)$/, registryMutationEnabled, publishAuth, (req, res) => {
+  app.delete(/^\/(.+)\/-rev\/([^/]+)$/, registryMutationEnabled, retractionRateGate, publishAuth, (req, res) => {
     let name: string;
     try { name = normalizePackageName(decodeURIComponent(req.params[0] ?? "")); }
     catch (error) { return res.status(400).json({ error: (error as Error).message }); }

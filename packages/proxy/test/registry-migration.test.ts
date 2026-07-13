@@ -17,7 +17,6 @@ const audit = { schema: 3, meta: {}, findings: [], capabilities: [], capabilityD
   engine: { version: "x", rules: [], mode: "full" }, auditedAt: "t", durationMs: 0 } as unknown as Audit;
 const claimantPublicKey = generateKeypair().publicKey;
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "fixtures");
-const ROOT = join(FIXTURES, "..");
 const corpus: ClaimCorpus = { schema: 1, version: "claims-1", issuedAt: "2026-07-13T00:00:00.000Z", claims: [{
   namespace: "claimed-name", domain: "example.test", claimantPublicKey, status: "active",
   challenge: { method: "dns-txt", id: "c", verifiedAt: "2026-07-12T00:00:00.000Z" }, renewalDueAt: "2027-07-12T00:00:00.000Z",
@@ -61,7 +60,7 @@ describe("Phase 33 registry migration", () => {
     assert.equal(JSON.stringify(store.packument("claimed-name")), before, "off/on round-trip leaves native resolution bytes unchanged");
   });
 
-  test("export preserves tarball bytes and republishes to a stock-compatible Verdaccio registry", async () => {
+  test("export preserves tarball bytes and full stock-registry inputs", () => {
     const source = mkdtempSync(join(tmpdir(), "sentinel-export-source-"));
     const output = mkdtempSync(join(tmpdir(), "sentinel-export-output-"));
     const store = new PrivatePackageStore(source, () => Date.parse("2026-07-13T12:00:00.000Z"));
@@ -78,12 +77,28 @@ describe("Phase 33 registry migration", () => {
     }
     const dir = join(output, encodeURIComponent("leftpad-lite"));
     assert.deepEqual(readFileSync(join(dir, "1.0.1.tgz")), bytes);
+    const packument = JSON.parse(readFileSync(join(dir, "packument.json"), "utf8"));
+    assert.equal(packument.time["1.0.1"], "2026-07-13T12:00:00.000Z");
+    assert.equal(packument.versions["1.0.1"].dist.integrity, "sha512-test");
+  });
+
+  test("export republishes to a stock-compatible Verdaccio registry",
+    { skip: !process.env.SENTINEL_VERDACCIO_BIN }, async () => {
+    const source = mkdtempSync(join(tmpdir(), "sentinel-export-source-"));
+    const output = mkdtempSync(join(tmpdir(), "sentinel-export-output-"));
+    const store = new PrivatePackageStore(source);
+    const bytes = readFileSync(join(FIXTURES, ".tarballs", "leftpad-lite-1.0.1.tgz"));
+    store.publish({ name: "leftpad-lite", version: "1.0.1", integrity: "sha512-test", manifest: {
+      name: "leftpad-lite", version: "1.0.1", dist: { integrity: "sha512-test" },
+    }, tarball: bytes, audit, actor: "test" });
+    exportNativeStore(source, output);
+    const dir = join(output, encodeURIComponent("leftpad-lite"));
     const verdaccio = mkdtempSync(join(tmpdir(), "sentinel-verdaccio-"));
     const port = await freePort();
     const registry = `http://127.0.0.1:${port}`;
     const config = join(verdaccio, "config.yaml");
     writeFileSync(config, `storage: ${join(verdaccio, "storage")}\nauth:\n  htpasswd:\n    file: ${join(verdaccio, "htpasswd")}\n    max_users: 1000\nuplinks: {}\npackages:\n  '@*/*':\n    access: $all\n    publish: $authenticated\n  '**':\n    access: $all\n    publish: $authenticated\nlog:\n  type: stdout\n  format: pretty\n  level: error\n`);
-    const child = spawn(join(ROOT, "node_modules", ".bin", "verdaccio"), ["--config", config, "--listen", `127.0.0.1:${port}`], { stdio: "ignore" });
+    const child = spawn(process.env.SENTINEL_VERDACCIO_BIN!, ["--config", config, "--listen", `127.0.0.1:${port}`], { stdio: "ignore" });
     try {
       let ready = false;
       for (let attempt = 0; attempt < 100 && !ready; attempt++) {
@@ -103,8 +118,5 @@ describe("Phase 33 registry migration", () => {
       const republished = await (await fetch(`${registry}/leftpad-lite`)).json();
       assert.ok(republished.versions["1.0.1"], "stock-compatible registry serves the republished export");
     } finally { child.kill("SIGTERM"); }
-    const packument = JSON.parse(readFileSync(join(dir, "packument.json"), "utf8"));
-    assert.equal(packument.time["1.0.1"], "2026-07-13T12:00:00.000Z");
-    assert.equal(packument.versions["1.0.1"].dist.integrity, "sha512-test");
   });
 });

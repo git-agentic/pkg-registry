@@ -320,8 +320,9 @@ export class PrivatePackageStore {
     if (revision !== this.revision(name)) throw new PublicationConflictError("packument revision conflict");
     const incoming = doc.versions as Record<string, Record<string, unknown>> | undefined;
     const versions = this.byName.get(name);
-    if (!incoming || !versions || Object.keys(incoming).length !== versions.size) throw new Error("metadata update cannot add or remove versions");
-    for (const [version, entry] of versions) {
+    const activeVersions = versions ? [...versions].filter(([version]) => !this.retractions.has(this.key(name, version))) : [];
+    if (!incoming || !versions || Object.keys(incoming).length !== activeVersions.length) throw new Error("metadata update cannot add or remove versions");
+    for (const [version, entry] of activeVersions) {
       const candidate = incoming[version];
       if (!candidate) throw new Error("metadata update cannot add or remove versions");
       const currentDist = entry.meta.manifest.dist as { integrity?: unknown } | undefined;
@@ -329,7 +330,7 @@ export class PrivatePackageStore {
       if (currentDist?.integrity !== candidateDist?.integrity) throw new Error("metadata update cannot change version integrity");
     }
     const nextDeprecations = new Map(this.deprecations);
-    nextDeprecations.set(name, Object.fromEntries([...versions].map(([version]) => {
+    nextDeprecations.set(name, Object.fromEntries(activeVersions.map(([version]) => {
       const deprecated = incoming[version]!.deprecated;
       return [version, typeof deprecated === "string" ? deprecated : null];
     })));

@@ -87,6 +87,25 @@ describe("Phase 33 npm compatibility surface", () => {
     assert.deepEqual(await (await fetch(`${base}/-/whoami`, { headers: { authorization: `Bearer ${token}` } })).json(), { username: "release-bot" });
   });
 
+  test("legacy login sessions expire", async () => {
+    let clock = NOW;
+    const { base } = await boot(undefined, { now: () => clock, publishRateLimit: { limit: 10, windowMs: 60_000 } });
+    const login = await fetch(`${base}/-/user/org.couchdb.user:alice`, { method: "PUT", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "alice", password: "publish-token" }) });
+    const token = (await login.json()).token as string;
+    assert.equal((await fetch(`${base}/-/whoami`, { headers: { authorization: `Bearer ${token}` } })).status, 200);
+    clock += 60 * 60_000 + 1;
+    assert.equal((await fetch(`${base}/-/whoami`, { headers: { authorization: `Bearer ${token}` } })).status, 401);
+  });
+
+  test("legacy login is rate-limited", async () => {
+    const { base } = await boot(undefined, { publishRateLimit: { limit: 1, windowMs: 60_000 } });
+    const request = () => fetch(`${base}/-/user/org.couchdb.user:alice`, { method: "PUT", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "alice", password: "publish-token" }) });
+    assert.equal((await request()).status, 201);
+    assert.equal((await request()).status, 429);
+  });
+
   test("npm's -rev dance maps single-version unpublish onto retraction", async () => {
     const store = new PrivatePackageStore(undefined, () => NOW);
     await seed(store);
@@ -140,7 +159,8 @@ describe("Phase 33 npm compatibility surface", () => {
     const upstream: Upstream = {
       name: "proxy-probe",
       async getPackument() { throw new Error("unused"); }, async getTarball() { throw new Error("unused"); }, async getAttestations() { return null; },
-      async proxyRegistryRequest(path, init) { seen.push({ path, ...init }); return { status: 207, headers: { "content-type": "application/json", etag: "probe" }, body: expected }; },
+      async proxyRegistryRequest(path, init) { seen.push({ path, ...init }); return { status: 207,
+        headers: { "content-type": "application/json", etag: "probe", "set-cookie": ["a=1; HttpOnly", "b=2; Secure"] }, body: expected }; },
     };
     const { base } = await boot(undefined, { upstream });
     const raw = Buffer.from("{ \n  \"lodash\" : [\"1.0.0\"] \n}\n");
@@ -159,6 +179,7 @@ describe("Phase 33 npm compatibility surface", () => {
       }, ...(route.body ? { body: route.body } : {}) });
       assert.equal(response.status, 207);
       assert.equal(response.headers.get("etag"), "probe");
+      assert.deepEqual(response.headers.getSetCookie(), ["a=1; HttpOnly", "b=2; Secure"]);
       assert.deepEqual(Buffer.from(await response.arrayBuffer()), expected);
     }
     assert.deepEqual(seen.map((call) => call.path), routes.map((route) => route.path));

@@ -36,4 +36,9 @@ jobs:
       - run: npm ci
       - run: npm install --global pnpm@11.11.0 bun@1.3.12
       - run: npm run fixtures
+      - run: npm run build
       - run: npm run compat:clients
+      - run: npm install --prefix "$RUNNER_TEMP/verdaccio" --ignore-scripts verdaccio@6.7.4
+      - run: node --import tsx --test packages/proxy/test/registry-migration.test.ts
+        env:
+          SENTINEL_VERDACCIO_BIN: ${{ runner.temp }}/verdaccio/node_modules/.bin/verdaccio

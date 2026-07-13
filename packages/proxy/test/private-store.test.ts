@@ -65,6 +65,18 @@ describe("PrivatePackageStore", () => {
     assert.equal(s.packument("@acme/order")?.versions["1.0.0"]?.deprecated, undefined);
   });
 
+  test("metadata updates operate on active versions after a retraction", () => {
+    const s = new PrivatePackageStore();
+    put(s, "@acme/deprecate", "1.0.0");
+    put(s, "@acme/deprecate", "2.0.0");
+    s.retract({ name: "@acme/deprecate", version: "1.0.0", reason: "withdrawn",
+      retractedAt: "2026-07-13T12:00:00.000Z", advisoryId: "SENTINEL-RETRACT-deprecate" });
+    const active = s.packument("@acme/deprecate")!;
+    active.versions["2.0.0"]!.deprecated = "use v3";
+    assert.doesNotThrow(() => s.updateDeprecations("@acme/deprecate", active._rev, active as unknown as Record<string, unknown>));
+    assert.equal(s.packument("@acme/deprecate")?.versions["2.0.0"]?.deprecated, "use v3");
+  });
+
   test("preserves claim attribution as an immutable publication-time snapshot", () => {
     const dir = mkdtempSync(join(tmpdir(), "sentinel-priv-attribution-"));
     const s = new PrivatePackageStore(dir);

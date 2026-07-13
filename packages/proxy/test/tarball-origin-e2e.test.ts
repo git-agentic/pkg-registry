@@ -36,6 +36,7 @@ describe("NpmUpstream tarball origin pinning (hermetic local registry)", () => {
           res.statusCode = 207;
           res.setHeader("content-encoding", "gzip");
           res.setHeader("content-length", encoded.length);
+          res.setHeader("set-cookie", ["a=1; HttpOnly", "b=2; Secure"]);
           res.end(encoded);
         });
         return;
@@ -91,7 +92,15 @@ describe("NpmUpstream tarball origin pinning (hermetic local registry)", () => {
     assert.deepEqual(compatibilityRequest, requestBody);
     assert.equal(response.status, 207);
     assert.equal(response.headers["content-encoding"], "gzip");
+    assert.deepEqual(response.headers["set-cookie"], ["a=1; HttpOnly", "b=2; Secure"]);
     assert.deepEqual(response.body, gzipSync(Buffer.from("encoded-response")));
+  });
+
+  test("compatibility proxy refuses unrecognized routes and foreign origins", async () => {
+    const up = new NpmUpstream(registryBase);
+    await assert.rejects(() => up.proxyRegistryRequest("/-/not-supported", { method: "GET", headers: {} }), /unrecognized/);
+    await assert.rejects(() => up.proxyRegistryRequest(`${canaryBase}/-/v1/search`, { method: "GET", headers: {} }), /outside registry origin/);
+    assert.equal(canaryHit, false);
   });
 
   test("cross-origin tarball URL is refused with 502 — and never requested", async () => {

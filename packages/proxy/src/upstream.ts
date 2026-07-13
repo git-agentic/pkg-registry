@@ -55,7 +55,7 @@ export interface Upstream {
   getAttestations(pkg: string, version: string): Promise<unknown | null>;
   /** Optional byte-preserving forwarding for the bounded Phase 33 compatibility surface. */
   proxyRegistryRequest?(pathAndQuery: string, init: { method: string; headers: Record<string, string>; body?: Buffer }): Promise<{
-    status: number; headers: Record<string, string>; body: Buffer;
+    status: number; headers: Record<string, string | string[]>; body: Buffer;
   }>;
 }
 
@@ -178,9 +178,15 @@ export class NpmUpstream implements Upstream {
   async proxyRegistryRequest(pathAndQuery: string, init: { method: string; headers: Record<string, string>; body?: Buffer }) {
     const target = new URL(pathAndQuery, `${this.registry}/`);
     if (target.origin !== this.registryOrigin) throw new HttpError(502, "refusing compatibility proxy outside registry origin");
-    return new Promise<{ status: number; headers: Record<string, string>; body: Buffer }>((resolve, reject) => {
-      const request = (target.protocol === "https:" ? httpsRequest : httpRequest)(target, {
-        method: init.method, headers: init.headers,
+    const allowed = (init.method === "GET" && (target.pathname === "/-/v1/search" || target.pathname === "/-/npm/v1/keys" ||
+      target.pathname.startsWith("/-/npm/v1/attestations/"))) ||
+      (init.method === "POST" && (target.pathname === "/-/npm/v1/security/advisories/bulk" || target.pathname === "/-/v1/login"));
+    if (!allowed) throw new HttpError(502, "refusing unrecognized compatibility proxy route");
+    const registry = new URL(this.registry);
+    return new Promise<{ status: number; headers: Record<string, string | string[]>; body: Buffer }>((resolve, reject) => {
+      const request = (registry.protocol === "https:" ? httpsRequest : httpRequest)({
+        protocol: registry.protocol, hostname: registry.hostname, port: registry.port || undefined,
+        path: `${target.pathname}${target.search}`, method: init.method, headers: init.headers,
       }, (response) => {
         const chunks: Buffer[] = [];
         let size = 0;
@@ -194,9 +200,9 @@ export class NpmUpstream implements Upstream {
         });
         response.on("error", (error) => reject(new HttpError(502, `upstream compatibility route: ${error.message}`)));
         response.on("end", () => {
-          const headers: Record<string, string> = {};
+          const headers: Record<string, string | string[]> = {};
           for (const [name, value] of Object.entries(response.headers)) {
-            if (value !== undefined) headers[name] = Array.isArray(value) ? value.join(", ") : value;
+            if (value !== undefined) headers[name] = value;
           }
           resolve({ status: response.statusCode ?? 502, headers, body: Buffer.concat(chunks) });
         });
