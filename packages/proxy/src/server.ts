@@ -118,6 +118,8 @@ export interface ServerOptions {
   rateLimiter?: RateLimiter;
   /** Mandatory publish limiter. Undefined ⇒ 60 requests per source per minute. */
   publishRateLimit?: { limit: number; windowMs: number };
+  /** Mandatory retraction-write limiter. Undefined ⇒ 60 requests per source per minute. */
+  retractionRateLimit?: { limit: number; windowMs: number };
   /** Opt-in auto-quarantine on confirmed violations (ADR-0040). Requires auth. Default off. */
   autoQuarantine?: boolean;
   /** Decompression-bomb extraction caps (ADR-0039). Undefined ⇒ core defaults. */
@@ -239,6 +241,13 @@ export function createServer(opts: ServerOptions) {
     standardHeaders: "draft-7",
     legacyHeaders: false,
     message: { error: "publish rate limit exceeded — retry later" },
+  });
+  const retractionRateGate = rateLimit({
+    windowMs: opts.retractionRateLimit?.windowMs ?? 60_000,
+    limit: opts.retractionRateLimit?.limit ?? 60,
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+    message: { error: "retraction rate limit exceeded — retry later" },
   });
 
   // Transient concurrency dedupe: concurrent uncached public audits for the same
@@ -797,7 +806,7 @@ export function createServer(opts: ServerOptions) {
       downloadCounting: "Successful native tarball responses count once; with SQLite, repeats for the same package version and npm-session are deduplicated; requests without npm-session count individually.",
     });
   });
-  app.post("/-/retractions", rateGate, authz.requireRole(["operator"]), (req, res) => {
+  app.post("/-/retractions", retractionRateGate, authz.requireRole(["operator"]), (req, res) => {
     const body = req.body as { name?: unknown; version?: unknown; reason?: unknown };
     let name: string;
     try { name = normalizePackageName(String(body?.name ?? "")); }

@@ -40,7 +40,8 @@ function audit(name: string, version: string, tarball: Buffer): Audit {
   };
 }
 
-async function boot(ageHours: number, downloads: number, enterprisePolicy = policy(), retractionCorpus?: RetractionCorpus, authPublicKey?: string, history?: HistoryDb) {
+async function boot(ageHours: number, downloads: number, enterprisePolicy = policy(), retractionCorpus?: RetractionCorpus, authPublicKey?: string, history?: HistoryDb,
+  retractionRateLimit?: { limit: number; windowMs: number }) {
   const privateStore = new PrivatePackageStore(undefined, () => NOW - ageHours * 3_600_000);
   const store = new AuditStore();
   for (const version of ["1.0.0", "2.0.0"]) {
@@ -58,6 +59,7 @@ async function boot(ageHours: number, downloads: number, enterprisePolicy = poli
     retractionCorpus,
     authPublicKey,
     history,
+    retractionRateLimit,
   });
   const server = await new Promise<Server>((resolve) => { const value = app.listen(0, () => resolve(value)); });
   servers.push(server);
@@ -247,5 +249,13 @@ describe("Phase 32 time-locked retraction", () => {
     assert.equal((await ctx.retract("security", `Bearer ${agent}`)).status, 403);
     const operator = signToken({ role: "operator", sub: "test", ttlSeconds: 3_600 }, keys.privateKey);
     assert.equal((await ctx.retract("security", `Bearer ${operator}`)).status, 201);
+  });
+
+  test("the retraction write route is rate-limited even without the optional general limiter", async () => {
+    const ctx = await boot(1, 0, policy(), undefined, undefined, undefined, { limit: 1, windowMs: 60_000 });
+    assert.equal((await ctx.retract()).status, 201);
+    const limited = await ctx.retract();
+    assert.equal(limited.status, 429);
+    assert.match((await limited.json()).error, /retraction rate limit/i);
   });
 });
