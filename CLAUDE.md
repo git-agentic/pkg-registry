@@ -20,12 +20,13 @@ control plane.
 We are the Socket/Chainguard wedge: **do not** try to replace npm. Resolve and
 serve real packages transparently; only attach signal.
 
-Registry evolution has begun: **Phase 30 is implemented** (authoritative write
-path, deterministic name-level source partition, atomic native publication,
-and synchronous `publishGate`; ADR-0045). Phases 31–33 remain design-only:
-verified claim-corpus loading/issuance, time-locked retraction, and migration/
-compatibility. See [docs/product/registry-roadmap.md](./docs/product/registry-roadmap.md),
-ADR-0045–0048, and threat-model §6. Do not treat ADR-0046–0048 as shipped.
+Registry evolution has begun: **Phases 30–31 are implemented** (authoritative
+write path, deterministic name-level source partition, atomic native
+publication, synchronous `publishGate`, verified claim-corpus loading, and the
+claim steward; ADR-0045/0046). Phases 32–33 remain design-only: time-locked
+retraction and migration/compatibility. See
+[docs/product/registry-roadmap.md](./docs/product/registry-roadmap.md),
+ADR-0045–0048, and threat-model §6. Do not treat ADR-0047–0048 as shipped.
 
 ### Current state by subsystem
 
@@ -81,8 +82,22 @@ pure `source(name, signedPolicy, claimCorpus)` selects policy-private →
 verified-claim → public-mirror without version merging; native names never fall
 through upstream; `publishGate` is signed policy data (default `block`); PUT
 audits synchronously, returns the full report on rejection, and atomically
-publishes tarball+metadata only after the gate passes. The default claim corpus
-is empty; Phase 31's signed corpus loader and steward service are not shipped.
+publishes tarball+metadata only after the gate passes. Phase 31 verifies a
+versioned Ed25519-signed claim corpus at boot (tamper/malformed ⇒ FATAL), records
+its version/hash in audit provenance, keeps frozen/disputed names authoritative,
+and requires matching offline Sigstore provenance for enrolled trusted
+publishers. The default corpus remains the explicit empty corpus.
+
+**Claim steward (`@sentinel/steward`)** — authenticated operational service for
+exact-apex DNS TXT challenges, steward-fetched three-tier grandfathering,
+claimant-key-signed transfers, 12-month renewal and freeze, 30-day announced
+Tier-2 grants/transfers/dispute rulings, durable atomic state, and atomic
+directory-based Ed25519-signed corpus releases. DNS and issuance run only on the
+steward; proxy resolution and auditing remain offline. Native version metadata
+snapshots claim attribution at publication so later transfers never rewrite
+history. The steward control plane and proxy publish route have mandatory
+per-source rate-limit backstops; release directory names are generated
+independently of request data.
 
 **Sandbox (`@sentinel/sandbox`)** — `createSandbox()` selects Seatbelt (darwin)
 or bubblewrap (linux); one approved-capability model, fail-closed contract
@@ -187,7 +202,7 @@ enforcement is tested with benign probe packages.
 ## Stack & versions (July 2026)
 
 Node + TypeScript, npm workspaces (`core`, `proxy`, `sandbox`, `cli`, `mcp`,
-`action` — the last is the GitHub Action, bin `sentinel-ci`), Express 5, `tar` 7,
+`action`, `steward` — `action` is the GitHub Action, bin `sentinel-ci`), Express 5, `tar` 7,
 `commander` 15, `yaml` 2 (`@sentinel/core` only — pnpm/yarn-berry lockfile
 parsing), `semver` 7 (`@sentinel/core` vulnerability range matching), tests on
 `node:test` + `tsx`. Developed against **Node 24 (Active LTS)**; Node 22
@@ -209,6 +224,7 @@ a tool that guards against exactly that.
 | `SENTINEL_AUTO_QUARANTINE` | exactly `1` enables server-decided quarantine; requires auth configured or FATAL (ADR-0040) |
 | `SENTINEL_HISTORY_DB` | path ⇒ enable sqlite history write-through (ADR-0028) |
 | `SENTINEL_ADVISORIES` / `SENTINEL_VULNERABILITIES` | operator advisory/vuln JSON feeds (ADR-0034/0035) |
+| `SENTINEL_CLAIM_CORPUS_FILE` / `SENTINEL_CLAIM_CORPUS_SIG` / `SENTINEL_CLAIM_CORPUS_PUBKEY` | versioned offline claim corpus; file requires a pinned key, bad signature/schema is FATAL (ADR-0046) |
 | `SENTINEL_REGISTRY` / `SENTINEL_TARBALL_ORIGINS` / `SENTINEL_PUBLIC_BASE_URL` | upstream origin, outbound tarball allowlist, inbound rewrite base (ADR-0036) |
 | `SENTINEL_MAX_TARBALL_BYTES` / `SENTINEL_MAX_PACKUMENT_BYTES` / `SENTINEL_MAX_TREE_PACKAGES` / `SENTINEL_RATE_LIMIT_RPM` | fetch caps (256 MB / 128 MB), tree cap (5000), opt-in rate limit (ADR-0037) |
 | `SENTINEL_MAX_UNPACKED_BYTES` / `SENTINEL_MAX_FILE_COUNT` | decompression-bomb caps (1 GiB / 100k) (ADR-0039) |
@@ -217,8 +233,8 @@ a tool that guards against exactly that.
 
 ```bash
 npm run build            # tsc --build (project references) + the Linux-only native helper step
-npm test                 # hermetic engine + e2e proxy suite. 787 tests on this darwin host
-                         # as of 2026-07-10 (785 pass, 2 skipped) — but NEVER plan arithmetic
+npm test                 # hermetic engine + e2e proxy suite. 931 tests on this darwin host
+                         # as of 2026-07-13 (929 pass, 2 skipped) — but NEVER plan arithmetic
                          # on a written count; run npm test and use what it prints.
 npm run demo             # offline malware-detection walkthrough
 node packages/proxy/dist/index.js   # run the proxy (see README for env vars)

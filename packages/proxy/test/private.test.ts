@@ -32,6 +32,16 @@ describe("parsePublishBody", () => {
     (body2.versions as Record<string, unknown>)["2.0.0"] = { name: "@acme/x", version: "2.0.0" };
     assert.throws(() => parsePublishBody("@acme/x", body2), /exactly one/);
   });
+  test("accepts exactly one optional npm .sigstore attachment as offline provenance input", () => {
+    const body = publishBody("@acme/x", "1.2.3");
+    const bundle = { mediaType: "application/vnd.dev.sigstore.bundle+json;version=0.2", content: { dsseEnvelope: {} } };
+    const serialized = JSON.stringify(bundle);
+    Object.assign(body._attachments, {
+      "@acme/x-1.2.3.sigstore": { content_type: bundle.mediaType, data: serialized, length: Buffer.byteLength(serialized) },
+    });
+    const parsed = parsePublishBody("@acme/x", body);
+    assert.deepEqual(parsed.attestations, { attestations: [{ bundle }] });
+  });
   test("throws on non-canonical base64", () => {
     const body = publishBody("@acme/x", "1.2.3");
     body._attachments["@acme/x-1.2.3.tgz"]!.data = "!!!!";

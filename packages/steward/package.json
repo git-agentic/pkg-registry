@@ -1,11 +1,11 @@
 {
-  "name": "@sentinel/proxy",
+  "name": "@sentinel/steward",
   "version": "0.1.0",
-  "description": "Sentinel registry proxy: transparently serves npm packages while intercepting and auditing each tarball.",
+  "description": "Sentinel namespace-claim steward and signed corpus issuer.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/index.js",
-  "bin": { "sentinel-proxy": "./dist/index.js" },
+  "bin": { "sentinel-steward": "./dist/index.js" },
   "dependencies": {
     "@sentinel/core": "0.1.0",
     "express": "^5.2.1",

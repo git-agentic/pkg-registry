@@ -1,6 +1,6 @@
 # ADR-0046: Verified namespace claiming
 
-**Status:** Proposed (Phase 31 — design only, no implementation)
+**Status:** Accepted (Phase 31 implemented 2026-07-13)
 **Date:** 2026-07-11
 
 Second of the four registry-evolution ADRs (0045–0048). Decision record for

@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Buffer } from "node:buffer";
-import type { Audit } from "@sentinel/core";
+import type { Audit, VerifiedClaim } from "@sentinel/core";
 import { cmpSemver } from "./upstream.js";
 
 export interface StoredVersion {
@@ -12,6 +12,8 @@ export interface StoredVersion {
   audit: Audit;
   actor: string;
   publishedAt: string;
+  /** Immutable ownership attribution captured when this version was accepted. */
+  claimAtPublication?: Pick<VerifiedClaim, "namespace" | "domain" | "claimantPublicKey">;
 }
 
 export interface PrivatePackument {
@@ -60,6 +62,7 @@ export class PrivatePackageStore {
   publish(v: {
     name: string; version: string; integrity: string;
     manifest: Record<string, unknown>; tarball: Buffer; audit: Audit; actor: string;
+    claimAtPublication?: Pick<VerifiedClaim, "namespace" | "domain" | "claimantPublicKey">;
   }): StoredVersion {
     if (this.getVersion(v.name, v.version) || (this.dir && existsSync(this.dirFor(v.name, v.version)))) {
       throw new PublicationConflictError(`version already published: ${v.name}@${v.version}`);
@@ -68,6 +71,7 @@ export class PrivatePackageStore {
       name: v.name, version: v.version, integrity: v.integrity,
       manifest: v.manifest, audit: v.audit, actor: v.actor,
       publishedAt: new Date().toISOString(),
+      ...(v.claimAtPublication ? { claimAtPublication: structuredClone(v.claimAtPublication) } : {}),
     };
     this.persistAtomic(meta, v.tarball);
     // Memory visibility is the commit point for in-memory stores and follows the
@@ -82,6 +86,7 @@ export class PrivatePackageStore {
   put(v: {
     name: string; version: string; integrity: string;
     manifest: Record<string, unknown>; tarball: Buffer; audit: Audit; actor: string;
+    claimAtPublication?: Pick<VerifiedClaim, "namespace" | "domain" | "claimantPublicKey">;
   }): StoredVersion {
     return this.publish(v);
   }

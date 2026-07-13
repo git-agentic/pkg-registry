@@ -76,6 +76,26 @@ export { knownAdvisoryRule } from "./rules/known-advisory.js";
 export { KNOWN_VULNERABILITIES, parseVulnAdvisories, parseVulnAdvisoriesStrict, buildVulnIndex, type VulnAdvisory } from "./vuln-corpus.js";
 export { knownVulnerabilityRule } from "./rules/known-vulnerability.js";
 export {
+  EMPTY_CLAIM_CORPUS,
+  parseClaimCorpus,
+  claimCorpusHashOfBytes,
+  signClaimCorpus,
+  verifyClaimCorpusBytes,
+  loadClaimCorpus,
+  isValidClaimNamespace,
+  isValidClaimDomain,
+  type ClaimCorpus,
+  type LoadedClaimCorpus,
+  type VerifiedClaim,
+  type ClaimStatus,
+  type DnsChallengeProof,
+  type TrustedPublisher,
+  type PendingClaimChange,
+  type PendingClaimGrant,
+  type ClaimChangeKind,
+  type ClaimCorpusIdentity,
+} from "./claim-corpus.js";
+export {
   buildAuditStatement, signAttestation, verifyAttestation, attestationKeyid, pae, SENTINEL_PREDICATE_TYPE,
   type InTotoStatementV1, type AuditPredicate, type DsseEnvelope, type VerifyResult, type VerifyReason,
 } from "./attest.js";

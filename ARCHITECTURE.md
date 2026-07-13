@@ -59,7 +59,7 @@ package is installed and approved is out of scope.
         └────────────┘
 ```
 
-Four packages (npm workspaces monorepo):
+Seven packages (npm workspaces monorepo; key registry packages below):
 
 - **`@sentinel/core`** — the audit engine. Pure, dependency-light, deterministic.
   Tarball extraction, the rules, scoring, the data model, and the LLM adapter
@@ -71,6 +71,9 @@ Four packages (npm workspaces monorepo):
   Owns the verdict cache + audit store and serves the dashboard.
 - **`@sentinel/cli`** — `sentinel audit <pkg>` (one-shot) and `sentinel install …`
   (sets `registry` to the proxy and runs npm, showing the pre-install verdict).
+- **`@sentinel/steward`** — authenticated DNS-claim issuance, renewal/freeze,
+  timelocked ownership changes, and signed offline claim-corpus releases. It is
+  operationally separate from the proxy's offline resolution path.
 - **dashboard** — a single self-contained HTML page served by the proxy at `/`.
 
 ---
@@ -168,9 +171,20 @@ directory before memory visibility; a store-authoritative duplicate check makes
 concurrent same-version PUTs one-success/one-409. `GET /-/private` reports policy
 claims, supplied verified claims, and native inventory.
 
-Phase 30 defines the `ClaimCorpus` input and defaults it empty. It does not load or
-verify a signed global corpus; issuance, signature verification, freeze/renewal,
-and trusted-publisher semantics remain Phase 31 (ADR-0046, Proposed).
+Phase 31 loads the versioned claim corpus from raw bytes, verifies its Ed25519
+signature against a pinned key at boot, and fails closed on signature or schema
+errors. Reports, tree audits, and audit attestations carry its version/hash beside
+the policy hash. Frozen/disputed claims remain native for reads but reject writes;
+trusted-publisher enrollments require a matching offline-verified Sigstore SLSA
+identity. Stored native versions snapshot the claim namespace, domain, and
+claimant key at publication, so an ownership change cannot re-attribute history.
+`@sentinel/steward` performs exact-apex DNS challenges, derives grandfather tiers
+from steward-fetched upstream evidence, verifies claimant-key transfer
+signatures, applies renewal/domain-change freezes, and atomically publishes
+versioned directories after 30-day announced changes (ADR-0046). Mandatory
+per-source rate-limit middleware protects both the steward control plane and
+proxy publish route. Release directory identifiers are generated independently
+of request data; the signed corpus remains the source of the release version.
 
 ### 3.6 Sandbox enforcement (Phases 3–5, ADR-0011/0016/0017/0018)
 

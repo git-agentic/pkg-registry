@@ -18,7 +18,7 @@ import { ViolationStore } from "../src/violations.js";
 import { ApprovalRequestStore } from "../src/approval-requests.js";
 import { LocalFixtureUpstream } from "../src/upstream.js";
 import type { ClaimCorpus } from "../src/resolution.js";
-import { DEFAULT_POLICY, integrityOf, type EnterprisePolicy } from "@sentinel/core";
+import { DEFAULT_POLICY, generateKeypair, integrityOf, type EnterprisePolicy } from "@sentinel/core";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURES = join(HERE, "..", "..", "..", "fixtures");
@@ -26,6 +26,15 @@ function ensure() { if (!existsSync(join(FIXTURES, "registry.json")) || !existsS
   execFileSync("npx", ["tsx", join(HERE, "..", "..", "..", "scripts", "make-fixtures.ts")], { stdio: "ignore" }); }
 
 const policy = (ns: string[]): EnterprisePolicy => ({ ...DEFAULT_POLICY, privateNamespaces: ns });
+const CLAIMANT_KEY = generateKeypair().publicKey;
+
+function verifiedCorpus(namespaces: string[]): ClaimCorpus {
+  return { schema: 1, version: "test", issuedAt: "2026-07-02T00:00:00.000Z", claims: namespaces.map((namespace, i) => ({
+    namespace, domain: `claim${i}.example`, claimantPublicKey: CLAIMANT_KEY, status: "active",
+    challenge: { method: "dns-txt", id: `c-${i}`, verifiedAt: "2026-07-01T00:00:00.000Z" },
+    renewalDueAt: "2027-07-01T00:00:00.000Z",
+  })) };
+}
 
 function bindPackageIdentity(tgz: Buffer, name: string, version: string): Buffer {
   const dir = mkdtempSync(join(tmpdir(), "sentinel-publish-identity-"));
@@ -176,11 +185,12 @@ describe("Phase 30 authoritative publish path", () => {
     maxPublishBytes?: number;
     extractLimits?: { maxUnpackedBytes?: number; maxFileCount?: number };
     publishAudit?: Parameters<typeof createServer>[0]["publishAudit"];
+    publishRateLimit?: { limit: number; windowMs: number };
   } = {}) {
     ensure();
     const privateStore = opts.privateStore ?? new PrivatePackageStore();
     const store = new AuditStore();
-    const app = createServer({
+    const serverOptions = {
       upstream: new LocalFixtureUpstream(FIXTURES), store,
       approvals: new ApprovalStore(), privateStore,
       enterprisePolicy: opts.enterprisePolicy ?? policy(["@acme/*"]),
@@ -188,7 +198,9 @@ describe("Phase 30 authoritative publish path", () => {
       violations: new ViolationStore(), approvalRequests: new ApprovalRequestStore(),
       maxPublishBytes: opts.maxPublishBytes, extractLimits: opts.extractLimits,
       publishAudit: opts.publishAudit,
-    });
+      publishRateLimit: opts.publishRateLimit,
+    };
+    const app = createServer(serverOptions);
     const server = await new Promise<Server>((resolve) => {
       const s = app.listen(0, () => resolve(s));
     });
@@ -201,7 +213,7 @@ describe("Phase 30 authoritative publish path", () => {
   }
 
   test("unclaimed publish returns 403 with zero storage or audit side effects", async () => {
-    const ctx = await boot({ enterprisePolicy: policy([]), claimCorpus: { claims: [] } });
+    const ctx = await boot({ enterprisePolicy: policy([]), claimCorpus: verifiedCorpus([]) });
     try {
       const res = await ctx.put("unclaimed", "1.0.0");
       assert.equal(res.status, 403);
@@ -211,7 +223,7 @@ describe("Phase 30 authoritative publish path", () => {
   });
 
   test("empty claim corpus still permits policy-private publishing", async () => {
-    const ctx = await boot({ claimCorpus: { claims: [] } });
+    const ctx = await boot({ claimCorpus: verifiedCorpus([]) });
     try {
       assert.equal((await ctx.put("@acme/empty-corpus", "1.0.0")).status, 201);
       assert.equal(ctx.privateStore.has("@acme/empty-corpus"), true);
@@ -219,10 +231,24 @@ describe("Phase 30 authoritative publish path", () => {
   });
 
   test("a supplied verified claim permits native publishing", async () => {
-    const ctx = await boot({ enterprisePolicy: policy([]), claimCorpus: { claims: [{ namespace: "claimed-name" }] } });
+    const ctx = await boot({ enterprisePolicy: policy([]), claimCorpus: verifiedCorpus(["claimed-name"]) });
     try {
       assert.equal((await ctx.put("claimed-name", "1.0.0")).status, 201);
       assert.equal(ctx.privateStore.has("claimed-name"), true);
+      assert.deepEqual(ctx.privateStore.getVersion("claimed-name", "1.0.0")?.claimAtPublication, {
+        namespace: "claimed-name", domain: "claim0.example", claimantPublicKey: CLAIMANT_KEY,
+      });
+    } finally { ctx.server.close(); }
+  });
+
+  test("publish is rate-limited even when the optional general limiter is absent", async () => {
+    const ctx = await boot({ enterprisePolicy: policy([]), claimCorpus: verifiedCorpus(["rate-limited"]),
+      publishRateLimit: { limit: 1, windowMs: 60_000 } });
+    try {
+      assert.equal((await ctx.put("rate-limited", "1.0.0")).status, 201);
+      const limited = await ctx.put("rate-limited", "1.0.1");
+      assert.equal(limited.status, 429);
+      assert.ok(Number(limited.headers.get("retry-after")) >= 1);
     } finally { ctx.server.close(); }
   });
 

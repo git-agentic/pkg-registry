@@ -39,6 +39,20 @@ describe("PrivatePackageStore", () => {
     assert.equal(b.getVersion("@acme/y", "2.0.0")?.integrity, "sha512-2.0.0");
   });
 
+  test("preserves claim attribution as an immutable publication-time snapshot", () => {
+    const dir = mkdtempSync(join(tmpdir(), "sentinel-priv-attribution-"));
+    const s = new PrivatePackageStore(dir);
+    const attribution = { namespace: "@acme/*", domain: "old.example", claimantPublicKey: "old-key" };
+    s.publish({ name: "@acme/x", version: "1.0.0", integrity: "sha512-1", manifest: {},
+      tarball: Buffer.from("v1"), audit, actor: "ci", claimAtPublication: attribution });
+    attribution.domain = "new.example";
+    attribution.claimantPublicKey = "new-key";
+    assert.deepEqual(s.getVersion("@acme/x", "1.0.0")?.claimAtPublication,
+      { namespace: "@acme/*", domain: "old.example", claimantPublicKey: "old-key" });
+    assert.deepEqual(new PrivatePackageStore(dir).getVersion("@acme/x", "1.0.0")?.claimAtPublication,
+      { namespace: "@acme/*", domain: "old.example", claimantPublicKey: "old-key" });
+  });
+
   test("atomic publish-if-absent rejects a duplicate without replacing bytes", () => {
     const s = new PrivatePackageStore();
     const first = { name: "@acme/x", version: "1.0.0", integrity: "sha512-first",

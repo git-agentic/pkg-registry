@@ -1,4 +1,5 @@
 import type { ProvenanceStatus, Verdict } from "./types.js";
+import type { ClaimCorpusIdentity } from "./claim-corpus.js";
 
 export type TreeStatus = Verdict | "error";
 
@@ -38,6 +39,8 @@ export interface TreeAuditResult {
   packages: TreePackageRow[];
   /** Hash of the policy the tree was scored under (Phase 19 attestation); set by the proxy route. */
   policyHash?: string;
+  /** Verified claim-corpus identity used for source partitioning (Phase 31). */
+  claimCorpus?: ClaimCorpusIdentity;
 }
 
 const VERDICT_RANK: Record<Verdict, number> = { allow: 0, warn: 1, block: 2 };

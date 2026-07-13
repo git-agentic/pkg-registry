@@ -3,6 +3,7 @@ import { signPolicy, verifyPolicyBytes } from "./policy.js";
 import { ENGINE_VERSION } from "./audit.js";
 import type { TreeAuditResult } from "./tree.js";
 import type { Verdict } from "./types.js";
+import type { ClaimCorpusIdentity } from "./claim-corpus.js";
 
 export const SENTINEL_PREDICATE_TYPE = "https://sentinel.dev/attestation/audit-summary/v1";
 const STATEMENT_TYPE = "https://in-toto.io/Statement/v1";
@@ -11,6 +12,7 @@ const PAYLOAD_TYPE = "application/vnd.in-toto+json";
 export interface AuditPredicate {
   verifier: { name: string; version: string };
   policyHash: string | null;
+  claimCorpus: ClaimCorpusIdentity | null;
   verdict: Verdict;
   gated: boolean;
   counts: { allow: number; warn: number; block: number; error: number };
@@ -57,6 +59,7 @@ export function buildAuditStatement(tree: TreeAuditResult, opts: { sbomDigest: s
     predicate: {
       verifier: { name: "sentinel", version: ENGINE_VERSION },
       policyHash: tree.policyHash ?? null,
+      claimCorpus: tree.claimCorpus ?? null,
       verdict: a.verdict,
       gated: a.gated,
       counts: { allow: a.counts.allow, warn: a.counts.warn, block: a.counts.block, error: a.counts.error },

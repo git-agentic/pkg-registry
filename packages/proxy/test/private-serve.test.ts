@@ -14,13 +14,20 @@ import { PrivatePackageStore } from "../src/private-store.js";
 import { ViolationStore } from "../src/violations.js";
 import { ApprovalRequestStore } from "../src/approval-requests.js";
 import { LocalFixtureUpstream, type Upstream } from "../src/upstream.js";
-import { DEFAULT_POLICY, runAudit, integrityOf, type EnterprisePolicy } from "@sentinel/core";
+import { DEFAULT_POLICY, generateKeypair, runAudit, integrityOf, type EnterprisePolicy } from "@sentinel/core";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURES = join(HERE, "..", "..", "..", "fixtures");
 function ensure() { if (!existsSync(join(FIXTURES, "registry.json")) || !existsSync(join(FIXTURES, ".tarballs")))
   execFileSync("npx", ["tsx", join(HERE, "..", "..", "..", "scripts", "make-fixtures.ts")], { stdio: "ignore" }); }
 const policy = (ns: string[]): EnterprisePolicy => ({ ...DEFAULT_POLICY, privateNamespaces: ns });
+const CLAIMANT_KEY = generateKeypair().publicKey;
+const verifiedCorpus = (namespace: string) => ({
+  schema: 1 as const, version: "test", issuedAt: "2026-07-02T00:00:00.000Z", claims: [{ namespace,
+    domain: "claim.example", claimantPublicKey: CLAIMANT_KEY, status: "active" as const,
+    challenge: { method: "dns-txt" as const, id: "c-1", verifiedAt: "2026-07-01T00:00:00.000Z" },
+    renewalDueAt: "2027-07-01T00:00:00.000Z" }],
+});
 
 describe("private serve routing", () => {
   let server: Server; let base: string; let priv: PrivatePackageStore; let fixtureUpstream: LocalFixtureUpstream;
@@ -200,7 +207,7 @@ describe("Phase 30 packument source isolation", () => {
       async getAttestations(name, version) { calls++; return inner.getAttestations(name, version); },
     };
     const app = createServer({ upstream, store: new AuditStore(), approvals: new ApprovalStore(),
-      privateStore: new PrivatePackageStore(), enterprisePolicy: policy([]), claimCorpus: { claims: [{ namespace: "leftpad-lite" }] },
+      privateStore: new PrivatePackageStore(), enterprisePolicy: policy([]), claimCorpus: verifiedCorpus("leftpad-lite"),
       policy: "block", violations: new ViolationStore(), approvalRequests: new ApprovalRequestStore() });
     const server = await new Promise<Server>((resolve) => { const s = app.listen(0, () => resolve(s)); });
     const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
