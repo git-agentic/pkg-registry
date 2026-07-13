@@ -14,3 +14,6 @@ policy/keys/
 # macOS
 .DS_Store
 **/.DS_Store
+
+# missing-Landlock-helper test scratch (packages/sandbox)
+.nohelper-*/

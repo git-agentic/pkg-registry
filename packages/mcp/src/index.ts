@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { ProxyClient, ProxyError } from "./client.js";
@@ -5,7 +6,7 @@ import { TOOLS } from "./tools.js";
 
 /** Build an McpServer with every Sentinel tool registered against `client`. */
 export function createMcpServer(client: ProxyClient): McpServer {
-  const server = new McpServer({ name: "sentinel", version: "0.1.0" });
+  const server = new McpServer({ name: "sentinel", version: "0.1.0-alpha.1" });
   for (const tool of TOOLS) {
     server.registerTool(
       tool.name,

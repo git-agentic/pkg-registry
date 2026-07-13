@@ -291,6 +291,14 @@ and stays filesystem+network confined as before. The Phase 29 `/dev/null`
 carve-out is unchanged (Landlock is allow-list-only and can't deny a literal
 under an allowed dir). `native` is advisory-only on both platforms by decision.
 A spawned child inherits the filesystem/network confinement on both platforms.
+**Distribution note (ADR-0052):** the published `@sentinel/sandbox` npm package
+ships the Landlock helper as *source only* — no prebuilt binary (it would be
+architecture-specific presented as portable) and no install-time compilation
+(a posture violation for a tool that guards against lifecycle scripts). A
+fresh npm install therefore runs the advisory exec floor on Linux, announced
+by a one-time notice, until the operator explicitly compiles the helper
+(`node node_modules/@sentinel/sandbox/scripts/build-native.mjs`); monorepo
+builds are unchanged.
 A cross-platform exec floor now exists (macOS Seatbelt, Linux Landlock where
 available); [issue #8](https://github.com/git-agentic/pkg-registry/issues/8)
 is closed, with the Landlock-availability caveat documented here.
@@ -318,7 +326,10 @@ Stated plainly. Each is a deliberate, recorded trade-off, not an oversight.
   floor on hosts where Landlock + a compiled `cc` toolchain are available
   (fail-open, pre-checked detection with a one-time notice on fallback) — a
   host without either stays on the Phase 29 advisory floor, filesystem+network
-  confined as before, no availability regression. `native` loading is not
+  confined as before, no availability regression. npm-installed builds start
+  in exactly this advisory state — the published package ships helper source,
+  not a binary, and enforcing the Linux floor requires an explicit operator
+  compile (ADR-0052). `native` loading is not
   distinguishable from reading at the path level and stays a scoring signal. A
   cross-platform floor now exists; see §3.9;
   [issue #8](https://github.com/git-agentic/pkg-registry/issues/8) is closed

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import net from "node:net";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, realpathSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -301,5 +301,44 @@ describe("BubblewrapSandbox enforcement", { skip }, () => {
     // Containment-only: the tmpfs makes the path ENOENT, which carries no perm
     // signature, so NO violation classification is asserted (the accepted
     // Seatbelt/bwrap telemetry asymmetry, ADR-0038/ADR-0023).
+  });
+
+  test("missing Landlock helper: scripts still run on the advisory floor with a one-time notice (packaged-artifact state)", () => {
+    // The published @sentinel/sandbox tarball deliberately ships NO compiled
+    // landlock-exec (source-only, no lifecycle-script compile). Reproduce that
+    // state hermetically: copy the built dist/ WITHOUT the helper binary and
+    // drive bubblewrap.js from the copy — its helper lookup (same-dir sibling)
+    // then finds nothing, exactly like a fresh `npm install`.
+    const pkgRoot = fileURLToPath(new URL("..", import.meta.url));
+    const builtDist = join(pkgRoot, "dist");
+    assert.ok(existsSync(join(builtDist, "bubblewrap.js")), "run `npm run build` first — this test drives the compiled dist/");
+    const tmpRoot = mkdtempSync(join(pkgRoot, ".nohelper-"));
+    const distCopy = join(tmpRoot, "dist");
+    mkdirSync(distCopy);
+    try {
+      for (const f of readdirSync(builtDist)) {
+        if (f === "landlock-exec") continue; // the shipped tarball never contains the binary
+        if (!f.endsWith(".js")) continue;
+        writeFileSync(join(distCopy, f), readFileSync(join(builtDist, f)));
+      }
+      const work = realpathSync(mkdtempSync(join(tmpdir(), "bw-nohelper-")));
+      const script = [
+        `import { BubblewrapSandbox } from ${JSON.stringify(join(distCopy, "bubblewrap.js"))};`,
+        `const r = new BubblewrapSandbox().run("echo NOHELPER-OK", { cwd: process.cwd(), approved: [], homeDir: process.env.HOME });`,
+        `const r2 = new BubblewrapSandbox().run("echo SECOND-OK", { cwd: process.cwd(), approved: [], homeDir: process.env.HOME });`,
+        `process.stdout.write(JSON.stringify({ code: r.exitCode, out: r.stdout, code2: r2.exitCode, out2: r2.stdout }));`,
+      ].join("\n");
+      const child = spawnSync(process.execPath, ["--input-type=module", "-e", script], { cwd: work, encoding: "utf8" });
+      assert.equal(child.status, 0, child.stderr);
+      const res = JSON.parse(child.stdout) as { code: number; out: string; code2: number; out2: string };
+      assert.equal(res.code, 0, "script must still run on the advisory floor");
+      assert.match(res.out, /NOHELPER-OK/);
+      assert.equal(res.code2, 0);
+      assert.match(res.out2, /SECOND-OK/);
+      const notices = child.stderr.match(/Landlock exec floor unavailable/g) ?? [];
+      assert.equal(notices.length, 1, `advisory notice must print exactly once per process, got ${notices.length}:\n${child.stderr}`);
+    } finally {
+      rmSync(tmpRoot, { recursive: true, force: true });
+    }
   });
 });

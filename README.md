@@ -36,8 +36,12 @@ end-to-end and are covered by the full test suite (Linux CI on Node 22 and 24;
 macOS Seatbelt enforcement is exercised on maintainers' machines) — but this
 has not yet been hardened by production use, and APIs may change without
 notice. The complete phase-by-phase build log lives in
-[docs/adr/](./docs/adr/) (one ADR per phase). **No npm packages are
-published yet**: build from source (Quickstart below). Threat model:
+[docs/adr/](./docs/adr/) (one ADR per phase). **Published as an alpha
+preview**: all seven packages ship as `0.1.0-alpha.1` under the `alpha`
+dist-tag (`npm install -g @sentinel/cli@alpha @sentinel/proxy@alpha`) — see
+the [release notes](./docs/releases/v0.1.0-alpha.1.md) and
+[release process](./docs/release-process.md); building from source
+(Quickstart below) remains fully supported. Threat model:
 [sentinel-threat-model.md](./sentinel-threat-model.md) · Homepage:
 [git-agentic.com/sentinel](https://git-agentic.com/sentinel)
 

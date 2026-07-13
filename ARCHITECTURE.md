@@ -275,7 +275,12 @@ exists AND `landlock-exec --check` (an ABI probe) exits 0, cached per process;
 any negative falls back to the Phase 29 advisory floor with a one-time notice,
 so a Landlock-less or no-`cc` host never regresses. `computeDenySet` gains a
 `linux-landlock` `execFloorMode` and `classifyViolation` confirms a
-floor-outside exec denial as `exec-floor-deny`. The Phase 29 `/dev/null`
+floor-outside exec denial as `exec-floor-deny`. The *published*
+`@sentinel/sandbox` package ships the helper as source only
+(`native/landlock-exec.c` + `scripts/build-native.mjs`) — never a prebuilt
+binary and never a `postinstall` compile; a fresh npm install runs this same
+advisory fallback until the operator explicitly compiles the helper
+(ADR-0052). The Phase 29 `/dev/null`
 carve-out is unchanged and still applies (Landlock is allow-list-only and can't
 deny a literal under an allowed directory) (ADR-0044). `native` (dlopen/WASM)
 remains formally advisory-only on both platforms — no path-level primitive

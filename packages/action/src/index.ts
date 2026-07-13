@@ -1,4 +1,6 @@
-import { readFileSync } from "node:fs";
+#!/usr/bin/env node
+import { readFileSync, realpathSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 import { NpmUpstream, LocalFixtureUpstream, type Upstream } from "@sentinel/proxy";
 import { loadPolicy, DEFAULT_POLICY, type EnterprisePolicy } from "@sentinel/core";
 import { runCi } from "./run.js";
@@ -44,7 +46,16 @@ async function main(): Promise<void> {
   process.exit(result.exitCode);
 }
 
-main().catch((err) => {
-  console.error(`::error::sentinel-ci failed: ${(err as Error).message}`);
-  process.exit(1);
-});
+// Run only when invoked as the entrypoint (bin shim or `node dist/index.js`),
+// never on import — the same guard as @sentinel/proxy and @sentinel/mcp.
+function isEntrypoint(): boolean {
+  const arg = process.argv[1];
+  if (!arg) return false;
+  try { return import.meta.url === pathToFileURL(realpathSync(arg)).href; } catch { return false; }
+}
+if (isEntrypoint()) {
+  main().catch((err) => {
+    console.error(`::error::sentinel-ci failed: ${(err as Error).message}`);
+    process.exit(1);
+  });
+}

@@ -1,13 +1,50 @@
 {
   "name": "@sentinel/proxy",
-  "version": "0.1.0",
-  "description": "Sentinel registry proxy: transparently serves npm packages while intercepting and auditing each tarball.",
+  "version": "0.1.0-alpha.1",
+  "description": "Sentinel registry proxy: transparently serves npm packages while intercepting and auditing each tarball, with an authoritative native publish path, verified claims, and time-locked retraction.",
   "license": "Apache-2.0",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/git-agentic/pkg-registry.git",
+    "directory": "packages/proxy"
+  },
+  "homepage": "https://github.com/git-agentic/pkg-registry#readme",
+  "bugs": "https://github.com/git-agentic/pkg-registry/issues",
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public",
+    "tag": "alpha"
+  },
   "main": "./dist/index.js",
-  "bin": { "sentinel-proxy": "./dist/index.js", "sentinel-registry": "./dist/registry-cli.js" },
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "sentinel-proxy": "./dist/index.js",
+    "sentinel-registry": "./dist/registry-cli.js"
+  },
+  "files": [
+    "dist",
+    "!dist/**/*.map",
+    "public"
+  ],
+  "keywords": [
+    "security",
+    "supply-chain",
+    "npm-registry",
+    "registry-proxy",
+    "npm-audit",
+    "package-retraction"
+  ],
   "dependencies": {
-    "@sentinel/core": "0.1.0",
+    "@sentinel/core": "0.1.0-alpha.1",
     "commander": "^15.0.0",
     "express": "^5.2.1",
     "express-rate-limit": "^8.5.2"

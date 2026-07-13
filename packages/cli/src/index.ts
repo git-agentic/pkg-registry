@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { Buffer } from "node:buffer";
-import { lstatSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { lstatSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, relative, basename } from "node:path";
 import { spawn } from "node:child_process";
@@ -28,7 +28,7 @@ const program = new Command();
 program
   .name("sentinel")
   .description("Agent-auditable security layer for npm — pre-install audit verdicts.")
-  .version("0.1.0");
+  .version("0.1.0-alpha.1");
 
 program
   .command("audit")
@@ -559,7 +559,16 @@ program
     process.exitCode = r.exitCode;
   });
 
-if (process.argv[1]?.endsWith("index.ts") || process.argv[1]?.endsWith("index.js")) program.parseAsync();
+// Parse when invoked as the entrypoint — including through an npm .bin shim,
+// which is a symlink whose own name ("sentinel") never matches this file's;
+// realpathSync resolves it back to dist/index.js.
+function isCliEntrypoint(): boolean {
+  const arg = process.argv[1];
+  if (!arg) return false;
+  if (arg.endsWith("index.ts") || arg.endsWith("index.js")) return true;
+  try { return realpathSync(arg).endsWith("index.js"); } catch { return false; }
+}
+if (isCliEntrypoint()) program.parseAsync();
 
 // ---------------------------------------------------------------------------
 

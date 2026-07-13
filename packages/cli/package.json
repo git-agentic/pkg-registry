@@ -1,18 +1,54 @@
 {
   "name": "@sentinel/cli",
-  "version": "0.1.0",
-  "description": "Sentinel CLI: pre-install audit verdicts and registry-redirected npm/npx.",
+  "version": "0.1.0-alpha.1",
+  "description": "Sentinel CLI: pre-install audit verdicts, whole-tree lockfile audits, registry-redirected npm/npx, policy tooling, and sandbox-enforced installs.",
   "license": "Apache-2.0",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/git-agentic/pkg-registry.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/git-agentic/pkg-registry#readme",
+  "bugs": "https://github.com/git-agentic/pkg-registry/issues",
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public",
+    "tag": "alpha"
+  },
   "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
   "bin": {
     "sentinel": "./dist/index.js",
     "sentinel-script-shell": "./dist/script-shell.js"
   },
+  "files": [
+    "dist",
+    "!dist/**/*.map"
+  ],
+  "keywords": [
+    "security",
+    "supply-chain",
+    "npm-audit",
+    "cli",
+    "sbom",
+    "attestation",
+    "sandbox"
+  ],
   "dependencies": {
-    "@sentinel/core": "0.1.0",
-    "@sentinel/sandbox": "0.1.0",
+    "@sentinel/core": "0.1.0-alpha.1",
+    "@sentinel/sandbox": "0.1.0-alpha.1",
     "commander": "^15.0.0"
   },
-  "devDependencies": { "@types/node": "^24.13.2" }
+  "devDependencies": {
+    "@types/node": "^24.13.2"
+  }
 }

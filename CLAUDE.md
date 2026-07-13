@@ -236,7 +236,12 @@ Node 22 needs `--experimental-sqlite`). The Landlock helper
 (`packages/sandbox/native/landlock-exec.c`) is compiled by `npm run build`
 (`build-native.mjs`, Linux + `cc` only, no-op elsewhere) — **never** a
 `postinstall` hook or lazy runtime compile; both would be posture violations for
-a tool that guards against exactly that.
+a tool that guards against exactly that. The *published* `@sentinel/sandbox`
+ships the helper as source only (no prebuilt binary in any tarball — enforced by
+`packages/core/test/package-contents.test.ts`); npm installs opt in via an
+explicit `node …/scripts/build-native.mjs` (ADR-0052). Releases version all
+seven workspaces in lockstep with exact internal pins and publish via the
+two-stage `release.yml` (see [docs/release-process.md](./docs/release-process.md)).
 
 **Proxy env vars** — all optional, all parsed **fail-closed once at startup**
 (malformed ⇒ FATAL); unset ⇒ documented default, zero behavior change:
@@ -258,8 +263,8 @@ a tool that guards against exactly that.
 
 ```bash
 npm run build            # tsc --build (project references) + the Linux-only native helper step
-npm test                 # hermetic engine + e2e proxy suite. 990 tests on this darwin host
-                         # as of 2026-07-13 (987 pass, 3 skipped) — but NEVER plan arithmetic
+npm test                 # hermetic engine + e2e proxy suite. 997 tests on this darwin host
+                         # as of 2026-07-13 (994 pass, 3 skipped) — but NEVER plan arithmetic
                          # on a written count; run npm test and use what it prints.
 npm run demo             # offline malware-detection walkthrough
 node packages/proxy/dist/index.js   # run the proxy (see README for env vars)
