@@ -6,7 +6,7 @@ import { execFileSync } from "node:child_process";
 import { after, before, describe, test } from "node:test";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
-import { DEFAULT_POLICY, generateKeypair, signToken, type AuditReport, type Role } from "@sentinel/core";
+import { DEFAULT_POLICY, generateKeypair, signToken, type AuditReport, type Role } from "@git-agentic/sentinel-core";
 import { createServer } from "../src/server.js";
 import { AuditStore } from "../src/store.js";
 import { LocalFixtureUpstream } from "../src/upstream.js";

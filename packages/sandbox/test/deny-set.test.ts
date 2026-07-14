@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import type { Capability } from "@sentinel/core";
+import type { Capability } from "@git-agentic/sentinel-core";
 import { computeDenySet, isSafeGrantTarget, landlockAllowPaths } from "../src/deny-set.js";
 import { generateProfile } from "../src/profile.js";
 import { generateBwrapArgs } from "../src/bwrap.js";

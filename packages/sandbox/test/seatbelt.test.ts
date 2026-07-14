@@ -7,7 +7,7 @@ import { describe, test } from "node:test";
 import { SeatbeltSandbox } from "../src/seatbelt.js";
 import { runLifecycleScripts } from "../src/runner.js";
 import { scrubEnv } from "../src/env.js";
-import type { Capability } from "@sentinel/core";
+import type { Capability } from "@git-agentic/sentinel-core";
 
 const darwin = process.platform === "darwin";
 

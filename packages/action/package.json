@@ -1,14 +1,51 @@
 {
-  "name": "@sentinel/action",
-  "version": "0.1.0",
-  "description": "Sentinel CI runner: self-booting dependency-tree audit for GitHub Actions (sentinel-ci).",
+  "name": "@git-agentic/sentinel-action",
+  "version": "0.1.0-alpha.1",
+  "description": "Sentinel CI runner: self-booting dependency-tree audit for GitHub Actions (sentinel-ci) — audits a lockfile, writes a CycloneDX SBOM, and posts a PR verdict.",
   "license": "Apache-2.0",
   "type": "module",
-  "main": "./dist/index.js",
-  "bin": { "sentinel-ci": "./dist/index.js" },
-  "dependencies": {
-    "@sentinel/core": "0.1.0",
-    "@sentinel/proxy": "0.1.0"
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/git-agentic/pkg-registry.git",
+    "directory": "packages/action"
   },
-  "devDependencies": { "@types/node": "^24.13.2" }
+  "homepage": "https://github.com/git-agentic/pkg-registry#readme",
+  "bugs": "https://github.com/git-agentic/pkg-registry/issues",
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public",
+    "tag": "alpha"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "sentinel-ci": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "!dist/**/*.map"
+  ],
+  "keywords": [
+    "security",
+    "supply-chain",
+    "github-actions",
+    "ci",
+    "npm-audit",
+    "sbom"
+  ],
+  "dependencies": {
+    "@git-agentic/sentinel-core": "0.1.0-alpha.1",
+    "@git-agentic/sentinel-proxy": "0.1.0-alpha.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.2"
+  }
 }

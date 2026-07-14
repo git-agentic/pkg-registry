@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { generateProfile } from "../src/profile.js";
-import type { Capability } from "@sentinel/core";
+import type { Capability } from "@git-agentic/sentinel-core";
 
 const fs = (target: string): Capability => ({ kind: "filesystem", target, evidence: [] });
 const net = (target: string): Capability => ({ kind: "network", target, evidence: [] });

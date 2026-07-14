@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
 import { createHash, randomUUID } from "node:crypto";
-import type { AuditReport } from "@sentinel/core";
+import type { AuditReport } from "@git-agentic/sentinel-core";
 import type { ViolationRecord } from "./violations.js";
 
 export interface HistorySummary {

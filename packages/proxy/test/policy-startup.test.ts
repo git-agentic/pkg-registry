@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, test } from "node:test";
-import { DEFAULT_POLICY, generateKeypair, signPolicy } from "@sentinel/core";
+import { DEFAULT_POLICY, generateKeypair, signPolicy } from "@git-agentic/sentinel-core";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, "..", "..", "..");

@@ -1,4 +1,4 @@
-import { sensitivePathsFor, type Capability } from "@sentinel/core";
+import { sensitivePathsFor, type Capability } from "@git-agentic/sentinel-core";
 import { pathCovers } from "./path-cover.js";
 import { execAllowFloor, linuxExecFloor } from "./exec-floor.js";
 import { SENSITIVE_EXECUTABLES, execCarveOutPaths, classifyProcessTarget } from "./sensitive-executables.js";

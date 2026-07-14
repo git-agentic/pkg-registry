@@ -1,4 +1,4 @@
-import type { Capability } from "@sentinel/core";
+import type { Capability } from "@git-agentic/sentinel-core";
 
 export interface SandboxViolation {
   /** The denied resource class the child hit. */

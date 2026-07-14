@@ -1,4 +1,4 @@
-import type { AuditReport, Capability, CapabilityKind, Remediation, Severity, Verdict, TreeAuditResult, LintFinding } from "@sentinel/core";
+import type { AuditReport, Capability, CapabilityKind, Remediation, Severity, Verdict, TreeAuditResult, LintFinding } from "@git-agentic/sentinel-core";
 
 const C = {
   reset: "\x1b[0m", bold: "\x1b[1m", dim: "\x1b[2m",

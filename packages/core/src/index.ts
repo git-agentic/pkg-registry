@@ -1,4 +1,4 @@
-/** @sentinel/core — deterministic npm package audit engine. */
+/** @git-agentic/sentinel-core — deterministic npm package audit engine. */
 
 export * from "./types.js";
 export { score, severityRank, POLICY_SYNTHESIZED_RULE_IDS } from "./score.js";

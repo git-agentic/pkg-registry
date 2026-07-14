@@ -1,4 +1,4 @@
-import { sensitivePathsFor, type Capability } from "@sentinel/core";
+import { sensitivePathsFor, type Capability } from "@git-agentic/sentinel-core";
 import { pathCovers } from "./path-cover.js";
 import { canonicalizeMacPath, expandHome, isSafeGrantTarget } from "./deny-set.js";
 import { writeAllowFloor } from "./write-floor.js";

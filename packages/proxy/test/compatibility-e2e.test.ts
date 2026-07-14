@@ -6,7 +6,7 @@ import { after, describe, test } from "node:test";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 import { gzipSync } from "node:zlib";
-import { DEFAULT_POLICY, generateKeypair, integrityOf, integrityOfAlgo, runAudit, signToken, type ClaimCorpus, type EnterprisePolicy } from "@sentinel/core";
+import { DEFAULT_POLICY, generateKeypair, integrityOf, integrityOfAlgo, runAudit, signToken, type ClaimCorpus, type EnterprisePolicy } from "@git-agentic/sentinel-core";
 import { createServer } from "../src/server.js";
 import { AuditStore } from "../src/store.js";
 import { ApprovalStore } from "../src/approvals.js";

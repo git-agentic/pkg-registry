@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, test } from "node:test";
-import { generateKeypair, signClaimCorpus, signRetractionCorpus } from "@sentinel/core";
+import { generateKeypair, signClaimCorpus, signRetractionCorpus } from "@git-agentic/sentinel-core";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..", "..", "..");

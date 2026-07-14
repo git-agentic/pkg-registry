@@ -6,7 +6,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { DEFAULT_POLICY, integrityOf, runAudit } from "@sentinel/core";
+import { DEFAULT_POLICY, integrityOf, runAudit } from "@git-agentic/sentinel-core";
 import { createServer } from "../packages/proxy/src/server.js";
 import { AuditStore } from "../packages/proxy/src/store.js";
 import { ApprovalStore } from "../packages/proxy/src/approvals.js";

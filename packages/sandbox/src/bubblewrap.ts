@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join, sep } from "node:path";
 import { generateBwrapArgs } from "./bwrap.js";
 import type { Sandbox, SandboxResult } from "./types.js";
-import type { Capability } from "@sentinel/core";
+import type { Capability } from "@git-agentic/sentinel-core";
 import { computeDenySet, landlockAllowPaths } from "./deny-set.js";
 import { classifyViolation } from "./violation.js";
 import { nodeInstallPrefix } from "./read-allow.js";

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { generateBwrapArgs } from "../src/bwrap.js";
 import { SENSITIVE_EXECUTABLES } from "../src/sensitive-executables.js";
-import type { Capability } from "@sentinel/core";
+import type { Capability } from "@git-agentic/sentinel-core";
 
 const fs = (target: string): Capability => ({ kind: "filesystem", target, evidence: [] });
 const net = (target: string): Capability => ({ kind: "network", target, evidence: [] });

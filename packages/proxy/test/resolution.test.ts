@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { DEFAULT_POLICY, generateKeypair, type EnterprisePolicy } from "@sentinel/core";
+import { DEFAULT_POLICY, generateKeypair, type EnterprisePolicy } from "@git-agentic/sentinel-core";
 import {
   EMPTY_CLAIM_CORPUS,
   normalizePackageName,

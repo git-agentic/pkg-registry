@@ -26,7 +26,7 @@ import { ApprovalStore } from "../src/approvals.js";
 import { LocalFixtureUpstream } from "../src/upstream.js";
 import { ViolationStore } from "../src/violations.js";
 import { ApprovalRequestStore } from "../src/approval-requests.js";
-import { DEFAULT_POLICY, generateKeypair, signToken, type AuditReport } from "@sentinel/core";
+import { DEFAULT_POLICY, generateKeypair, signToken, type AuditReport } from "@git-agentic/sentinel-core";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURES = join(HERE, "..", "..", "..", "fixtures");

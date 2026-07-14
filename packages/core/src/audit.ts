@@ -21,7 +21,7 @@ import type {
 import type { Advisory } from "./advisory-corpus.js";
 import type { VulnAdvisory } from "./vuln-corpus.js";
 
-export const ENGINE_VERSION = "0.1.0";
+export const ENGINE_VERSION = "0.1.0-alpha.1";
 
 /** Run the heuristic rule pipeline over an already-extracted package. */
 export function runRules(input: AuditInput): Finding[] {

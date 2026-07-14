@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { describe, test } from "node:test";
-import { LocalFixtureUpstream } from "@sentinel/proxy";
+import { LocalFixtureUpstream } from "@git-agentic/sentinel-proxy";
 import { runCi } from "../src/run.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));

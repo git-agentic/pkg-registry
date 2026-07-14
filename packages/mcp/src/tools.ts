@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { z } from "zod";
-import { parseLockfile } from "@sentinel/core";
+import { parseLockfile } from "@git-agentic/sentinel-core";
 import type { ProxyClient } from "./client.js";
 import { summarizeAudit } from "./format.js";
 

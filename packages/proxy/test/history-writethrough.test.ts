@@ -3,7 +3,7 @@ import { describe, test } from "node:test";
 import { HistoryDb } from "../src/history-db.js";
 import { AuditStore } from "../src/store.js";
 import { ViolationStore } from "../src/violations.js";
-import type { AuditReport } from "@sentinel/core";
+import type { AuditReport } from "@git-agentic/sentinel-core";
 import type { ViolationRecord } from "../src/violations.js";
 
 const report = {

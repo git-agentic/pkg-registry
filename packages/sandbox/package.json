@@ -1,12 +1,51 @@
 {
-  "name": "@sentinel/sandbox",
-  "version": "0.1.0",
-  "description": "Sentinel sandbox: generate an OS sandbox profile from approved capabilities and run lifecycle scripts under it (macOS Seatbelt).",
+  "name": "@git-agentic/sentinel-sandbox",
+  "version": "0.1.0-alpha.1",
+  "description": "Sentinel capability sandbox: generate an OS sandbox profile from approved capabilities and run lifecycle scripts under it (macOS Seatbelt / Linux bubblewrap, deny-by-default).",
   "license": "Apache-2.0",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/git-agentic/pkg-registry.git",
+    "directory": "packages/sandbox"
+  },
+  "homepage": "https://github.com/git-agentic/pkg-registry#readme",
+  "bugs": "https://github.com/git-agentic/pkg-registry/issues",
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public",
+    "tag": "alpha"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
-  "dependencies": { "@sentinel/core": "0.1.0" },
-  "devDependencies": { "@types/node": "^24.13.2" }
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "!dist/**/*.map",
+    "!dist/landlock-exec",
+    "native",
+    "scripts/build-native.mjs"
+  ],
+  "keywords": [
+    "security",
+    "sandbox",
+    "seatbelt",
+    "bubblewrap",
+    "landlock",
+    "install-scripts",
+    "least-privilege"
+  ],
+  "dependencies": {
+    "@git-agentic/sentinel-core": "0.1.0-alpha.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.2"
+  }
 }

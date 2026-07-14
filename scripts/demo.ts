@@ -16,7 +16,7 @@ import { ApprovalRequestStore } from "../packages/proxy/src/approval-requests.js
 import { LocalFixtureUpstream } from "../packages/proxy/src/upstream.js";
 import { formatReport } from "../packages/cli/src/format.js";
 import type { AuditReport } from "../packages/core/src/index.js";
-import { DEFAULT_POLICY } from "@sentinel/core";
+import { DEFAULT_POLICY } from "@git-agentic/sentinel-core";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 

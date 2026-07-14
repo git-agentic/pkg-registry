@@ -36,8 +36,12 @@ end-to-end and are covered by the full test suite (Linux CI on Node 22 and 24;
 macOS Seatbelt enforcement is exercised on maintainers' machines) — but this
 has not yet been hardened by production use, and APIs may change without
 notice. The complete phase-by-phase build log lives in
-[docs/adr/](./docs/adr/) (one ADR per phase). **No npm packages are
-published yet**: build from source (Quickstart below). Threat model:
+[docs/adr/](./docs/adr/) (one ADR per phase). **Published as an alpha
+preview**: all seven packages ship as `0.1.0-alpha.1` under the `alpha`
+dist-tag (`npm install -g @git-agentic/sentinel-cli@alpha @git-agentic/sentinel-proxy@alpha`) — see
+the [release notes](./docs/releases/v0.1.0-alpha.1.md) and
+[release process](./docs/release-process.md); building from source
+(Quickstart below) remains fully supported. Threat model:
 [sentinel-threat-model.md](./sentinel-threat-model.md) · Homepage:
 [git-agentic.com/sentinel](https://git-agentic.com/sentinel)
 
@@ -693,7 +697,7 @@ There is no auto-approve or clear-quarantine tool, and none is planned — see
 
 ## GitHub Action (Phase 17)
 
-`@sentinel/action` (bin `sentinel-ci`) is a self-contained on-ramp into pull
+`@git-agentic/sentinel-action` (bin `sentinel-ci`) is a self-contained on-ramp into pull
 requests — it needs no separately-running proxy. `runCi` self-boots the
 proxy in-process against real npm, audits your lockfile through the same
 `/-/audit-tree` route the CLI uses, writes a CycloneDX SBOM, and posts the
@@ -781,11 +785,11 @@ clear it without weakening detection.
 
 ```
 packages/
-  core/    @sentinel/core   audit engine — rules, scoring, data model, LLM adapter (no I/O, fully unit-tested)
-  proxy/   @sentinel/proxy  Express registry proxy, pluggable upstream, audit store, dashboard
-  cli/     @sentinel/cli    pre-install verdicts + registry-redirected npm/npx
-  mcp/     @sentinel/mcp    sentinel-mcp: stdio MCP server, thin client to the proxy (Phase 11)
-  action/  @sentinel/action sentinel-ci: self-boots the proxy for GitHub Actions (Phase 17)
+  core/    @git-agentic/sentinel-core   audit engine — rules, scoring, data model, LLM adapter (no I/O, fully unit-tested)
+  proxy/   @git-agentic/sentinel-proxy  Express registry proxy, pluggable upstream, audit store, dashboard
+  cli/     @git-agentic/sentinel-cli    pre-install verdicts + registry-redirected npm/npx
+  mcp/     @git-agentic/sentinel-mcp    sentinel-mcp: stdio MCP server, thin client to the proxy (Phase 11)
+  action/  @git-agentic/sentinel-action sentinel-ci: self-boots the proxy for GitHub Actions (Phase 17)
 fixtures/  benign + synthetic-malicious packages; make-fixtures.ts packs real .tgz tarballs
 scripts/   make-fixtures.ts, demo.ts
 ARCHITECTURE.md   full design   ·   CLAUDE.md   working agreement for this repo

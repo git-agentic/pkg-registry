@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { HistoryDb } from "../src/history-db.js";
-import type { AuditReport } from "@sentinel/core";
+import type { AuditReport } from "@git-agentic/sentinel-core";
 import type { ViolationRecord } from "../src/violations.js";
 
 function auditReport(over: Partial<{ integrity: string; name: string; version: string; verdict: "allow" | "warn" | "block"; score: number; finding: string; signature: string; provenance: string }> = {}): AuditReport {

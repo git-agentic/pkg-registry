@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, test } from "node:test";
-import { generateKeypair } from "@sentinel/core";
+import { generateKeypair } from "@git-agentic/sentinel-core";
 
 const execFileAsync = promisify(execFile);
 const HERE = dirname(fileURLToPath(import.meta.url));

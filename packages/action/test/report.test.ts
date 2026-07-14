@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { renderPrComment, REPORT_MARKER } from "../src/report.js";
-import type { TreeAuditResult } from "@sentinel/core";
+import type { TreeAuditResult } from "@git-agentic/sentinel-core";
 
 const result: TreeAuditResult = {
   aggregate: {

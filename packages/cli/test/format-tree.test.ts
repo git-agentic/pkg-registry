@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import type { TreeAuditResult } from "@sentinel/core";
+import type { TreeAuditResult } from "@git-agentic/sentinel-core";
 import { formatTree, treeExitCode } from "../src/format.js";
 
 const gated: TreeAuditResult = {

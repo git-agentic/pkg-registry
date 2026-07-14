@@ -6,7 +6,7 @@
 
 **Architecture:** Three layered deliverables. **A** adds raw-byte magic classification to the extractor and threads the results into rules via a policy-independent `ExtractionObservations` channel. **B** adds an acorn-based `native-payload-loader` rule that correlates READ→DECODE→WRITE→LAUNCH with bounded local dataflow and escalates to critical only when the launched target is taint-reachable from a packaged read. **D** overlays a cooldown block at serve time (no wall-clock in the engine). **E** adds `sentinel exec -- <cmd>` running under the existing sandbox. A+B are the first independently shippable milestone; they close the zero-day.
 
-**Tech Stack:** Node 24 + TypeScript, npm workspaces (`core`, `proxy`, `sandbox`, `cli`), Express 5, `tar` 7, `acorn` + `acorn-walk` (new — `@sentinel/core`'s first parser deps), tests on `node:test` + `tsx`.
+**Tech Stack:** Node 24 + TypeScript, npm workspaces (`core`, `proxy`, `sandbox`, `cli`), Express 5, `tar` 7, `acorn` + `acorn-walk` (new — `@git-agentic/sentinel-core`'s first parser deps), tests on `node:test` + `tsx`.
 
 ## Global Constraints
 
@@ -1241,7 +1241,7 @@ import { fileURLToPath } from "node:url";
 import { after, before, describe, test } from "node:test";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
-import { DEFAULT_POLICY } from "@sentinel/core";
+import { DEFAULT_POLICY } from "@git-agentic/sentinel-core";
 import { createServer } from "../src/server.js";
 import { AuditStore } from "../src/store.js";
 import { LocalFixtureUpstream } from "../src/upstream.js";
@@ -1448,7 +1448,7 @@ git commit -m "feat(core): releaseCooldown policy field with fail-closed validat
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { cooldownDecision, resolvePublishTime, applyCooldown } from "../src/cooldown.js";
-import type { EnterprisePolicy, AuditReport } from "@sentinel/core";
+import type { EnterprisePolicy, AuditReport } from "@git-agentic/sentinel-core";
 
 const NOW = Date.parse("2026-07-12T00:00:00Z");
 const pol = (cd?: object): EnterprisePolicy => ({ schema: 1, version: "t", scoring: { severityWeight: { info:0,low:4,medium:12,high:25,critical:55 }, diffMultiplier:1.6, thresholds:{allow:80,warn:50}, hardBlockSeverity:"critical" }, rules:{disabled:[]}, allow:[], deny:[], privateNamespaces:[], ...(cd ? { releaseCooldown: cd } : {}) } as EnterprisePolicy);
@@ -1506,7 +1506,7 @@ Expected: FAIL — module not found.
 
 ```ts
 // packages/proxy/src/cooldown.ts
-import { matchPackage, type AuditReport, type EnterprisePolicy } from "@sentinel/core";
+import { matchPackage, type AuditReport, type EnterprisePolicy } from "@git-agentic/sentinel-core";
 
 const HOUR_MS = 3_600_000;
 
@@ -1574,7 +1574,7 @@ Reuse the Task 7 harness verbatim (imports + `ensureFixtures`), but give `startS
 ```ts
 // packages/proxy/test/cooldown-e2e.test.ts
 // (same imports + ensureFixtures + tarballUrl as payload-loader-e2e.test.ts)
-import { parsePolicy } from "@sentinel/core";
+import { parsePolicy } from "@git-agentic/sentinel-core";
 
 // leftpad-lite@1.0.1 carries a fixed `time` in the fixture registry (Step 2 adds it if absent).
 const PUBLISHED = "2026-07-10T00:00:00Z";
@@ -1854,7 +1854,7 @@ Expected (darwin): FAIL — unknown command `exec`.
 
 In `packages/cli/src/index.ts`, add `scrubEnv` to the existing sandbox import (it is already exported from `packages/sandbox/src/index.ts` — no export change needed):
 ```ts
-import { createSandbox, runLifecycleScripts, scrubEnv } from "@sentinel/sandbox";
+import { createSandbox, runLifecycleScripts, scrubEnv } from "@git-agentic/sentinel-sandbox";
 ```
 Register the command (near the `run-scripts` command):
 ```ts
