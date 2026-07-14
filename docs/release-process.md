@@ -23,7 +23,15 @@ failure without unpublishing anything already released.
 
 - Pre-1.0 releases use `0.1.0-alpha.N` (then `-beta.N`, `-rc.N`) with the
   npm dist-tag matching the prerelease channel (`alpha`, `beta`, `rc`).
-  `latest` is **never** pointed at a prerelease.
+- **The `latest` dist-tag, pre-stable:** npm force-creates `latest` on a
+  package's first publish (even with `--tag alpha`) and never moves it; it
+  also cannot be deleted. Until a stable release exists, `latest` is
+  therefore kept pointing at the **newest prerelease** — retargeted manually
+  after each release (`npm dist-tag add @git-agentic/sentinel-<p>@<version>
+  latest`, one per package; needs an interactive npm login — OIDC trusted
+  publishing covers publish only, not dist-tag mutations). Stage B warns in
+  the run summary when `latest` is stale. Once `0.1.0` stable ships with
+  `--tag latest`, this manual step disappears.
 - All seven packages version in lockstep — one release version across the
   workspace, even for packages with no changes. Lockstep keeps the internal
   dependency pins trivially correct and the support matrix one-dimensional.
