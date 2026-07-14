@@ -189,7 +189,10 @@ jobs:
           VERSION="${RELEASE_TAG#v}"
           published=""
           for p in core proxy sandbox mcp steward cli action; do
-            t="release-artifacts/git-agentic-sentinel-$p-$VERSION.tgz"
+            # ./ prefix is load-bearing: a bare "dir/name.tgz" has exactly one
+            # slash, so npm parses it as a github:owner/repo shorthand instead
+            # of a file path and tries git ls-remote (run 29307312478).
+            t="./release-artifacts/git-agentic-sentinel-$p-$VERSION.tgz"
             echo "publishing @git-agentic/sentinel-$p@$VERSION"
             if ! npm publish "$t" --access public --tag alpha --provenance; then
               echo "::error::publish of @git-agentic/sentinel-$p failed. Already published (immutable): ${published:-none}. Do NOT unpublish; fix forward."; exit 1
