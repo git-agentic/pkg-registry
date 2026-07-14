@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
-import type { RegistrySignature } from "@sentinel/core";
+import type { RegistrySignature } from "@agentic-sentinel/core";
 import { assertAllowedTarballUrl } from "./net-config.js";
 import { readBodyCapped } from "./limits.js";
 

@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, test } from "node:test";
-import type { Capability } from "@sentinel/core";
+import type { Capability } from "@agentic-sentinel/core";
 import { parseApprovals, unapprovedAtoms, readPackageFiles } from "../src/index.js";
 
 const cap = (kind: string, target: string): Capability => ({ kind: kind as Capability["kind"], target, evidence: [] });

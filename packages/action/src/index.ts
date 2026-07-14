@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { readFileSync, realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import { NpmUpstream, LocalFixtureUpstream, type Upstream } from "@sentinel/proxy";
-import { loadPolicy, DEFAULT_POLICY, type EnterprisePolicy } from "@sentinel/core";
+import { NpmUpstream, LocalFixtureUpstream, type Upstream } from "@agentic-sentinel/proxy";
+import { loadPolicy, DEFAULT_POLICY, type EnterprisePolicy } from "@agentic-sentinel/core";
 import { runCi } from "./run.js";
 
 function env(name: string, fallback = ""): string {
@@ -47,7 +47,7 @@ async function main(): Promise<void> {
 }
 
 // Run only when invoked as the entrypoint (bin shim or `node dist/index.js`),
-// never on import — the same guard as @sentinel/proxy and @sentinel/mcp.
+// never on import — the same guard as @agentic-sentinel/proxy and @agentic-sentinel/mcp.
 function isEntrypoint(): boolean {
   const arg = process.argv[1];
   if (!arg) return false;

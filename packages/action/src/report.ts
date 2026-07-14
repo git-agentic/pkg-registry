@@ -1,5 +1,5 @@
-import type { TreeAuditResult, TreePackageRow } from "@sentinel/core";
-import { remediationHint } from "@sentinel/core";
+import type { TreeAuditResult, TreePackageRow } from "@agentic-sentinel/core";
+import { remediationHint } from "@agentic-sentinel/core";
 
 export const REPORT_MARKER = "<!-- sentinel-report -->";
 

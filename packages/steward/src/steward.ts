@@ -17,7 +17,7 @@ import {
   signRetractionCorpus,
   type RetractionAdvisory,
   type RetractionCorpus,
-} from "@sentinel/core";
+} from "@agentic-sentinel/core";
 
 export type GrandfatherTier = 1 | 2 | 3;
 export type TxtResolver = (domain: string) => Promise<readonly (readonly string[])[]>;

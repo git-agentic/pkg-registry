@@ -1,5 +1,5 @@
 {
-  "name": "@sentinel/action",
+  "name": "@agentic-sentinel/action",
   "version": "0.1.0-alpha.1",
   "description": "Sentinel CI runner: self-booting dependency-tree audit for GitHub Actions (sentinel-ci) — audits a lockfile, writes a CycloneDX SBOM, and posts a PR verdict.",
   "license": "Apache-2.0",
@@ -42,8 +42,8 @@
     "sbom"
   ],
   "dependencies": {
-    "@sentinel/core": "0.1.0-alpha.1",
-    "@sentinel/proxy": "0.1.0-alpha.1"
+    "@agentic-sentinel/core": "0.1.0-alpha.1",
+    "@agentic-sentinel/proxy": "0.1.0-alpha.1"
   },
   "devDependencies": {
     "@types/node": "^24.13.2"

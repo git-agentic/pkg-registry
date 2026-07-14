@@ -1,4 +1,4 @@
-# @sentinel/cli
+# @agentic-sentinel/cli
 
 The Sentinel CLI: pre-install audit verdicts (`sentinel audit`), whole-tree
 lockfile audits with SBOM export (`sentinel audit-tree`), registry-redirected
@@ -10,14 +10,14 @@ authoring/signing, and signed audit attestations.
 > without notice. Not production-ready.
 
 ```bash
-npm install -g @sentinel/cli@alpha
+npm install -g @agentic-sentinel/cli@alpha
 
 sentinel --version
-sentinel audit is-odd 3.0.1        # requires a running @sentinel/proxy
+sentinel audit is-odd 3.0.1        # requires a running @agentic-sentinel/proxy
 sentinel audit-tree package-lock.json
 ```
 
-Most commands talk to a running [`@sentinel/proxy`](https://www.npmjs.com/package/@sentinel/proxy)
+Most commands talk to a running [`@agentic-sentinel/proxy`](https://www.npmjs.com/package/@agentic-sentinel/proxy)
 (default `http://localhost:4873`, override with `SENTINEL_PROXY` or `-p`).
 See the [Sentinel repository](https://github.com/git-agentic/pkg-registry)
 for the full command reference.

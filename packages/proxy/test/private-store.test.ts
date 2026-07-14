@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, test } from "node:test";
 import { PrivatePackageStore } from "../src/private-store.js";
-import type { Audit } from "@sentinel/core";
+import type { Audit } from "@agentic-sentinel/core";
 
 const audit = { schema: 3, meta: {}, findings: [], capabilities: [], capabilityDelta: null,
   engine: { version: "x", rules: [], mode: "full" }, auditedAt: "t", durationMs: 0 } as unknown as Audit;

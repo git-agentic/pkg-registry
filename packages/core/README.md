@@ -1,4 +1,4 @@
-# @sentinel/core
+# @agentic-sentinel/core
 
 The Sentinel audit engine: deterministic heuristic rules, scoring, the audit
 data model, multi-format lockfile parsing (npm/yarn/pnpm), CycloneDX 1.6 SBOM
@@ -9,11 +9,11 @@ that can only ever *enrich* — never set — a score.
 > without notice. Not production-ready.
 
 ```bash
-npm install @sentinel/core@alpha
+npm install @agentic-sentinel/core@alpha
 ```
 
 ```ts
-import { runAudit, score, DEFAULT_POLICY } from "@sentinel/core";
+import { runAudit, score, DEFAULT_POLICY } from "@agentic-sentinel/core";
 ```
 
 The engine is fully offline and deterministic: same input + same policy ⇒ same

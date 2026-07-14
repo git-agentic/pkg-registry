@@ -18,7 +18,7 @@ import { ViolationStore } from "../src/violations.js";
 import { ApprovalRequestStore } from "../src/approval-requests.js";
 import { LocalFixtureUpstream } from "../src/upstream.js";
 import type { ClaimCorpus } from "../src/resolution.js";
-import { DEFAULT_POLICY, generateKeypair, integrityOf, type EnterprisePolicy } from "@sentinel/core";
+import { DEFAULT_POLICY, generateKeypair, integrityOf, type EnterprisePolicy } from "@agentic-sentinel/core";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURES = join(HERE, "..", "..", "..", "fixtures");

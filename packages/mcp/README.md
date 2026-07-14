@@ -1,4 +1,4 @@
-# @sentinel/mcp
+# @agentic-sentinel/mcp
 
 `sentinel-mcp`: a stdio [Model Context Protocol](https://modelcontextprotocol.io/)
 server exposing Sentinel's pre-install audit tools to agent hosts. It is a
@@ -9,7 +9,7 @@ only write tool *requests* approval; it can never grant one.
 > without notice. Not production-ready.
 
 ```bash
-npm install -g @sentinel/mcp@alpha
+npm install -g @agentic-sentinel/mcp@alpha
 ```
 
 MCP client configuration:

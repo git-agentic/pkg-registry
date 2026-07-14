@@ -170,8 +170,8 @@ jobs:
           set -euo pipefail
           VERSION="${RELEASE_TAG#v}"
           for p in core proxy sandbox mcp steward cli action; do
-            if npm view "@sentinel/$p@$VERSION" version >/dev/null 2>&1; then
-              echo "::error::@sentinel/$p@$VERSION already exists on the registry — refusing to continue"; exit 1
+            if npm view "@agentic-sentinel/$p@$VERSION" version >/dev/null 2>&1; then
+              echo "::error::@agentic-sentinel/$p@$VERSION already exists on the registry — refusing to continue"; exit 1
             fi
           done
           echo "no target version exists — safe to publish"
@@ -184,13 +184,13 @@ jobs:
           VERSION="${RELEASE_TAG#v}"
           published=""
           for p in core proxy sandbox mcp steward cli action; do
-            t="release-artifacts/sentinel-$p-$VERSION.tgz"
-            echo "publishing @sentinel/$p@$VERSION"
+            t="release-artifacts/agentic-sentinel-$p-$VERSION.tgz"
+            echo "publishing @agentic-sentinel/$p@$VERSION"
             if ! npm publish "$t" --access public --tag alpha --provenance; then
-              echo "::error::publish of @sentinel/$p failed. Already published (immutable): ${published:-none}. Do NOT unpublish; fix forward."; exit 1
+              echo "::error::publish of @agentic-sentinel/$p failed. Already published (immutable): ${published:-none}. Do NOT unpublish; fix forward."; exit 1
             fi
-            published="$published @sentinel/$p"
-            echo "- @sentinel/$p@$VERSION published" >> "$GITHUB_STEP_SUMMARY"
+            published="$published @agentic-sentinel/$p"
+            echo "- @agentic-sentinel/$p@$VERSION published" >> "$GITHUB_STEP_SUMMARY"
           done
       - name: Verify every published package via npm view
         run: |
@@ -198,14 +198,14 @@ jobs:
           VERSION="${RELEASE_TAG#v}"
           for p in core proxy sandbox mcp steward cli action; do
             for i in 1 2 3 4 5; do
-              got="$(npm view "@sentinel/$p@$VERSION" version 2>/dev/null || true)"
+              got="$(npm view "@agentic-sentinel/$p@$VERSION" version 2>/dev/null || true)"
               [ "$got" = "$VERSION" ] && break
               sleep 15
             done
-            [ "$got" = "$VERSION" ] || { echo "::error::@sentinel/$p@$VERSION not visible after publish"; exit 1; }
-            tag_alpha="$(npm view "@sentinel/$p" dist-tags.alpha)"
-            [ "$tag_alpha" = "$VERSION" ] || { echo "::error::@sentinel/$p dist-tag alpha is $tag_alpha, expected $VERSION"; exit 1; }
-            echo "@sentinel/$p@$VERSION visible, dist-tag alpha OK"
+            [ "$got" = "$VERSION" ] || { echo "::error::@agentic-sentinel/$p@$VERSION not visible after publish"; exit 1; }
+            tag_alpha="$(npm view "@agentic-sentinel/$p" dist-tags.alpha)"
+            [ "$tag_alpha" = "$VERSION" ] || { echo "::error::@agentic-sentinel/$p dist-tag alpha is $tag_alpha, expected $VERSION"; exit 1; }
+            echo "@agentic-sentinel/$p@$VERSION visible, dist-tag alpha OK"
           done
       - name: Install the published packages from the public registry in a clean project
         run: |
@@ -217,13 +217,13 @@ jobs:
           # retry: registry propagation can lag the view endpoint
           for i in 1 2 3 4 5; do
             npm install --no-audit --no-fund \
-              "@sentinel/core@$VERSION" "@sentinel/proxy@$VERSION" "@sentinel/sandbox@$VERSION" \
-              "@sentinel/mcp@$VERSION" "@sentinel/steward@$VERSION" "@sentinel/cli@$VERSION" \
-              "@sentinel/action@$VERSION" && break
+              "@agentic-sentinel/core@$VERSION" "@agentic-sentinel/proxy@$VERSION" "@agentic-sentinel/sandbox@$VERSION" \
+              "@agentic-sentinel/mcp@$VERSION" "@agentic-sentinel/steward@$VERSION" "@agentic-sentinel/cli@$VERSION" \
+              "@agentic-sentinel/action@$VERSION" && break
             sleep 20
           done
           ./node_modules/.bin/sentinel --version | grep -qx "$VERSION"
-          node -e "import('@sentinel/core').then(m=>{if(m.ENGINE_VERSION!=='$VERSION')process.exit(1)})"
+          node -e "import('@agentic-sentinel/core').then(m=>{if(m.ENGINE_VERSION!=='$VERSION')process.exit(1)})"
           echo "clean-project registry install OK"
       - name: Create the GitHub prerelease (only after npm verification)
         env:

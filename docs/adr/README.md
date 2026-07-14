@@ -145,7 +145,7 @@ first shipped slice; Phases 31 and 32 complete claiming and retraction.
 | ADR | Title | Decision in one line |
 |-----|-------|----------------------|
 | [0051](./0051-sandboxed-exec.md) | Sandboxed `sentinel exec` | `Sandbox.runArgv` (no-shell, execFile-style) + `sentinel exec -- <cmd>` reuse the approved-capability model, scrubbed env, and violation telemetry to contain Sentinel-mediated command execution; scoped to explicit invocations only — raw `require()`/`npx` outside it stay uncontained, defense-in-depth behind the ADR-0049 registry gate |
-| [0052](./0052-native-helper-release-packaging.md) | Landlock helper release packaging | The published `@sentinel/sandbox` ships the helper as source only (`native/landlock-exec.c` + `build-native.mjs`) — never a prebuilt binary, never a `postinstall` compile; fresh Linux installs run the documented advisory exec floor with a one-time notice until the operator explicitly compiles the helper; enforced by the package-contents test and a missing-helper CI test |
+| [0052](./0052-native-helper-release-packaging.md) | Landlock helper release packaging | The published `@agentic-sentinel/sandbox` ships the helper as source only (`native/landlock-exec.c` + `build-native.mjs`) — never a prebuilt binary, never a `postinstall` compile; fresh Linux installs run the documented advisory exec floor with a one-time notice until the operator explicitly compiles the helper; enforced by the package-contents test and a missing-helper CI test |
 
 ## Conventions
 

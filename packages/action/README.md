@@ -1,4 +1,4 @@
-# @sentinel/action
+# @agentic-sentinel/action
 
 `sentinel-ci`: a self-contained CI runner for GitHub Actions. It boots the
 Sentinel proxy in-process against real npm, audits your lockfile, writes a
@@ -9,7 +9,7 @@ idempotent PR comment body — no separately-running proxy needed.
 > without notice. Not production-ready.
 
 ```bash
-npm install @sentinel/action@alpha
+npm install @agentic-sentinel/action@alpha
 ```
 
 This package is the engine behind the composite GitHub Action defined at the

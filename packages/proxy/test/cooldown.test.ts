@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { cooldownDecision, resolvePublishTime, applyCooldown, blockOverlay } from "../src/cooldown.js";
-import type { EnterprisePolicy, AuditReport } from "@sentinel/core";
+import type { EnterprisePolicy, AuditReport } from "@agentic-sentinel/core";
 
 const NOW = Date.parse("2026-07-12T00:00:00Z");
 

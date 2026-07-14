@@ -5,8 +5,8 @@ import type { Server } from "node:http";
 import {
   createServer, AuditStore, ApprovalStore, PrivatePackageStore, ViolationStore, ApprovalRequestStore,
   type Upstream,
-} from "@sentinel/proxy";
-import { parseAnyLockfile, toCycloneDX, DEFAULT_POLICY, type EnterprisePolicy, type TreeAuditResult } from "@sentinel/core";
+} from "@agentic-sentinel/proxy";
+import { parseAnyLockfile, toCycloneDX, DEFAULT_POLICY, type EnterprisePolicy, type TreeAuditResult } from "@agentic-sentinel/core";
 import { renderPrComment } from "./report.js";
 
 export interface RunCiOptions {

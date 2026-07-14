@@ -1,4 +1,4 @@
-import type { Capability } from "@sentinel/core";
+import type { Capability } from "@agentic-sentinel/core";
 import type { Manifest } from "./format.js";
 
 /** Raised when enforcement cannot be guaranteed — the wrapper must fail closed (never run unsandboxed). */

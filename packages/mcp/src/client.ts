@@ -1,4 +1,4 @@
-import type { AuditReport, Remediation } from "@sentinel/core";
+import type { AuditReport, Remediation } from "@agentic-sentinel/core";
 
 export class ProxyError extends Error {
   constructor(message: string, readonly status?: number) {

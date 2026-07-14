@@ -61,17 +61,17 @@ package is installed and approved is out of scope.
 
 Seven packages (npm workspaces monorepo; key registry packages below):
 
-- **`@sentinel/core`** — the audit engine. Pure, dependency-light, deterministic.
+- **`@agentic-sentinel/core`** — the audit engine. Pure, dependency-light, deterministic.
   Tarball extraction, the rules, scoring, the data model, and the LLM adapter
   interface. No HTTP, no Express — so it is trivially unit-testable and reusable
   (CLI, proxy, CI all import it).
-- **`@sentinel/proxy`** — Express server implementing the npm registry HTTP API
+- **`@agentic-sentinel/proxy`** — Express server implementing the npm registry HTTP API
   surface we need (`GET /:pkg`, `GET /:pkg/-/:tarball`). Pluggable upstream
   (`NpmUpstream` for the real registry, `LocalFixtureUpstream` for hermetic tests).
   Owns the verdict cache + audit store and serves the dashboard.
-- **`@sentinel/cli`** — `sentinel audit <pkg>` (one-shot) and `sentinel install …`
+- **`@agentic-sentinel/cli`** — `sentinel audit <pkg>` (one-shot) and `sentinel install …`
   (sets `registry` to the proxy and runs npm, showing the pre-install verdict).
-- **`@sentinel/steward`** — authenticated DNS-claim issuance, renewal/freeze,
+- **`@agentic-sentinel/steward`** — authenticated DNS-claim issuance, renewal/freeze,
   timelocked ownership changes, and signed offline claim-corpus releases. It is
   operationally separate from the proxy's offline resolution path.
 - **dashboard** — a single self-contained HTML page served by the proxy at `/`.
@@ -182,7 +182,7 @@ the policy hash. Frozen/disputed claims remain native for reads but reject write
 trusted-publisher enrollments require a matching offline-verified Sigstore SLSA
 identity. Stored native versions snapshot the claim namespace, domain, and
 claimant key at publication, so an ownership change cannot re-attribute history.
-`@sentinel/steward` performs exact-apex DNS challenges, derives grandfather tiers
+`@agentic-sentinel/steward` performs exact-apex DNS challenges, derives grandfather tiers
 from steward-fetched upstream evidence, verifies claimant-key transfer
 signatures, applies renewal/domain-change freezes, and atomically publishes
 versioned directories after 30-day announced changes (ADR-0046). Mandatory
@@ -241,7 +241,7 @@ never stored.
 
 ### 3.6 Sandbox enforcement (Phases 3–5, ADR-0011/0016/0017/0018)
 
-`@sentinel/sandbox` turns an *approved* capability set into *enforced* runtime
+`@agentic-sentinel/sandbox` turns an *approved* capability set into *enforced* runtime
 least-privilege on macOS and Linux: `generateProfile(approved, {homeDir})` emits an allow-default +
 deny-sensitive Seatbelt (SBPL) profile, each deny relaxed by an approved capability; the
 `SeatbeltSandbox` runs each lifecycle script under it via `sandbox-exec` (failing closed
@@ -276,7 +276,7 @@ any negative falls back to the Phase 29 advisory floor with a one-time notice,
 so a Landlock-less or no-`cc` host never regresses. `computeDenySet` gains a
 `linux-landlock` `execFloorMode` and `classifyViolation` confirms a
 floor-outside exec denial as `exec-floor-deny`. The *published*
-`@sentinel/sandbox` package ships the helper as source only
+`@agentic-sentinel/sandbox` package ships the helper as source only
 (`native/landlock-exec.c` + `scripts/build-native.mjs`) — never a prebuilt
 binary and never a `postinstall` compile; a fresh npm install runs this same
 advisory fallback until the operator explicitly compiles the helper
@@ -358,7 +358,7 @@ by sniffing for `__metadata:`), and `pnpm-lock.yaml` (YAML across lockfile versi
 into the same deduped, sorted `{name, version, integrity?}` `Coordinate[]` regardless of
 format (skipping the root entry and `link:`/`file:` deps). Berry checksums are not
 SRI-shaped, so berry-parsed coordinates carry no `integrity`. The `yaml` package
-(`^2.9.0`) backing the pnpm/berry parsers is a dependency of `@sentinel/core` only. The CLI
+(`^2.9.0`) backing the pnpm/berry parsers is a dependency of `@agentic-sentinel/core` only. The CLI
 POSTs the coordinates (plus an optional `failOnError` flag) to `POST /-/audit-tree`. The
 proxy fans out with bounded concurrency over the same integrity-cached `auditVersion()`
 path used by the tarball route, then rolls the per-package verdicts into a worst-case-wins
@@ -762,7 +762,7 @@ deferred.
 Phases 1–16 gate installs and lockfiles, but only when a human or CI job
 already knows to run `sentinel audit-tree` against a proxy someone started.
 Phase 17 adds a self-contained on-ramp into GitHub PRs: a new
-**`@sentinel/action`** workspace (`packages/action`, bin `sentinel-ci`) that
+**`@agentic-sentinel/action`** workspace (`packages/action`, bin `sentinel-ci`) that
 needs nothing already running.
 
 - **`runCi(opts)`** (`packages/action/src/run.ts`) self-boots
@@ -797,9 +797,9 @@ needs nothing already running.
   marker instead of always appending a new one.
   `.github/workflows/sentinel-example.yml` shows minimal usage.
 - **The proxy entrypoint-guard root fix.** `packages/proxy/src/index.ts`'s
-  `main()` is now guarded the same way `@sentinel/mcp`'s bin already is
+  `main()` is now guarded the same way `@agentic-sentinel/mcp`'s bin already is
   (`isEntrypoint()` comparing `import.meta.url` to the resolved
-  `process.argv[1]`) — importing `@sentinel/proxy` for its exports no
+  `process.argv[1]`) — importing `@agentic-sentinel/proxy` for its exports no
   longer boots a listening server as a side effect. This is what makes
   `runCi`'s self-boot import-safe.
 
@@ -1035,7 +1035,7 @@ releases, deferring version-range CVE matching. Phase 22 closes that gap:
   SCA exposure across `audit-tree`'s whole dependency graph.
 - A `known-vulnerability` entry in `REMEDIATIONS` (§3.17/ADR-0031) plus a
   `vulnerability` `CATEGORY_FALLBACK` entry.
-- Adds `semver` (^7.x) as a `@sentinel/core` runtime dependency — the first
+- Adds `semver` (^7.x) as a `@agentic-sentinel/core` runtime dependency — the first
   real semver-range parser in the corpus/rule family.
 
 Faithful severity is a deliberate gating stance (diverges from `npm audit`'s
@@ -1342,7 +1342,7 @@ which explicitly extends [ADR-0041](./docs/adr/0041-review-hardening.md).
 
 ---
 
-## 4. The audit engine (`@sentinel/core`)
+## 4. The audit engine (`@agentic-sentinel/core`)
 
 Deterministic heuristic core + a pluggable LLM adapter. The score is produced
 **entirely by the heuristic rules** so it is reproducible and testable; the LLM
@@ -1595,8 +1595,8 @@ Five integration modes, all non-invasive:
    see; a `ProxyClient` failure (unreachable proxy, non-OK response) throws
    `ProxyError` rather than ever fabricating a verdict, and the MCP layer
    performs zero scoring of its own (invariant #1 untouched). `parseLockfile`
-   (used by `sentinel_audit_tree`) moved from `@sentinel/cli` to
-   `@sentinel/core` this phase so both packages can share it without `mcp`
+   (used by `sentinel_audit_tree`) moved from `@agentic-sentinel/cli` to
+   `@agentic-sentinel/core` this phase so both packages can share it without `mcp`
    tripping `cli`'s own entrypoint guard.
 
 The cleanest hook is registry redirection (`.npmrc` `registry=` or `--registry`)

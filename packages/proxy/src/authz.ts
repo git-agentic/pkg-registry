@@ -1,5 +1,5 @@
 import type { Request, Response, RequestHandler } from "express";
-import { verifyToken, type Role } from "@sentinel/core";
+import { verifyToken, type Role } from "@agentic-sentinel/core";
 
 /** Build the authz layer. `publicKeyPem` undefined ⇒ auth disabled (pass-through). */
 export function makeAuthz(publicKeyPem: string | undefined): { enabled: boolean; requireRole(roles: Role[]): RequestHandler } {

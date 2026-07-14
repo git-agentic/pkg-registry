@@ -7,7 +7,7 @@ import { request as httpRequest } from "node:http";
 import { before, describe, test } from "node:test";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
-import { DEFAULT_POLICY } from "@sentinel/core";
+import { DEFAULT_POLICY } from "@agentic-sentinel/core";
 import { createServer } from "../src/server.js";
 import { AuditStore } from "../src/store.js";
 import { LocalFixtureUpstream } from "../src/upstream.js";

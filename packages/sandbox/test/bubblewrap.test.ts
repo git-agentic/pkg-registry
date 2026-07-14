@@ -9,7 +9,7 @@ import { describe, test } from "node:test";
 import { BubblewrapSandbox } from "../src/bubblewrap.js";
 import { runLifecycleScripts } from "../src/runner.js";
 import { scrubEnv } from "../src/env.js";
-import type { Capability } from "@sentinel/core";
+import type { Capability } from "@agentic-sentinel/core";
 
 // dist sibling of the compiled bubblewrap.js; in the source tree the helper lands in
 // packages/sandbox/dist/landlock-exec after `npm run build`.
@@ -304,7 +304,7 @@ describe("BubblewrapSandbox enforcement", { skip }, () => {
   });
 
   test("missing Landlock helper: scripts still run on the advisory floor with a one-time notice (packaged-artifact state)", () => {
-    // The published @sentinel/sandbox tarball deliberately ships NO compiled
+    // The published @agentic-sentinel/sandbox tarball deliberately ships NO compiled
     // landlock-exec (source-only, no lifecycle-script compile). Reproduce that
     // state hermetically: copy the built dist/ WITHOUT the helper binary and
     // drive bubblewrap.js from the copy — its helper lookup (same-dir sibling)

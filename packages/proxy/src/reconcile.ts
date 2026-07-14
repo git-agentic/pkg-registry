@@ -1,4 +1,4 @@
-import { capabilityAtom, type Capability } from "@sentinel/core";
+import { capabilityAtom, type Capability } from "@agentic-sentinel/core";
 import type { Approval } from "./approvals.js";
 
 export type ApprovalState = "approved" | "inherited" | "required" | "denied" | "n-a";

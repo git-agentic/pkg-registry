@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import type { Capability } from "@sentinel/core";
+import type { Capability } from "@agentic-sentinel/core";
 
 export interface ApprovalRequest {
   name: string;

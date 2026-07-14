@@ -2,9 +2,9 @@
 import { homedir } from "node:os";
 import { realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import { createSandbox, scrubEnv, resolveProjectRoot } from "@sentinel/sandbox";
-import type { SandboxViolation } from "@sentinel/sandbox";
-import type { Capability } from "@sentinel/core";
+import { createSandbox, scrubEnv, resolveProjectRoot } from "@agentic-sentinel/sandbox";
+import type { SandboxViolation } from "@agentic-sentinel/sandbox";
+import type { Capability } from "@agentic-sentinel/core";
 import { approvedCapsForManifest, isRootScript, commandFromArgv, EnforceError } from "./enforce.js";
 import { parseApprovals } from "./index.js";
 import type { Manifest } from "./format.js";

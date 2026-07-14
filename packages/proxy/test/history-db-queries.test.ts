@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { HistoryDb } from "../src/history-db.js";
-import type { AuditReport } from "@sentinel/core";
+import type { AuditReport } from "@agentic-sentinel/core";
 import type { ViolationRecord } from "../src/violations.js";
 
 function rep(integrity: string, name: string, verdict: "allow" | "warn" | "block", finding: string | null, at: string): [AuditReport, string] {

@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Sandbox } from "./types.js";
 import { scrubEnv } from "./env.js";
-import type { Capability } from "@sentinel/core";
+import type { Capability } from "@agentic-sentinel/core";
 
 export interface ScriptResult {
   hook: string;

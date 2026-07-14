@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { DEFAULT_POLICY } from "@sentinel/core";
+import { DEFAULT_POLICY } from "@agentic-sentinel/core";
 import { summarizePolicy } from "../src/index.js";
 
 describe("summarizePolicy", () => {

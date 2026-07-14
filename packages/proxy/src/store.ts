@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import type { AuditReport } from "@sentinel/core";
+import type { AuditReport } from "@agentic-sentinel/core";
 import type { HistoryDb } from "./history-db.js";
 
 export interface StoredAudit {

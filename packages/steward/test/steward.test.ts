@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, test } from "node:test";
-import { generateKeypair, parseClaimCorpus, verifyClaimCorpusBytes, parseRetractionCorpus, verifyRetractionCorpusBytes } from "@sentinel/core";
+import { generateKeypair, parseClaimCorpus, verifyClaimCorpusBytes, parseRetractionCorpus, verifyRetractionCorpusBytes } from "@agentic-sentinel/core";
 import { ClaimSteward, corroboratesClaimDomain, signTransferRequest, type UpstreamClaimLookup } from "../src/steward.js";
 import { createStewardServer } from "../src/server.js";
 
