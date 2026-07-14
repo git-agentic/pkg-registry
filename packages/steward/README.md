@@ -6,7 +6,7 @@ grandfathering, claimant-key-signed transfers, 12-month renewal and freeze
 lifecycle, 30-day timelocked changes, and atomic Ed25519-signed claim- and
 retraction-corpus releases that Sentinel proxies consume offline.
 
-> **Alpha.** This is a pre-1.0 preview (`0.1.0-alpha.1`). APIs may change
+> **Alpha.** This is a pre-1.0 alpha preview. APIs may change
 > without notice. Not production-ready.
 
 ```bash

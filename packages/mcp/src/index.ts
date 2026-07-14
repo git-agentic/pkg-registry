@@ -6,7 +6,7 @@ import { TOOLS } from "./tools.js";
 
 /** Build an McpServer with every Sentinel tool registered against `client`. */
 export function createMcpServer(client: ProxyClient): McpServer {
-  const server = new McpServer({ name: "sentinel", version: "0.1.0-alpha.1" });
+  const server = new McpServer({ name: "sentinel", version: "0.1.0-alpha.2" });
   for (const tool of TOOLS) {
     server.registerTool(
       tool.name,

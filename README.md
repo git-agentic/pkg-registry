@@ -37,9 +37,9 @@ macOS Seatbelt enforcement is exercised on maintainers' machines) — but this
 has not yet been hardened by production use, and APIs may change without
 notice. The complete phase-by-phase build log lives in
 [docs/adr/](./docs/adr/) (one ADR per phase). **Published as an alpha
-preview**: all seven packages ship as `0.1.0-alpha.1` under the `alpha`
+preview**: all seven packages ship under the `alpha`
 dist-tag (`npm install -g @git-agentic/sentinel-cli@alpha @git-agentic/sentinel-proxy@alpha`) — see
-the [release notes](./docs/releases/v0.1.0-alpha.1.md) and
+the [release notes](./docs/releases/) and
 [release process](./docs/release-process.md); building from source
 (Quickstart below) remains fully supported. Threat model:
 [sentinel-threat-model.md](./sentinel-threat-model.md) · Homepage:

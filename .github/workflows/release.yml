@@ -13,19 +13,18 @@
 # via `npm view` + a clean registry install, and only then creates the GitHub
 # prerelease.
 #
-# Auth: prefers npm trusted publishing (GitHub Actions OIDC) — configure it on
-# npmjs.com for each package and leave NPM_TOKEN unset; npm ≥11.5 detects it
-# automatically. Until then, set the NPM_TOKEN secret ON THE npm-release
-# ENVIRONMENT (never repo-wide) so it is unreachable from PR workflows.
+# Auth: npm trusted publishing (GitHub Actions OIDC) — configured on
+# npmjs.com per package (this repo + this workflow as the trusted publisher).
+# npm ≥11.5 detects it automatically via id-token: write; no npm token or
+# registry-url/.npmrc auth scaffolding exists anywhere in this pipeline.
 name: release
 
 on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (must already point at this commit for Stage B)"
+        description: "Release tag, e.g. v0.1.0-alpha.2 (must already point at this commit for Stage B)"
         required: true
-        default: "v0.1.0-alpha.1"
       publish:
         description: "Run Stage B (publish to npm + GitHub prerelease)"
         type: boolean
@@ -166,10 +165,13 @@ jobs:
             declared="$(tar -xzOf "$t" package/package.json | jq -r .version)"
             [ "$declared" = "$VERSION" ] || { echo "::error::$t declares $declared, expected $VERSION"; exit 1; }
           done
+      # No registry-url / auth-token scaffolding: publishing uses npm trusted
+      # publishing (GitHub Actions OIDC, id-token: write). setup-node's
+      # registry-url would write an .npmrc _authToken placeholder that either
+      # errors on an unset env var or shadows OIDC detection.
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "24"
-          registry-url: "https://registry.npmjs.org"
       - name: Refuse to republish any existing version
         run: |
           set -euo pipefail
@@ -181,9 +183,6 @@ jobs:
           done
           echo "no target version exists — safe to publish"
       - name: Publish in dependency order (--access public --tag alpha --provenance)
-        env:
-          # Empty when npm trusted publishing (OIDC) is configured — preferred.
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
           VERSION="${RELEASE_TAG#v}"

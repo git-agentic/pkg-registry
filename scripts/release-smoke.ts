@@ -23,7 +23,9 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const WORKSPACES = ["core", "proxy", "sandbox", "cli", "mcp", "action", "steward"] as const;
-const VERSION = "0.1.0-alpha.1";
+// Derive the release version from the workspace itself so a version bump
+// can never leave this harness asserting a stale number.
+const VERSION = (JSON.parse(readFileSync(join(repoRoot, "packages", "core", "package.json"), "utf8")) as { version: string }).version;
 
 interface TarballInfo { name: string; file: string; bytes: number; sha256: string; files: number; unpacked: number }
 const results: { tarballs: TarballInfo[]; checks: { name: string; ok: boolean; detail: string }[] } = { tarballs: [], checks: [] };

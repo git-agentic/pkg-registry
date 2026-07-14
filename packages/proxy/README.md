@@ -6,7 +6,7 @@ code can run — plus an authoritative native publish path (`npm publish`
 against Sentinel), verified namespace claims, time-locked retraction, and the
 npm compatibility surface (packuments, dist-tags, unpublish-as-retraction).
 
-> **Alpha.** This is a pre-1.0 preview (`0.1.0-alpha.1`). APIs may change
+> **Alpha.** This is a pre-1.0 alpha preview. APIs may change
 > without notice. Not production-ready.
 
 ```bash

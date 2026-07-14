@@ -5,7 +5,7 @@ Sentinel proxy in-process against real npm, audits your lockfile, writes a
 CycloneDX SBOM, emits GitHub-native outputs/annotations, and renders an
 idempotent PR comment body — no separately-running proxy needed.
 
-> **Alpha.** This is a pre-1.0 preview (`0.1.0-alpha.1`). APIs may change
+> **Alpha.** This is a pre-1.0 alpha preview. APIs may change
 > without notice. Not production-ready.
 
 ```bash
