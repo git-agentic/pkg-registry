@@ -6,7 +6,7 @@ on macOS and **bubblewrap** on Linux — deny-by-default writes and `$HOME`
 reads, scrubbed environment, all-or-nothing network, and exec containment —
 with a fail-closed contract on any other platform.
 
-> **Alpha.** This is a pre-1.0 preview (`0.1.0-alpha.1`). APIs may change
+> **Alpha.** This is a pre-1.0 alpha preview. APIs may change
 > without notice. Not production-ready.
 
 ```bash

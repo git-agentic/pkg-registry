@@ -5,7 +5,7 @@ server exposing Sentinel's pre-install audit tools to agent hosts. It is a
 thin client to a running Sentinel proxy — it audits nothing itself, and the
 only write tool *requests* approval; it can never grant one.
 
-> **Alpha.** This is a pre-1.0 preview (`0.1.0-alpha.1`). APIs may change
+> **Alpha.** This is a pre-1.0 alpha preview. APIs may change
 > without notice. Not production-ready.
 
 ```bash

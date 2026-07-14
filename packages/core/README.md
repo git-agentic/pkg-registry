@@ -5,7 +5,7 @@ data model, multi-format lockfile parsing (npm/yarn/pnpm), CycloneDX 1.6 SBOM
 export, signed policy and attestation primitives, and a pluggable LLM adapter
 that can only ever *enrich* — never set — a score.
 
-> **Alpha.** This is a pre-1.0 preview (`0.1.0-alpha.1`). APIs may change
+> **Alpha.** This is a pre-1.0 alpha preview. APIs may change
 > without notice. Not production-ready.
 
 ```bash

@@ -1,6 +1,6 @@
 {
   "name": "@git-agentic/sentinel-proxy",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.2",
   "description": "Sentinel registry proxy: transparently serves npm packages while intercepting and auditing each tarball, with an authoritative native publish path, verified claims, and time-locked retraction.",
   "license": "Apache-2.0",
   "type": "module",
@@ -44,7 +44,7 @@
     "package-retraction"
   ],
   "dependencies": {
-    "@git-agentic/sentinel-core": "0.1.0-alpha.1",
+    "@git-agentic/sentinel-core": "0.1.0-alpha.2",
     "commander": "^15.0.0",
     "express": "^5.2.1",
     "express-rate-limit": "^8.5.2"

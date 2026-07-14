@@ -1,6 +1,6 @@
 {
   "name": "sentinel-registry",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.2",
   "private": true,
   "description": "Sentinel — an agent-auditable security/audit proxy for the npm ecosystem (Phase 1 wedge).",
   "license": "Apache-2.0",

@@ -28,7 +28,7 @@ const program = new Command();
 program
   .name("sentinel")
   .description("Agent-auditable security layer for npm — pre-install audit verdicts.")
-  .version("0.1.0-alpha.1");
+  .version("0.1.0-alpha.2");
 
 program
   .command("audit")
