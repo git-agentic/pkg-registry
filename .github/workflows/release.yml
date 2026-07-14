@@ -212,6 +212,14 @@ jobs:
             [ "$got" = "$VERSION" ] || { echo "::error::@git-agentic/sentinel-$p@$VERSION not visible after publish"; exit 1; }
             tag_alpha="$(npm view "@git-agentic/sentinel-$p" dist-tags.alpha)"
             [ "$tag_alpha" = "$VERSION" ] || { echo "::error::@git-agentic/sentinel-$p dist-tag alpha is $tag_alpha, expected $VERSION"; exit 1; }
+            # npm auto-creates `latest` on a package's first publish (even with
+            # --tag alpha) and never moves it. OIDC trusted publishing cannot
+            # run dist-tag mutations, so drift is surfaced here, not fixed here.
+            tag_latest="$(npm view "@git-agentic/sentinel-$p" dist-tags.latest 2>/dev/null || true)"
+            if [ -n "$tag_latest" ] && [ "$tag_latest" != "$VERSION" ]; then
+              echo "::warning::@git-agentic/sentinel-$p dist-tag latest is $tag_latest (stale). Until a stable release exists, retarget it: npm dist-tag add @git-agentic/sentinel-$p@$VERSION latest"
+              echo "- ⚠ sentinel-$p latest→$tag_latest is stale; run: \`npm dist-tag add @git-agentic/sentinel-$p@$VERSION latest\`" >> "$GITHUB_STEP_SUMMARY"
+            fi
             echo "@git-agentic/sentinel-$p@$VERSION visible, dist-tag alpha OK"
           done
       - name: Install the published packages from the public registry in a clean project
