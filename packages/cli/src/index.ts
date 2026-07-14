@@ -18,8 +18,8 @@ import {
   toCycloneDX,
   signToken, verifyToken, type Role,
   buildAuditStatement, signAttestation, verifyAttestation, attestationKeyid,
-} from "@agentic-sentinel/core";
-import { createSandbox, runLifecycleScripts, scrubEnv } from "@agentic-sentinel/sandbox";
+} from "@git-agentic/sentinel-core";
+import { createSandbox, runLifecycleScripts, scrubEnv } from "@git-agentic/sentinel-sandbox";
 import { formatReport, formatManifest, verdictExitCode, formatTree, treeExitCode, formatViolations, formatStats, formatHistory, formatExplain, formatLint, formatPreview, type Manifest, type ViolationRow, type ExplainResult, type PreviewResult } from "./format.js";
 
 const DEFAULT_PROXY = process.env.SENTINEL_PROXY ?? "http://localhost:4873";

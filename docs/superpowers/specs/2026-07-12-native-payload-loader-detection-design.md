@@ -154,7 +154,7 @@ before UTF-8 conversion**, for **every** file entry regardless of size.
 
 New pure rule `packages/core/src/rules/native-payload-loader.ts`, registered in
 `rules/index.ts`. Adds **acorn** as the first parser dependency of
-`@agentic-sentinel/core`.
+`@git-agentic/sentinel-core`.
 
 ### Primitives (per file, AST-based)
 

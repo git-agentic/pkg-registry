@@ -1,4 +1,4 @@
-# @agentic-sentinel/steward
+# @git-agentic/sentinel-steward
 
 `sentinel-steward`: the Sentinel namespace-claim steward — an authenticated
 operational service for exact-apex DNS TXT claim challenges, three-tier
@@ -10,7 +10,7 @@ retraction-corpus releases that Sentinel proxies consume offline.
 > without notice. Not production-ready.
 
 ```bash
-npm install -g @agentic-sentinel/steward@alpha
+npm install -g @git-agentic/sentinel-steward@alpha
 ```
 
 All four variables are required:

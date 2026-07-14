@@ -1,4 +1,4 @@
-import { matchPackage, type AuditReport, type EnterprisePolicy, type ScoredFinding } from "@agentic-sentinel/core";
+import { matchPackage, type AuditReport, type EnterprisePolicy, type ScoredFinding } from "@git-agentic/sentinel-core";
 
 const HOUR_MS = 3_600_000;
 

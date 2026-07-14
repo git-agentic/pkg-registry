@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import type { Capability } from "@agentic-sentinel/core";
+import type { Capability } from "@git-agentic/sentinel-core";
 import { reconcileApproval } from "../src/reconcile.js";
 import type { Approval } from "../src/approvals.js";
 

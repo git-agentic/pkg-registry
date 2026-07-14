@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { scrubEnv, ENV_ALLOWLIST, CREDENTIAL_ENV_RE } from "../src/env.js";
-import type { Capability } from "@agentic-sentinel/core";
+import type { Capability } from "@git-agentic/sentinel-core";
 
 const envCap = (target: string): Capability => ({ kind: "env", target, evidence: [] });
 

@@ -1,4 +1,4 @@
-# @agentic-sentinel/proxy
+# @git-agentic/sentinel-proxy
 
 The Sentinel registry proxy: an Express server that transparently serves npm
 packages while intercepting and auditing every tarball before install-time
@@ -10,7 +10,7 @@ npm compatibility surface (packuments, dist-tags, unpublish-as-retraction).
 > without notice. Not production-ready.
 
 ```bash
-npm install -g @agentic-sentinel/proxy@alpha
+npm install -g @git-agentic/sentinel-proxy@alpha
 sentinel-proxy            # starts the proxy on :4873
 ```
 

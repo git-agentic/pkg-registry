@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSy
 import { createHash, randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { Buffer } from "node:buffer";
-import type { Audit, RetractionAdvisory, RetractionReason, VerifiedClaim } from "@agentic-sentinel/core";
+import type { Audit, RetractionAdvisory, RetractionReason, VerifiedClaim } from "@git-agentic/sentinel-core";
 import { cmpSemver } from "./upstream.js";
 
 export interface StoredVersion {
@@ -32,7 +32,7 @@ export interface PrivatePackument {
   _sentinel?: { retractions: Record<string, RetractionTombstone> };
 }
 
-export type { RetractionAdvisory, RetractionReason } from "@agentic-sentinel/core";
+export type { RetractionAdvisory, RetractionReason } from "@git-agentic/sentinel-core";
 
 export interface RetractionTombstone {
   retractedAt: string;

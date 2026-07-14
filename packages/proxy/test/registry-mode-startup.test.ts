@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, test } from "node:test";
-import { generateKeypair, signClaimCorpus, type Audit } from "@agentic-sentinel/core";
+import { generateKeypair, signClaimCorpus, type Audit } from "@git-agentic/sentinel-core";
 import { PrivatePackageStore } from "../src/private-store.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");

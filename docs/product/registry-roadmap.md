@@ -143,7 +143,7 @@ Evidence: `packages/core/test/claim-corpus.test.ts`,
 `packages/steward/test/steward.test.ts`. Applicant input cannot select a
 grandfather tier: the steward owns the upstream lookup, and voluntary transfers
 must verify against the current claim's Ed25519 key. The proxy remains an
-offline consumer; the authenticated `@agentic-sentinel/steward` service owns DNS
+offline consumer; the authenticated `@git-agentic/sentinel-steward` service owns DNS
 verification, durable renewal state, timelocked issuance changes, and signed
 release output.
 

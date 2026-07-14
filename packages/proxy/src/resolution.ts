@@ -6,10 +6,10 @@ import {
   type EnterprisePolicy,
   type ProvenanceIdentity,
   type VerifiedClaim,
-} from "@agentic-sentinel/core";
+} from "@git-agentic/sentinel-core";
 
-export { EMPTY_CLAIM_CORPUS } from "@agentic-sentinel/core";
-export type { ClaimCorpus, VerifiedClaim } from "@agentic-sentinel/core";
+export { EMPTY_CLAIM_CORPUS } from "@git-agentic/sentinel-core";
+export type { ClaimCorpus, VerifiedClaim } from "@git-agentic/sentinel-core";
 
 export type RegistrySource = "policy-private" | "verified-claim" | "public-mirror";
 

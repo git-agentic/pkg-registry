@@ -1,5 +1,5 @@
 {
-  "name": "@agentic-sentinel/cli",
+  "name": "@git-agentic/sentinel-cli",
   "version": "0.1.0-alpha.1",
   "description": "Sentinel CLI: pre-install audit verdicts, whole-tree lockfile audits, registry-redirected npm/npx, policy tooling, and sandbox-enforced installs.",
   "license": "Apache-2.0",
@@ -44,8 +44,8 @@
     "sandbox"
   ],
   "dependencies": {
-    "@agentic-sentinel/core": "0.1.0-alpha.1",
-    "@agentic-sentinel/sandbox": "0.1.0-alpha.1",
+    "@git-agentic/sentinel-core": "0.1.0-alpha.1",
+    "@git-agentic/sentinel-sandbox": "0.1.0-alpha.1",
     "commander": "^15.0.0"
   },
   "devDependencies": {

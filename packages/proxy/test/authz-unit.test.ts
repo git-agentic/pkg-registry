@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { generateKeypair, signToken, type Role } from "@agentic-sentinel/core";
+import { generateKeypair, signToken, type Role } from "@git-agentic/sentinel-core";
 import { makeAuthz } from "../src/authz.js";
 
 const { publicKey, privateKey } = generateKeypair();

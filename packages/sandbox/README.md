@@ -1,4 +1,4 @@
-# @agentic-sentinel/sandbox
+# @git-agentic/sentinel-sandbox
 
 The Sentinel capability sandbox: turns an approved capability set into
 enforced install-time least-privilege. `createSandbox()` selects **Seatbelt**
@@ -10,7 +10,7 @@ with a fail-closed contract on any other platform.
 > without notice. Not production-ready.
 
 ```bash
-npm install @agentic-sentinel/sandbox@alpha
+npm install @git-agentic/sentinel-sandbox@alpha
 ```
 
 ## Platform behavior in this alpha
@@ -29,7 +29,7 @@ To opt in to Landlock exec-floor enforcement on Linux, compile the helper
 explicitly (requires `cc`):
 
 ```bash
-node node_modules/@agentic-sentinel/sandbox/scripts/build-native.mjs
+node node_modules/@git-agentic/sentinel-sandbox/scripts/build-native.mjs
 ```
 
 The helper is verified with an ABI probe before use; any failure falls back

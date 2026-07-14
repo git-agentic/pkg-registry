@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { describe, test } from "node:test";
 import { runLifecycleScripts } from "../src/runner.js";
 import type { Sandbox, SandboxResult } from "../src/types.js";
-import type { Capability } from "@agentic-sentinel/core";
+import type { Capability } from "@git-agentic/sentinel-core";
 
 function fakeSandbox(captured: NodeJS.ProcessEnv[]): Sandbox {
   return { run(_cmd, opts: { cwd: string; approved: Capability[]; homeDir: string; env?: NodeJS.ProcessEnv }): SandboxResult {

@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, test } from "node:test";
-import { DEFAULT_POLICY, generateKeypair, type Audit, type ClaimCorpus } from "@agentic-sentinel/core";
+import { DEFAULT_POLICY, generateKeypair, type Audit, type ClaimCorpus } from "@git-agentic/sentinel-core";
 import { PrivatePackageStore } from "../src/private-store.js";
 import { configureRegistryMode } from "../src/registry-mode.js";
 import { exportNativeStore } from "../src/registry-export.js";

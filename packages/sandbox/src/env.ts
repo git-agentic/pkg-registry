@@ -1,4 +1,4 @@
-import type { Capability } from "@agentic-sentinel/core";
+import type { Capability } from "@git-agentic/sentinel-core";
 
 /** Env-var names that look credential-bearing — dropped regardless of allowlist match. */
 export const CREDENTIAL_ENV_RE = /_auth|authtoken|_password|passwd|token|secret|credential|api[_-]?key|access[_-]?key/i;

@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import type { Capability } from "@agentic-sentinel/core";
+import type { Capability } from "@git-agentic/sentinel-core";
 import { cmpSemver } from "./upstream.js";
 
 export type ApprovalDecision = "approved" | "denied";

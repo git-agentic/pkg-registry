@@ -1,5 +1,5 @@
 {
-  "name": "@agentic-sentinel/steward",
+  "name": "@git-agentic/sentinel-steward",
   "version": "0.1.0-alpha.1",
   "description": "Sentinel namespace-claim steward: DNS TXT claim verification, renewal/freeze lifecycle, timelocked transfers, and Ed25519-signed claim/retraction corpus releases.",
   "license": "Apache-2.0",
@@ -42,7 +42,7 @@
     "npm-registry"
   ],
   "dependencies": {
-    "@agentic-sentinel/core": "0.1.0-alpha.1",
+    "@git-agentic/sentinel-core": "0.1.0-alpha.1",
     "express": "^5.2.1",
     "express-rate-limit": "^8.5.2"
   },

@@ -29,7 +29,7 @@ ADR-0045–0048 and threat-model §6.
 
 ### Current state by subsystem
 
-**Scoring & rules (`@agentic-sentinel/core`)** — 10 registered pure rules
+**Scoring & rules (`@git-agentic/sentinel-core`)** — 10 registered pure rules
 (`packages/core/src/rules/index.ts`): install-scripts, secret-exfil,
 network-egress, obfuscation, provenance (ADR-0021/0022), typosquat (ADR-0026),
 release-anomaly (ADR-0029), known-advisory (ADR-0034), known-vulnerability
@@ -52,7 +52,7 @@ at audit time. Also here: multi-format lockfile parsing (npm/yarn/pnpm) + Cyclon
 1.6 SBOM export (ADR-0027), `remediate()` advisory fixes (ADR-0031), in-toto/DSSE
 signed audit attestations (ADR-0032), `lintPolicy` (ADR-0033).
 
-**Proxy (`@agentic-sentinel/proxy`)** — sync inline gate over bytes in memory, cached by
+**Proxy (`@git-agentic/sentinel-proxy`)** — sync inline gate over bytes in memory, cached by
 `dist.integrity`; transparent packument passthrough rewriting only `dist.tarball`.
 Private-namespace packages are served only from the private store, fail-closed
 (ADR-0010/0015). `POST /-/audit-tree` whole-lockfile gate with dedupe + 413 cap
@@ -75,7 +75,7 @@ configured public base URL off loopback — 421 otherwise (ADR-0036). Byte caps,
 request coalescing, and an opt-in token-bucket rate limiter round out resource
 robustness; install-gate paths are never rate-limited (ADR-0037).
 `packages/proxy/src/index.ts`'s `main()` is entrypoint-guarded — importing
-`@agentic-sentinel/proxy` must never boot a server as a side effect (ADR-0030).
+`@git-agentic/sentinel-proxy` must never boot a server as a side effect (ADR-0030).
 Phase 30 generalizes private publishing into an authoritative native write path:
 pure `source(name, signedPolicy, claimCorpus)` selects policy-private →
 verified-claim → public-mirror without version merging; native names never fall
@@ -109,7 +109,7 @@ it runs each client's exposed mutation commands (Berry has no unpublish; bun
 has neither dist-tag nor unpublish), while the wire suite covers the complete
 shared route contract.
 
-**Claim steward (`@agentic-sentinel/steward`)** — authenticated operational service for
+**Claim steward (`@git-agentic/sentinel-steward`)** — authenticated operational service for
 exact-apex DNS TXT challenges, steward-fetched three-tier grandfathering,
 claimant-key-signed transfers, 12-month renewal and freeze, 30-day announced
 Tier-2 grants/transfers/dispute rulings, durable atomic state, and atomic
@@ -122,7 +122,7 @@ history. The steward control plane and proxy publish route have mandatory
 per-source rate-limit backstops; release directory names are generated
 independently of request data.
 
-**Sandbox (`@agentic-sentinel/sandbox`)** — `createSandbox()` selects Seatbelt (darwin)
+**Sandbox (`@git-agentic/sentinel-sandbox`)** — `createSandbox()` selects Seatbelt (darwin)
 or bubblewrap (linux); one approved-capability model, fail-closed contract
 (ADR-0016/0018). Posture is **deny-by-default**: writes closed except a fixed
 `writeAllowFloor` + Grants, `$HOME` reads closed except `readAllowList`
@@ -146,7 +146,7 @@ outside `exec` remain uncontained (ADR-0051).
 
 **CLI / CI / MCP** — `sentinel` CLI: `audit-tree`, `explain`, `stats`/`history`,
 `policy init|validate|preview|keygen|sign|verify`, `attest-keygen`/`attest`/
-`verify-attestation`, `run-scripts`, `install --enforce`, `exec`. `@agentic-sentinel/action`
+`verify-attestation`, `run-scripts`, `install --enforce`, `exec`. `@git-agentic/sentinel-action`
 (bin `sentinel-ci`) self-boots the proxy in-process for CI, writes SBOM +
 GitHub-native outputs, idempotent PR comment (ADR-0030). `sentinel-mcp` exposes
 read tools plus a single write tool that only ever *requests* approval — a human
@@ -226,8 +226,8 @@ enforcement is tested with benign probe packages.
 
 Node + TypeScript, npm workspaces (`core`, `proxy`, `sandbox`, `cli`, `mcp`,
 `action`, `steward` — `action` is the GitHub Action, bin `sentinel-ci`), Express 5, `tar` 7,
-`commander` 15, `yaml` 2 (`@agentic-sentinel/core` only — pnpm/yarn-berry lockfile
-parsing), `semver` 7 (`@agentic-sentinel/core` vulnerability range matching), tests on
+`commander` 15, `yaml` 2 (`@git-agentic/sentinel-core` only — pnpm/yarn-berry lockfile
+parsing), `semver` 7 (`@git-agentic/sentinel-core` vulnerability range matching), tests on
 `node:test` + `tsx`. Developed against **Node 24 (Active LTS)**; Node 22
 (Maintenance LTS) also supported — `engines.node` is `>=22`. Pin to current
 latest; don't downgrade majors without a reason. `node:sqlite` is a built-in,
@@ -236,7 +236,7 @@ Node 22 needs `--experimental-sqlite`). The Landlock helper
 (`packages/sandbox/native/landlock-exec.c`) is compiled by `npm run build`
 (`build-native.mjs`, Linux + `cc` only, no-op elsewhere) — **never** a
 `postinstall` hook or lazy runtime compile; both would be posture violations for
-a tool that guards against exactly that. The *published* `@agentic-sentinel/sandbox`
+a tool that guards against exactly that. The *published* `@git-agentic/sentinel-sandbox`
 ships the helper as source only (no prebuilt binary in any tarball — enforced by
 `packages/core/test/package-contents.test.ts`); npm installs opt in via an
 explicit `node …/scripts/build-native.mjs` (ADR-0052). Releases version all

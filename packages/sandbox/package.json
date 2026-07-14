@@ -1,5 +1,5 @@
 {
-  "name": "@agentic-sentinel/sandbox",
+  "name": "@git-agentic/sentinel-sandbox",
   "version": "0.1.0-alpha.1",
   "description": "Sentinel capability sandbox: generate an OS sandbox profile from approved capabilities and run lifecycle scripts under it (macOS Seatbelt / Linux bubblewrap, deny-by-default).",
   "license": "Apache-2.0",
@@ -43,7 +43,7 @@
     "least-privilege"
   ],
   "dependencies": {
-    "@agentic-sentinel/core": "0.1.0-alpha.1"
+    "@git-agentic/sentinel-core": "0.1.0-alpha.1"
   },
   "devDependencies": {
     "@types/node": "^24.13.2"

@@ -7,7 +7,7 @@ import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 import { fileURLToPath } from "node:url";
 import { c as createTar } from "tar";
-import { DEFAULT_POLICY, integrityOf, type EnterprisePolicy } from "@agentic-sentinel/core";
+import { DEFAULT_POLICY, integrityOf, type EnterprisePolicy } from "@git-agentic/sentinel-core";
 import { createServer } from "../packages/proxy/src/server.js";
 import { AuditStore } from "../packages/proxy/src/store.js";
 import { ApprovalStore } from "../packages/proxy/src/approvals.js";

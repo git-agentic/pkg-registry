@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { after, before, describe, test } from "node:test";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
-import { DEFAULT_POLICY, type EnterprisePolicy, type AuditReport } from "@agentic-sentinel/core";
+import { DEFAULT_POLICY, type EnterprisePolicy, type AuditReport } from "@git-agentic/sentinel-core";
 import { createServer, type ServerOptions } from "../src/server.js";
 import { AuditStore } from "../src/store.js";
 import { LocalFixtureUpstream } from "../src/upstream.js";

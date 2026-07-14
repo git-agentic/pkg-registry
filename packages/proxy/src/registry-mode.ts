@@ -1,5 +1,5 @@
 import { writeFileSync } from "node:fs";
-import type { ClaimCorpus, EnterprisePolicy } from "@agentic-sentinel/core";
+import type { ClaimCorpus, EnterprisePolicy } from "@git-agentic/sentinel-core";
 import type { PrivatePackageStore } from "./private-store.js";
 import { EMPTY_CLAIM_CORPUS, source } from "./resolution.js";
 import type { RegistryMode } from "./server.js";

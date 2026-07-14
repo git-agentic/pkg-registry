@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Capability } from "@agentic-sentinel/core";
+import type { Capability } from "@git-agentic/sentinel-core";
 import type { Sandbox, SandboxResult } from "./types.js";
 import { generateProfile } from "./profile.js";
 import { computeDenySet } from "./deny-set.js";

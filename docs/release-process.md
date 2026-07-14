@@ -11,10 +11,10 @@ Seven workspaces publish under the `@sentinel` scope; the root
 `sentinel-registry` package is `private` and never publishes. Publication
 must follow the internal dependency graph:
 
-1. `@agentic-sentinel/core`
-2. `@agentic-sentinel/proxy`, `@agentic-sentinel/sandbox`, `@agentic-sentinel/mcp`, `@agentic-sentinel/steward`
-3. `@agentic-sentinel/cli` (depends on core + sandbox)
-4. `@agentic-sentinel/action` (depends on core + proxy)
+1. `@git-agentic/sentinel-core`
+2. `@git-agentic/sentinel-proxy`, `@git-agentic/sentinel-sandbox`, `@git-agentic/sentinel-mcp`, `@git-agentic/sentinel-steward`
+3. `@git-agentic/sentinel-cli` (depends on core + sandbox)
+4. `@git-agentic/sentinel-action` (depends on core + proxy)
 
 The release workflow publishes in exactly this order and stops at the first
 failure without unpublishing anything already released.
@@ -27,7 +27,7 @@ failure without unpublishing anything already released.
 - All seven packages version in lockstep — one release version across the
   workspace, even for packages with no changes. Lockstep keeps the internal
   dependency pins trivially correct and the support matrix one-dimensional.
-- Internal dependencies are pinned **exact** (`"@agentic-sentinel/core": "0.1.0-alpha.1"`,
+- Internal dependencies are pinned **exact** (`"@git-agentic/sentinel-core": "0.1.0-alpha.1"`,
   no `^`/`~`, never `workspace:*` or `file:` in a published manifest). A
   prerelease must never float onto a different prerelease.
 - User-visible hardcoded versions move with the release:
@@ -82,7 +82,7 @@ from a PR-triggered workflow.
 
 Prefer npm **trusted publishing** (GitHub Actions OIDC) over any long-lived
 token: configure the repo/workflow as a trusted publisher for each
-`@agentic-sentinel/*` package on npmjs.com and leave `NPM_TOKEN` unset — npm ≥ 11.5
+`@git-agentic/sentinel-*` package on npmjs.com and leave `NPM_TOKEN` unset — npm ≥ 11.5
 detects OIDC automatically and mints per-publish credentials. Until trusted
 publishing is configured (it may not be configurable before a package's
 first publish), use a **granular automation token scoped to the @sentinel
@@ -108,10 +108,10 @@ exact commit + workflow run.
 
 ## Compromised-release response
 
-1. **Deprecate immediately**: `npm deprecate @agentic-sentinel/<p>@<version>
+1. **Deprecate immediately**: `npm deprecate @git-agentic/sentinel-<p>@<version>
    "SECURITY: compromised — do not install"` for every affected package.
 2. Point the dist-tag at the last known-good version (`npm dist-tag add
-   @agentic-sentinel/<p>@<good> alpha`).
+   @git-agentic/sentinel-<p>@<good> alpha`).
 3. Request npm unpublish/security takedown through npm support if within
    policy; do not rely on it.
 4. Rotate every credential the pipeline touched (npm token, corpus/policy

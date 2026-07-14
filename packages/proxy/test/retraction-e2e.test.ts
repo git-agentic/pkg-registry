@@ -3,7 +3,7 @@ import { Buffer } from "node:buffer";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, test } from "node:test";
-import { DEFAULT_POLICY, generateKeypair, integrityOf, retractionCorpusHashOfBytes, signToken, type Audit, type EnterprisePolicy, type RetractionCorpus } from "@agentic-sentinel/core";
+import { DEFAULT_POLICY, generateKeypair, integrityOf, retractionCorpusHashOfBytes, signToken, type Audit, type EnterprisePolicy, type RetractionCorpus } from "@git-agentic/sentinel-core";
 import { createServer } from "../src/server.js";
 import { AuditStore } from "../src/store.js";
 import { ApprovalStore } from "../src/approvals.js";

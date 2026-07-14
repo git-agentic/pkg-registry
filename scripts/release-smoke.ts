@@ -8,7 +8,7 @@
 //   - the proxy boots, serves the dashboard, and shuts down cleanly
 //   - the MCP server answers an initialize handshake
 //   - the steward fail-closes on missing config and boots with full config
-//   - internal @agentic-sentinel/* dependencies resolve from the packed tarballs only
+//   - internal @git-agentic/sentinel-* dependencies resolve from the packed tarballs only
 //
 // Requires network access (third-party deps install from the public registry).
 // Usage: npx tsx scripts/release-smoke.ts [--json <out.json>] [--pack-dest <dir>]
@@ -103,7 +103,7 @@ for (const ws of WORKSPACES) {
   const info = (JSON.parse(json) as { filename: string; size: number; entryCount: number; unpackedSize: number }[])[0];
   const file = join(packDir, info.filename);
   const sha256 = createHash("sha256").update(readFileSync(file)).digest("hex");
-  results.tarballs.push({ name: `@agentic-sentinel/${ws}`, file: info.filename, bytes: info.size, sha256, files: info.entryCount, unpacked: info.unpackedSize });
+  results.tarballs.push({ name: `@git-agentic/sentinel-${ws}`, file: info.filename, bytes: info.size, sha256, files: info.entryCount, unpacked: info.unpackedSize });
   console.log(`  ${info.filename}  ${info.size} B  ${info.entryCount} files  sha256:${sha256.slice(0, 16)}…`);
 }
 
@@ -112,22 +112,22 @@ for (const ws of WORKSPACES) {
 // ---------------------------------------------------------------------------
 const proj = mkdtempSync(join(tmpdir(), "sentinel-smoke-"));
 console.log(`\n[2/5] fresh install into ${proj}`);
-const fileDep = (ws: string) => `file:${join(packDir, results.tarballs.find((t) => t.name === `@agentic-sentinel/${ws}`)!.file)}`;
+const fileDep = (ws: string) => `file:${join(packDir, results.tarballs.find((t) => t.name === `@git-agentic/sentinel-${ws}`)!.file)}`;
 const pkgJson = {
   name: "sentinel-release-smoke", private: true, version: "0.0.0", type: "module",
-  dependencies: Object.fromEntries(WORKSPACES.map((ws) => [`@agentic-sentinel/${ws}`, fileDep(ws)])),
+  dependencies: Object.fromEntries(WORKSPACES.map((ws) => [`@git-agentic/sentinel-${ws}`, fileDep(ws)])),
   // Internal deps are pinned to the (unpublished) exact prerelease version, so
   // transitive resolution must be forced to the local tarballs.
-  overrides: { "@agentic-sentinel/core": fileDep("core"), "@agentic-sentinel/proxy": fileDep("proxy"), "@agentic-sentinel/sandbox": fileDep("sandbox") },
+  overrides: { "@git-agentic/sentinel-core": fileDep("core"), "@git-agentic/sentinel-proxy": fileDep("proxy"), "@git-agentic/sentinel-sandbox": fileDep("sandbox") },
 };
 writeFileSync(join(proj, "package.json"), JSON.stringify(pkgJson, null, 2));
 run("npm", ["install", "--no-audit", "--no-fund", "--loglevel=error"], { cwd: proj });
 console.log("  installed");
 check("internal deps resolved from tarballs (not registry)", () => {
   const lock = JSON.parse(readFileSync(join(proj, "package-lock.json"), "utf8")) as { packages: Record<string, { resolved?: string; version?: string }> };
-  const bad = Object.entries(lock.packages).filter(([k, v]) => k.includes("@agentic-sentinel/") && v.resolved && !v.resolved.startsWith("file:"));
+  const bad = Object.entries(lock.packages).filter(([k, v]) => k.includes("@git-agentic/sentinel-") && v.resolved && !v.resolved.startsWith("file:"));
   if (bad.length) throw new Error(`registry-resolved: ${bad.map(([k]) => k).join(", ")}`);
-  return "all @agentic-sentinel/* resolved file:";
+  return "all @git-agentic/sentinel-* resolved file:";
 });
 
 // ---------------------------------------------------------------------------
@@ -135,22 +135,22 @@ check("internal deps resolved from tarballs (not registry)", () => {
 // ---------------------------------------------------------------------------
 console.log(`\n[3/5] imports + types`);
 for (const ws of WORKSPACES) {
-  check(`import @agentic-sentinel/${ws}`, () => {
-    run(process.execPath, ["-e", `import("@agentic-sentinel/${ws}").then((m)=>{ if(!m || typeof m !== "object") throw new Error("empty module") })`], { cwd: proj });
+  check(`import @git-agentic/sentinel-${ws}`, () => {
+    run(process.execPath, ["-e", `import("@git-agentic/sentinel-${ws}").then((m)=>{ if(!m || typeof m !== "object") throw new Error("empty module") })`], { cwd: proj });
     return "";
   });
 }
 check("ENGINE_VERSION matches release", () => {
-  const v = run(process.execPath, ["-e", `import("@agentic-sentinel/core").then((m)=>console.log(m.ENGINE_VERSION))`], { cwd: proj }).trim();
+  const v = run(process.execPath, ["-e", `import("@git-agentic/sentinel-core").then((m)=>console.log(m.ENGINE_VERSION))`], { cwd: proj }).trim();
   if (v !== VERSION) throw new Error(`ENGINE_VERSION=${v}, expected ${VERSION}`);
   return v;
 });
 check("type declarations resolve (tsc --noEmit, NodeNext)", () => {
   run("npm", ["install", "--no-audit", "--no-fund", "--loglevel=error", "-D", "typescript@^6"], { cwd: proj });
   writeFileSync(join(proj, "typecheck.ts"), [
-    `import { runAudit, score, DEFAULT_POLICY, type AuditReport, type EnterprisePolicy } from "@agentic-sentinel/core";`,
-    `import { createServer, NpmUpstream, type Upstream } from "@agentic-sentinel/proxy";`,
-    `import { createSandbox, scrubEnv } from "@agentic-sentinel/sandbox";`,
+    `import { runAudit, score, DEFAULT_POLICY, type AuditReport, type EnterprisePolicy } from "@git-agentic/sentinel-core";`,
+    `import { createServer, NpmUpstream, type Upstream } from "@git-agentic/sentinel-proxy";`,
+    `import { createSandbox, scrubEnv } from "@git-agentic/sentinel-sandbox";`,
     `const p: EnterprisePolicy = DEFAULT_POLICY;`,
     `void p; void runAudit; void score; void createServer; void createSandbox; void scrubEnv;`,
     `const u: Upstream | null = null; void u;`,

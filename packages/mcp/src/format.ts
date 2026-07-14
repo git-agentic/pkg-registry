@@ -1,4 +1,4 @@
-import type { AuditReport } from "@agentic-sentinel/core";
+import type { AuditReport } from "@git-agentic/sentinel-core";
 
 export function summarizeAudit(r: AuditReport, quarantined: boolean): string {
   const lines = [

@@ -25,7 +25,7 @@ import {
   type Advisory,
   type RetractionCorpus,
   type VulnAdvisory,
-} from "@agentic-sentinel/core";
+} from "@git-agentic/sentinel-core";
 import { createServer, type ProxyPolicy } from "./server.js";
 import { AuditStore } from "./store.js";
 import { ApprovalStore } from "./approvals.js";

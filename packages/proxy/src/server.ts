@@ -37,7 +37,7 @@ import {
   type RetractionAdvisory,
   type RetractionCorpus,
   type RetractionReason,
-} from "@agentic-sentinel/core";
+} from "@git-agentic/sentinel-core";
 import { AuditStore } from "./store.js";
 import { resolvePublishTime, cooldownDecision, applyCooldown, blockOverlay } from "./cooldown.js";
 import {

@@ -37,7 +37,7 @@ exfil-tool carve-out unaffected.
 
 ## Decision
 
-For `0.1.0-alpha.1`, `@agentic-sentinel/sandbox` ships the helper **as source only**,
+For `0.1.0-alpha.1`, `@git-agentic/sentinel-sandbox` ships the helper **as source only**,
 with an explicit, operator-invoked build path and the documented advisory
 fallback:
 
@@ -51,7 +51,7 @@ fallback:
    `scripts/build-native.mjs`. Both are first-party, reviewed files — the same
    from-source posture ADR-0044 chose over prebuilt distribution.
 3. **Compilation is an explicit operator action, never a lifecycle script.**
-   `node node_modules/@agentic-sentinel/sandbox/scripts/build-native.mjs` compiles the
+   `node node_modules/@git-agentic/sentinel-sandbox/scripts/build-native.mjs` compiles the
    helper in place (Linux + `cc` only; a no-op elsewhere). There is no
    `postinstall`, no lazy runtime compile, and no network fetch. The package
    README documents the command and the trade-off.
@@ -71,7 +71,7 @@ fallback:
 
 ## Alternatives considered
 
-- **Architecture-specific optional packages (`@agentic-sentinel/landlock-linux-x64`,
+- **Architecture-specific optional packages (`@git-agentic/sentinel-landlock-linux-x64`,
   … via `optionalDependencies` + `os`/`cpu`, the esbuild/swc pattern).** The
   strongest end-state — prebuilt, reproducible, no toolchain requirement — and
   the likely post-alpha direction. Rejected *for the alpha*: it multiplies the
@@ -87,7 +87,7 @@ fallback:
   x64 artifact silently presented as portable, unreproducible from the
   tarball, and a standing temptation for the release pipeline to become a
   binary-injection point.
-- **Blocking publication of `@agentic-sentinel/sandbox` (and its dependents).**
+- **Blocking publication of `@git-agentic/sentinel-sandbox` (and its dependents).**
   Unnecessary — ADR-0044's fallback is a designed, tested, honest degradation,
   not a silent weakening: the notice states the exact residual (a dropped
   binary can exec but stays filesystem+network confined), and the enforced

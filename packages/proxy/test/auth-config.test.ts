@@ -7,7 +7,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { describe, test } from "node:test";
-import { generateKeypair } from "@agentic-sentinel/core";
+import { generateKeypair } from "@git-agentic/sentinel-core";
 import { validateAuthPublicKey } from "../src/auth-config.js";
 
 const execFileAsync = promisify(execFile);

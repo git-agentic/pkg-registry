@@ -4,7 +4,7 @@ import { join } from "node:path";
 import express, { type Request, type Response } from "express";
 import { rateLimit } from "express-rate-limit";
 import { ClaimSteward, type ClaimApplicationInput, type TxtResolver } from "./steward.js";
-import type { RetractionAdvisory } from "@agentic-sentinel/core";
+import type { RetractionAdvisory } from "@git-agentic/sentinel-core";
 
 export interface StewardServerOptions {
   steward: ClaimSteward;

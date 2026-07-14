@@ -1,5 +1,5 @@
 {
-  "name": "@agentic-sentinel/core",
+  "name": "@git-agentic/sentinel-core",
   "version": "0.1.0-alpha.1",
   "description": "Sentinel audit engine: deterministic heuristic rules, scoring, data model, lockfile parsing, SBOM export, and pluggable LLM adapter.",
   "license": "Apache-2.0",

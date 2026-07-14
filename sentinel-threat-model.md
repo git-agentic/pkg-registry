@@ -291,13 +291,13 @@ and stays filesystem+network confined as before. The Phase 29 `/dev/null`
 carve-out is unchanged (Landlock is allow-list-only and can't deny a literal
 under an allowed dir). `native` is advisory-only on both platforms by decision.
 A spawned child inherits the filesystem/network confinement on both platforms.
-**Distribution note (ADR-0052):** the published `@agentic-sentinel/sandbox` npm package
+**Distribution note (ADR-0052):** the published `@git-agentic/sentinel-sandbox` npm package
 ships the Landlock helper as *source only* — no prebuilt binary (it would be
 architecture-specific presented as portable) and no install-time compilation
 (a posture violation for a tool that guards against lifecycle scripts). A
 fresh npm install therefore runs the advisory exec floor on Linux, announced
 by a one-time notice, until the operator explicitly compiles the helper
-(`node node_modules/@agentic-sentinel/sandbox/scripts/build-native.mjs`); monorepo
+(`node node_modules/@git-agentic/sentinel-sandbox/scripts/build-native.mjs`); monorepo
 builds are unchanged.
 A cross-platform exec floor now exists (macOS Seatbelt, Linux Landlock where
 available); [issue #8](https://github.com/git-agentic/pkg-registry/issues/8)

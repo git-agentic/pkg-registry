@@ -1,5 +1,5 @@
 {
-  "name": "@agentic-sentinel/mcp",
+  "name": "@git-agentic/sentinel-mcp",
   "version": "0.1.0-alpha.1",
   "description": "Sentinel MCP server: agent-native pre-install audit tools backed by the Sentinel proxy (stdio Model Context Protocol server).",
   "license": "Apache-2.0",
@@ -42,7 +42,7 @@
     "npm-audit"
   ],
   "dependencies": {
-    "@agentic-sentinel/core": "0.1.0-alpha.1",
+    "@git-agentic/sentinel-core": "0.1.0-alpha.1",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "zod": "^3.23.8"
   },

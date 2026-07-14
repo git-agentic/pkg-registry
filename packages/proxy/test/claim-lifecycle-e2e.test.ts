@@ -7,7 +7,7 @@ import type { AddressInfo } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, test } from "node:test";
-import { DEFAULT_POLICY, generateKeypair, integrityOf, runAudit, type ClaimCorpus, type ClaimStatus, type EnterprisePolicy, type TrustedPublisher } from "@agentic-sentinel/core";
+import { DEFAULT_POLICY, generateKeypair, integrityOf, runAudit, type ClaimCorpus, type ClaimStatus, type EnterprisePolicy, type TrustedPublisher } from "@git-agentic/sentinel-core";
 import { ApprovalRequestStore } from "../src/approval-requests.js";
 import { ApprovalStore } from "../src/approvals.js";
 import { PrivatePackageStore } from "../src/private-store.js";

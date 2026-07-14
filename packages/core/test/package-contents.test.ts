@@ -59,7 +59,7 @@ function packList(pkgDir: string): string[] {
 }
 
 for (const ws of WORKSPACES) {
-  test(`@agentic-sentinel/${ws} tarball contains only runtime files`, () => {
+  test(`@git-agentic/sentinel-${ws} tarball contains only runtime files`, () => {
     const pkgDir = join(repoRoot, "packages", ws);
     assert.ok(
       existsSync(join(pkgDir, "dist", "index.js")),
@@ -73,10 +73,10 @@ for (const ws of WORKSPACES) {
         if (re.test(f)) violations.push(`${f} (${name})`);
       }
     }
-    assert.deepEqual(violations, [], `forbidden files in @agentic-sentinel/${ws} tarball:\n  ${violations.join("\n  ")}`);
+    assert.deepEqual(violations, [], `forbidden files in @git-agentic/sentinel-${ws} tarball:\n  ${violations.join("\n  ")}`);
 
     for (const req of REQUIRED[ws]) {
-      assert.ok(files.includes(req), `@agentic-sentinel/${ws} tarball is missing required runtime file: ${req}`);
+      assert.ok(files.includes(req), `@git-agentic/sentinel-${ws} tarball is missing required runtime file: ${req}`);
     }
   });
 }
