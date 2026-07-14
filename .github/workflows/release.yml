@@ -141,7 +141,12 @@ jobs:
       - name: Verify the tag exists and points at the tested commit
         run: |
           set -euo pipefail
-          git fetch origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}" || {
+          # --force: when this run was dispatched on the tag ref, checkout has
+          # already fetched the tag and a non-forced re-fetch is rejected
+          # ("would clobber existing tag"). The security gate is the SHA
+          # comparison below, not the fetch — forcing only refreshes our view
+          # of where the remote tag points right now.
+          git fetch --force origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}" || {
             echo "::error::tag ${RELEASE_TAG} not found on origin — push it (pointing at $GITHUB_SHA) before approving Stage B"; exit 1; }
           tagged="$(git rev-parse "${RELEASE_TAG}^{commit}")"
           if [ "$tagged" != "$GITHUB_SHA" ]; then
