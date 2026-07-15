@@ -244,20 +244,9 @@ seven workspaces in lockstep with exact internal pins and publish via the
 two-stage `release.yml` (see [docs/release-process.md](./docs/release-process.md)).
 
 **Proxy env vars** — all optional, all parsed **fail-closed once at startup**
-(malformed ⇒ FATAL); unset ⇒ documented default, zero behavior change:
-
-| Var | Purpose |
-|-----|---------|
-| `SENTINEL_AUTH_PUBKEY` | enable role-token auth on mutating routes (ADR-0025) |
-| `SENTINEL_AUTO_QUARANTINE` | exactly `1` enables server-decided quarantine; requires auth configured or FATAL (ADR-0040) |
-| `SENTINEL_HISTORY_DB` | path ⇒ enable sqlite history write-through (ADR-0028) |
-| `SENTINEL_ADVISORIES` / `SENTINEL_VULNERABILITIES` | operator advisory/vuln JSON feeds (ADR-0034/0035) |
-| `SENTINEL_CLAIM_CORPUS_FILE` / `SENTINEL_CLAIM_CORPUS_SIG` / `SENTINEL_CLAIM_CORPUS_PUBKEY` | versioned offline claim corpus; file requires a pinned key, bad signature/schema is FATAL (ADR-0046) |
-| `SENTINEL_RETRACTION_CORPUS_FILE` / `SENTINEL_RETRACTION_CORPUS_SIG` / `SENTINEL_RETRACTION_CORPUS_PUBKEY` | versioned offline retraction corpus; pubkey may fall back to the claim-corpus key; bad signature/schema is FATAL (ADR-0047) |
-| `SENTINEL_REGISTRY_MODE` / `SENTINEL_REGISTRY_MODE_OFF_ACK` / `SENTINEL_REVERT_MANIFEST` | `on` by default; `off` ignores claims and disables registry mutations, requiring acknowledgment with retained native content and emitting a revert manifest (ADR-0048) |
-| `SENTINEL_REGISTRY` / `SENTINEL_TARBALL_ORIGINS` / `SENTINEL_PUBLIC_BASE_URL` | upstream origin, outbound tarball allowlist, inbound rewrite base (ADR-0036) |
-| `SENTINEL_MAX_TARBALL_BYTES` / `SENTINEL_MAX_PACKUMENT_BYTES` / `SENTINEL_MAX_TREE_PACKAGES` / `SENTINEL_RATE_LIMIT_RPM` | fetch caps (256 MB / 128 MB), tree cap (5000), opt-in rate limit (ADR-0037) |
-| `SENTINEL_MAX_UNPACKED_BYTES` / `SENTINEL_MAX_FILE_COUNT` | decompression-bomb caps (1 GiB / 100k) (ADR-0039) |
+(malformed ⇒ FATAL); unset ⇒ documented default, zero behavior change. The full
+variable table lives in [README.md](./README.md) and
+[ARCHITECTURE.md](./ARCHITECTURE.md).
 
 ## Build / test / run
 
