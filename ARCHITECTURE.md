@@ -110,7 +110,7 @@ This is the key latency decision. We split it:
 
 | Mode | What runs | When | Blocking? |
 |---|---|---|---|
-| **Sync gate** | Heuristic rules engine (static analysis only — no LLM, no network beyond the tarball we already fetched) | On the tarball request, before bytes are served | Yes — but only on a **cold** package@version. Result is cached by integrity hash, so steady-state is a cache hit (sub-ms). |
+| **Sync gate** | Heuristic rules engine (static analysis only — no LLM, no network beyond the tarball we already fetched) | On the tarball request, before bytes are served | Yes — but only on a **cold** package@version. Result is cached by `(name, version, actual integrity)`, so steady-state is a cache hit (sub-ms). |
 | **Async enrich** | LLM adapter pass + cross-version diff trend + provenance lookups | Queued after the response is served | No — enrichment updates the stored report and dashboard; never on the request path |
 
 Rationale: the heuristic engine is fast (regex/AST over a tarball that's already in
@@ -120,9 +120,10 @@ hit, and the verdict is reproducible in CI. Anything slow or non-deterministic
 hiccup can never stall an install. The score a client sees inline never depends on
 a live LLM.
 
-Caching key = `sha512` integrity from the packument `dist.integrity`. Audits are
-immutable per `(package, version, integrity)` — npm can't mutate a published
-tarball without changing the hash, so a cached verdict is always valid.
+Caching key = `(package name, version, actual sha512 integrity recomputed from
+the served bytes)` (ADR-0055). npm can't mutate a published tarball without
+changing the hash, while the coordinate dimensions prevent byte-identical
+packages from sharing metadata-dependent findings.
 
 ### 3.2 Diff-audit
 
@@ -832,7 +833,7 @@ audit output.
   the target version, runs `remediate`, and walks back a **bounded window**
   (newest ≤10 prior versions, via the packument and `cmpSemver`) for the
   first version whose own audit is `allow` — short-circuiting on the first
-  hit and reusing the same cached, integrity-keyed `auditVersion` path every
+  hit and reusing the same cached, coordinate-and-integrity-keyed `auditVersion` path every
   other route uses. A packument fetch failure or a per-version audit failure
   is treated as "no last-known-good found," not an error — this is
   best-effort advisory output, not a gate. The route is deliberately off the
@@ -1117,7 +1118,8 @@ throttle protects the expensive read endpoints. Phase 24 closes all four:
   `name@version` map lets concurrent uncached public audits for the same
   coordinate share one fetch/extract/score pipeline; the entry clears on
   settle (success or failure) so a failed run isn't cached. The
-  integrity-keyed `store` stays the durable cache (invariant #4) — the map
+  `(name, version, actual integrity)`-keyed `store` stays the durable cache
+  (invariant #4, ADR-0055) — the map
   is transient concurrency dedupe only, scoped to the process.
 - **Opt-in rate limiting (`packages/proxy/src/rate-limit.ts`).** A pure
   token-bucket `RateLimiter` (`createRateLimiter({ rpm, now })`, injectable
@@ -1178,7 +1180,7 @@ throttle protects the expensive read endpoints. Phase 24 closes all four:
 
 `limits.ts` and `rate-limit.ts` are pure — no env access, clock injected —
 so the caps and the limiter are unit-tested without wall-clock or network
-I/O. Scoring, the integrity cache key, and the packument passthrough are
+I/O. Scoring, the coordinate-and-integrity cache key, and the packument passthrough are
 untouched (invariants #1–#6) — see
 [ADR-0037](./docs/adr/0037-resource-robustness.md),
 [ADR-0039](./docs/adr/0039-bounded-tarball-extraction.md), and
@@ -1366,9 +1368,12 @@ Each rule is a pure function `(files, ctx) => Finding[]`. Phase 1 ships four:
 3. **`network-egress`** — `http`/`https`/`net`/`dns`, `fetch`, websockets,
    `child_process` invoking `curl`/`wget`, hardcoded IPs, suspicious TLDs, and
    base64-encoded URLs.
-4. **`obfuscation`** — `eval`, `Function(...)` constructor, `atob`/`unescape`,
-   long base64/hex blobs, `\xNN` string arrays, `charCodeAt` decode loops,
-   dynamic `require` of decoded strings.
+4. **`obfuscation`** — concealed dynamic execution: direct or explicitly-global
+   JavaScript `eval` (not an arbitrary object method named `eval`), decoded source passed to the `Function`
+   constructor, and dynamic `require` of decoded/computed strings. Minification,
+   encoded data assets, data transcoding, character-code operations, and readable
+   `Function` runtime glue are not findings without a code-execution sink
+   (ADR-0054).
 
 Phase 8 adds a fifth rule (§3.9, ADR-0021):
 

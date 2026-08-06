@@ -76,7 +76,7 @@ describe("Phase 32 time-locked retraction", () => {
     const ctx = await boot(71, 999);
     const before = await fetch(`${ctx.base}/-/audit/${encodeURIComponent("@acme/widget")}/2.0.0`);
     assert.equal(before.status, 200);
-    const storedBefore = JSON.stringify(ctx.store.get(integrityOf(Buffer.from("tarball-2.0.0")))?.report);
+    const storedBefore = JSON.stringify(ctx.store.get("@acme/widget", "2.0.0", integrityOf(Buffer.from("tarball-2.0.0")))?.report);
 
     const response = await ctx.retract("security");
     assert.equal(response.status, 201, await response.clone().text());
@@ -98,7 +98,7 @@ describe("Phase 32 time-locked retraction", () => {
       error: "package version retracted", package: "@acme/widget@2.0.0", ...created.tombstone,
     });
     assert.equal((await fetch(`${ctx.base}/@acme%2Fwidget/-/widget-1.0.0.tgz`)).status, 200);
-    assert.equal(JSON.stringify(ctx.store.get(integrityOf(Buffer.from("tarball-2.0.0")))?.report), storedBefore,
+    assert.equal(JSON.stringify(ctx.store.get("@acme/widget", "2.0.0", integrityOf(Buffer.from("tarball-2.0.0")))?.report), storedBefore,
       "serve-time retraction overlay must not rewrite the cached AuditReport");
   });
 
@@ -136,7 +136,7 @@ describe("Phase 32 time-locked retraction", () => {
     const ctx = await boot(2, 0);
     await fetch(`${ctx.base}/@acme%2Fwidget/-/widget-2.0.0.tgz`);
     const integrity = integrityOf(Buffer.from("tarball-2.0.0"));
-    const storedBefore = JSON.stringify(ctx.store.get(integrity)?.report);
+    const storedBefore = JSON.stringify(ctx.store.get("@acme/widget", "2.0.0", integrity)?.report);
     assert.equal((await ctx.retract("security")).status, 201);
 
     const tree = await (await fetch(`${ctx.base}/-/audit-tree`, {
@@ -146,7 +146,7 @@ describe("Phase 32 time-locked retraction", () => {
     assert.equal(tree.packages[0].status, "block");
     assert.equal(tree.packages[0].topFindingRuleId, "known-advisory");
     assert.match(tree.packages[0].topFinding, /retracted/i);
-    assert.equal(JSON.stringify(ctx.store.get(integrity)?.report), storedBefore);
+    assert.equal(JSON.stringify(ctx.store.get("@acme/widget", "2.0.0", integrity)?.report), storedBefore);
   });
 
   test("explain never recommends a retracted prior version", async () => {
