@@ -65,6 +65,20 @@ export function lintPolicy(policy: EnterprisePolicy): { errors: LintFinding[]; w
     warnings.push({ code: "diff-multiplier-weak", message: `scoring.diffMultiplier (${s.diffMultiplier}) < 1 weakens the changed-in-this-release signal.` });
   }
 
+  // perRuleCapMultiplier (ADR-0053): bounds one rule's total penalty at this
+  // multiple of its own single worst-instance weight. Absent is legal (falls
+  // back to DEFAULT_PER_RULE_CAP_MULTIPLIER at score time); present must be
+  // a finite number >= 1, since a cap below 1x would clamp even a lone finding
+  // below its own weight.
+  const capMult = s.perRuleCapMultiplier;
+  if (capMult !== undefined) {
+    if (typeof capMult !== "number" || !Number.isFinite(capMult) || capMult < 1) {
+      errors.push({ code: "bad-per-rule-cap-multiplier", message: `scoring.perRuleCapMultiplier (${capMult}) must be a finite number >= 1.` });
+    } else if (capMult === 1) {
+      warnings.push({ code: "aggressive-per-rule-cap", message: `scoring.perRuleCapMultiplier (${capMult}) caps every rule at its single worst instance — repeated findings from the same rule add nothing to the score.` });
+    }
+  }
+
   // List hygiene: malformed entries + deny/allow conflict.
   const badEntry = (arr: unknown[], field: string) =>
     arr.some((x) => typeof x !== "string" || x.trim() === "") &&

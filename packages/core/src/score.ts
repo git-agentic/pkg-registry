@@ -1,5 +1,5 @@
 import type { Audit, AuditReport, ProvenanceIdentity, ScoredFinding, Severity, Verdict } from "./types.js";
-import { DEFAULT_POLICY, matchPackage, policyHashOf, type EnterprisePolicy, type ProvenanceIdentityRequirement } from "./policy.js";
+import { DEFAULT_PER_RULE_CAP_MULTIPLIER, DEFAULT_POLICY, matchPackage, policyHashOf, type EnterprisePolicy, type ProvenanceIdentityRequirement } from "./policy.js";
 import { canonical, typosquatMatch, normalizeName } from "./name-distance.js";
 import type { Finding } from "./types.js";
 
@@ -55,7 +55,8 @@ export function score(
     return { ...f, weight, waived, waivedBy };
   });
 
-  const penalty = scored.reduce((s, f) => s + Math.max(0, f.weight), 0);
+  const capMultiplier = policy.scoring.perRuleCapMultiplier ?? DEFAULT_PER_RULE_CAP_MULTIPLIER;
+  const penalty = perRuleCappedPenalty(scored, capMultiplier);
   const value = clamp(Math.round(100 - penalty), 0, 100);
   const denied = policy.deny.some((d) => matchPackage(d.package, audit.meta.name));
   const hardBlock = scored.some(
@@ -112,6 +113,37 @@ export function score(
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, n));
+}
+
+/**
+ * Sum penalty across findings, bounding each rule's total contribution at
+ * `capMultiplier x` its own single worst-instance weight (ADR-0053). A rule
+ * that fires once is unaffected (its sum equals its max, always <= the cap);
+ * a rule that fires N times establishes its signal at full strength within a
+ * few instances and then stops adding marginal penalty, so the number of
+ * offending files a rule cites can't alone zero out the score. Waived
+ * findings carry `weight: 0` and are excluded before grouping — they neither
+ * count toward a rule's sum nor set its cap (ADR-0014). Monotonic: adding any
+ * additional (possibly zero-weight) finding to a rule's group never decreases
+ * that rule's capped contribution, because both the raw sum and the cap
+ * (`capMultiplier x max`) are non-decreasing in the finding set, and the
+ * total penalty is the sum of independent per-rule contributions.
+ */
+function perRuleCappedPenalty(scored: ScoredFinding[], capMultiplier: number): number {
+  const byRule = new Map<string, { sum: number; max: number }>();
+  for (const f of scored) {
+    const w = Math.max(0, f.weight);
+    if (w === 0) continue;
+    const cur = byRule.get(f.ruleId) ?? { sum: 0, max: 0 };
+    cur.sum += w;
+    cur.max = Math.max(cur.max, w);
+    byRule.set(f.ruleId, cur);
+  }
+  let total = 0;
+  for (const { sum, max } of byRule.values()) {
+    total += Math.min(sum, max * capMultiplier);
+  }
+  return total;
 }
 
 /**

@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { before, describe, test } from "node:test";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
-import { runAudit, score, integrityOf, DEFAULT_POLICY, matchPackage, type EnterprisePolicy, type NpmSigningKey, type RegistrySignature } from "../src/index.js";
+import { runAudit, score, integrityOf, DEFAULT_POLICY, DEFAULT_PER_RULE_CAP_MULTIPLIER, matchPackage, type EnterprisePolicy, type NpmSigningKey, type RegistrySignature } from "../src/index.js";
 import { ensureFixtures, tarball } from "./helpers.js";
-import type { Audit, PackageMeta } from "../src/types.js";
+import type { Audit, Finding, PackageMeta, Severity } from "../src/types.js";
 
 const baseMeta = {
   author: null, maintainers: [] as string[], license: null,
@@ -218,5 +218,86 @@ describe("dependency-confusion gate", () => {
     assert.ok(r.score < 100, "the high finding must lower the score");
     // high (-25) alone → 75 → warn, not block:
     assert.equal(r.verdict, "warn");
+  });
+});
+
+// --- ADR-0053: per-rule score cap ---------------------------------------
+
+function findingsOf(ruleId: string, severity: Severity, n: number, category: Finding["category"] = "obfuscation"): Finding[] {
+  return Array.from({ length: n }, (_, i) => ({
+    ruleId, category, severity,
+    message: `synthetic finding ${i}`, onChangedFile: false, evidence: [],
+  }));
+}
+
+function auditWithFindings(findings: Finding[]): Audit {
+  const meta = { name: "synthetic-pkg", version: "1.0.0", author: null, maintainers: [], license: null,
+    hasInstallScripts: false, signature: "unsigned", provenance: "absent", integrity: "sha512-x",
+    unpackedSize: 10, fileCount: 1 } as unknown as PackageMeta;
+  return { schema: 3, meta, findings, capabilities: [], capabilityDelta: null,
+    engine: { version: "0.1.0", rules: [], mode: "full" }, auditedAt: "t", durationMs: 0 };
+}
+
+describe("per-rule score cap (ADR-0053)", () => {
+  test("a single instance is scored exactly as before the cap (unaffected)", () => {
+    const r = score(auditWithFindings(findingsOf("obfuscation", "high", 1)), DEFAULT_POLICY);
+    assert.equal(r.score, 75); // 100 - severityWeight.high (25)
+  });
+
+  test("14 identical high findings score far better than 14x the single-instance weight", () => {
+    // Pre-fix (linear sum, no cap): 14 * 25 = 350 penalty, clamped score 0.
+    const r = score(auditWithFindings(findingsOf("obfuscation", "high", 14)), DEFAULT_POLICY);
+    assert.ok(r.score > 0, `expected the cap to leave score headroom, got ${r.score}`);
+    // capMultiplier (default 3) * weight 25 = 75 penalty -> score 25.
+    assert.equal(r.score, 100 - DEFAULT_PER_RULE_CAP_MULTIPLIER * 25);
+  });
+
+  test("the cap saturates exactly at capMultiplier instances — the (N+1)th identical finding adds nothing", () => {
+    const atCap = score(auditWithFindings(findingsOf("obfuscation", "high", DEFAULT_PER_RULE_CAP_MULTIPLIER)), DEFAULT_POLICY);
+    const overCap = score(auditWithFindings(findingsOf("obfuscation", "high", DEFAULT_PER_RULE_CAP_MULTIPLIER + 1)), DEFAULT_POLICY);
+    assert.equal(atCap.score, overCap.score);
+  });
+
+  test("monotonic: more identical findings from one rule never improves the score", () => {
+    let prevScore = 100;
+    for (let n = 1; n <= 20; n++) {
+      const r = score(auditWithFindings(findingsOf("obfuscation", "high", n)), DEFAULT_POLICY);
+      assert.ok(r.score <= prevScore, `score must not increase from n=${n - 1} (${prevScore}) to n=${n} (${r.score})`);
+      prevScore = r.score;
+    }
+  });
+
+  test("two independent rules are capped independently, not sharing one global budget", () => {
+    const findings = [...findingsOf("obfuscation", "high", 14), ...findingsOf("network-egress", "high", 14, "network")];
+    const r = score(auditWithFindings(findings), DEFAULT_POLICY);
+    // each rule capped at 3*25=75 -> total penalty 150 -> score clamped to 0.
+    assert.equal(r.score, 0);
+  });
+
+  test("a rule's cap is set by its own worst instance when severities within the rule vary", () => {
+    // 1 critical (55) + 13 high (25): sum = 55 + 13*25 = 380; cap = 3 * 55 = 165 -> capped penalty 165.
+    const findings = [...findingsOf("obfuscation", "critical", 1), ...findingsOf("obfuscation", "high", 13)];
+    const r = score(auditWithFindings(findings), DEFAULT_POLICY);
+    assert.equal(r.score, 0); // still clamps to 0 here, but via the capped total, not the raw 380 sum
+  });
+
+  test("waived findings are excluded before grouping — they consume no cap budget and don't set the cap", () => {
+    const p: EnterprisePolicy = { ...DEFAULT_POLICY, rules: { disabled: ["obfuscation"] } };
+    const r = score(auditWithFindings(findingsOf("obfuscation", "high", 14)), p);
+    assert.equal(r.score, 100);
+    assert.ok(r.findings.length === 14 && r.findings.every((f) => f.waived && f.weight === 0));
+  });
+
+  test("a policy signed before this field existed (no perRuleCapMultiplier) still caps at the default", () => {
+    const legacy: EnterprisePolicy = structuredClone(DEFAULT_POLICY);
+    delete (legacy.scoring as { perRuleCapMultiplier?: number }).perRuleCapMultiplier;
+    const r = score(auditWithFindings(findingsOf("obfuscation", "high", 14)), legacy);
+    assert.equal(r.score, 100 - DEFAULT_PER_RULE_CAP_MULTIPLIER * 25);
+  });
+
+  test("a stricter policy perRuleCapMultiplier changes where the cap saturates", () => {
+    const strict: EnterprisePolicy = { ...DEFAULT_POLICY, scoring: { ...DEFAULT_POLICY.scoring, perRuleCapMultiplier: 1 } };
+    const r = score(auditWithFindings(findingsOf("obfuscation", "high", 14)), strict);
+    assert.equal(r.score, 75); // capped at 1x the single-instance weight, regardless of instance count
   });
 });

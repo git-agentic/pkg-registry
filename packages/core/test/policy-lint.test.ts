@@ -68,4 +68,24 @@ describe("lintPolicy", () => {
     const r = lintPolicy(pol((p) => { p.requireProvenance = [""]; }));
     assert.ok(codes(r.errors).includes("malformed-list-entry"));
   });
+
+  test("perRuleCapMultiplier < 1 → error", () => {
+    assert.ok(codes(lintPolicy(pol((p) => { p.scoring.perRuleCapMultiplier = 0.5; })).errors).includes("bad-per-rule-cap-multiplier"));
+  });
+
+  test("perRuleCapMultiplier non-finite → error", () => {
+    assert.ok(codes(lintPolicy(pol((p) => { p.scoring.perRuleCapMultiplier = Infinity; })).errors).includes("bad-per-rule-cap-multiplier"));
+  });
+
+  test("perRuleCapMultiplier === 1 → warning (repeats add nothing)", () => {
+    const r = lintPolicy(pol((p) => { p.scoring.perRuleCapMultiplier = 1; }));
+    assert.ok(codes(r.warnings).includes("aggressive-per-rule-cap"));
+    assert.deepEqual(r.errors, []); // legal, just suspicious
+  });
+
+  test("perRuleCapMultiplier absent → no finding (legacy policy, falls back at score time)", () => {
+    const r = lintPolicy(pol((p) => { delete (p.scoring as { perRuleCapMultiplier?: number }).perRuleCapMultiplier; }));
+    assert.deepEqual(r.errors, []);
+    assert.deepEqual(r.warnings, []);
+  });
 });

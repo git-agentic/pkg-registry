@@ -251,3 +251,18 @@ describe("releaseCooldown policy field", () => {
   test("exempt must be string[]", () => assert.throws(() => parse({ releaseCooldown: { hours: 24, exempt: [1] } }), /releaseCooldown/));
   test("absent cooldown ⇒ undefined (no behavior change)", () => assert.equal(parse({}).releaseCooldown, undefined));
 });
+
+describe("scoring.perRuleCapMultiplier policy field (ADR-0053)", () => {
+  const base = { schema: 1, version: "t", scoring: { severityWeight: { info: 0, low: 4, medium: 12, high: 25, critical: 55 }, diffMultiplier: 1.6, thresholds: { allow: 80, warn: 50 }, hardBlockSeverity: "critical" } };
+  const parse = (scoringExtra: object) => parsePolicy(Buffer.from(JSON.stringify({ ...base, scoring: { ...base.scoring, ...scoringExtra } })));
+
+  test("valid multiplier parses", () => {
+    const p = parse({ perRuleCapMultiplier: 5 });
+    assert.equal(p.scoring.perRuleCapMultiplier, 5);
+  });
+  test("must be >= 1", () => assert.throws(() => parse({ perRuleCapMultiplier: 0.5 }), /perRuleCapMultiplier/));
+  test("must be finite", () => assert.throws(() => parse({ perRuleCapMultiplier: Infinity }), /perRuleCapMultiplier/));
+  test("must be a number", () => assert.throws(() => parse({ perRuleCapMultiplier: "3" }), /perRuleCapMultiplier/));
+  test("absent ⇒ undefined (score() falls back to DEFAULT_PER_RULE_CAP_MULTIPLIER)", () =>
+    assert.equal(parse({}).scoring.perRuleCapMultiplier, undefined));
+});
