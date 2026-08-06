@@ -243,19 +243,31 @@ describe("approval gate (block policy, local fixtures)", () => {
     assert.equal(t101.status, 200, "1.0.1 must be served after array approval");
   });
 
-  test("server-authoritative identity: bogus name in body is ignored", async () => {
+  test("server-authoritative identity: integrity-only approval derives the audited coordinate", async () => {
     const m = await manifest("net-fetch-lite", "1.0.0");
-    // Submit with a wrong package name but correct integrity
+    // Legacy integrity-only payloads remain supported when the audited bytes
+    // identify exactly one package coordinate.
     const postRes = await fetch(`${base}/-/approvals`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: "totally-wrong", version: "1.0.0", integrity: m.meta.integrity, decision: "approved", actor: { type: "agent", id: "test" } }),
+      body: JSON.stringify({ integrity: m.meta.integrity, decision: "approved", actor: { type: "agent", id: "test" } }),
     });
     assert.equal(postRes.status, 200);
     const listed = await (await fetch(`${base}/-/approvals`)).json() as { approvals: Array<{ integrity: string; name: string }> };
     const recorded = listed.approvals.find((a) => a.integrity === m.meta.integrity);
     assert.ok(recorded, "approval must be stored");
     assert.equal(recorded!.name, "net-fetch-lite", `stored name must be the audited name, got: ${recorded!.name}`);
+  });
+
+  test("server-authoritative identity: bogus explicit coordinates fail closed", async () => {
+    const m = await manifest("net-fetch-lite", "1.0.0");
+    const postRes = await fetch(`${base}/-/approvals`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "totally-wrong", version: "1.0.0", integrity: m.meta.integrity, decision: "approved", actor: { type: "agent", id: "test" } }),
+    });
+    assert.equal(postRes.status, 400);
+    assert.match((await postRes.json() as { error: string }).error, /no report for that coordinate and integrity/);
   });
 });
 
