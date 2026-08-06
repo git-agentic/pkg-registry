@@ -927,11 +927,14 @@ unchanged scoring path.
   `EnterprisePolicy` alone — no scoring, no I/O. **Errors** (a policy an
   operator should not sign): out-of-range or inverted thresholds, an invalid
   `hardBlockSeverity`, a non-finite/negative `severityWeight`, a
-  non-positive `diffMultiplier`, a malformed list entry, or a package in
-  both `allow` and `deny`. **Warnings** (legal but suspicious): non-monotonic
-  severity weights, an aggressively low `hardBlockSeverity`, an `allow`
-  threshold a lone critical finding still clears, an `allow` threshold of
-  `100`, or a `diffMultiplier` below `1`. `DEFAULT_POLICY` lints clean.
+  non-positive `diffMultiplier`, a `perRuleCapMultiplier` below `1`
+  (ADR-0053), a malformed list entry, or a package in both `allow` and
+  `deny`. **Warnings** (legal but suspicious): non-monotonic severity
+  weights, an aggressively low `hardBlockSeverity`, an `allow` threshold a
+  lone critical finding still clears, an `allow` threshold of `100`, a
+  `diffMultiplier` below `1`, or a `perRuleCapMultiplier` of exactly `1`
+  (repeated findings from the same rule then add nothing to the score).
+  `DEFAULT_POLICY` lints clean.
 - **`HistoryDb.allReports(limit = 1000)`** (§3.14) reads back stored
   `audit_events.report_json` rows, newest-first, bounded, skipping a
   corrupt row rather than throwing (invariant #6).
@@ -1432,23 +1435,40 @@ risk, provenance) is additive and never touches scoring or the proxy.
 
 ### 4.2 Scoring → verdict
 
-Deterministic and monotonic. Start at `100`; each finding deducts
-`severityWeight × ruleWeight × (changedFile ? diffMultiplier : 1)`; clamp `[0,100]`.
+Deterministic and monotonic. Each finding's own weight is
+`severityWeight × (changedFile ? diffMultiplier : 1)`, clamped `>= 0` — this is
+the `weight` every `ScoredFinding` reports individually and never changes.
+Start the score at `100` and deduct a **per-rule capped** penalty (ADR-0053):
+for each `ruleId` present, sum that rule's instance weights but bound the sum
+at `perRuleCapMultiplier × that rule's own single worst-instance weight`
+(default multiplier `3`); the score is `100 - Σ(capped per-rule penalty)`,
+clamped `[0,100]`. A rule that fires once is never affected by the cap (its
+sum already equals its max); a rule that fires many times establishes its
+signal at full capped strength within a few instances and stops adding
+marginal penalty — so a high file count under one rule can't alone drive the
+score to zero. More findings from the same rule never *improve* the score
+(monotonic), they just stop making it worse past the cap.
 
 ```
 severityWeight: info 0 · low 4 · medium 12 · high 25 · critical 55
+perRuleCapMultiplier: 3 (default) — a rule's total penalty <= 3x its worst single finding
 verdict:  score ≥ 80 → allow   ·   50–79 → warn   ·   < 50 → block
-override: any `critical` finding forces `block` regardless of score
+override: any non-waived `critical` finding forces `block` regardless of score
 ```
 
-Thresholds and weights live in one config object so policy is tunable per-enterprise
-in Phase 2 without code changes.
+Thresholds, weights, and the per-rule cap multiplier live in one config object
+so policy is tunable per-enterprise without code changes.
 
 Scoring is **policy-applied at score time** (ADR-0012/0014). `runAudit` produces
 policy-independent findings (`severity` + `onChangedFile`); `score(audit, policy)`
-applies the enterprise policy's weights, diff multiplier, rule toggles, allow/deny
-waivers, thresholds, and hard-block. A waived finding is excluded from the penalty
-sum and the hard-block check but stays visible.
+applies the enterprise policy's weights, diff multiplier, per-rule cap, rule
+toggles, allow/deny waivers, thresholds, and hard-block. A waived finding is
+excluded from the penalty sum (and thus from the per-rule cap basis) and from
+the hard-block check, but stays visible. Because the cap operates on the
+aggregate, not on individual findings, `100 - Σ findings[i].weight` no longer
+reconciles with `report.score` once a rule exceeds the cap — the per-finding
+`weight` stays the true uncapped instance value; only the aggregate `score` is
+bounded (ADR-0053).
 
 ### 4.3 LLM adapter
 
@@ -1482,7 +1502,8 @@ interface Audit { schema: 3; meta; findings: Finding[]; capabilities; capability
 
 interface EnterprisePolicy {           // signed, per-enterprise (ADR-0012/0014)
   schema: 1; version: string;
-  scoring: { severityWeight; diffMultiplier; thresholds; hardBlockSeverity };
+  scoring: { severityWeight; diffMultiplier; thresholds; hardBlockSeverity;
+             perRuleCapMultiplier?: number };  // default 3 (ADR-0053)
   rules: { disabled: string[] };
   allow: { package; rules; reason? }[];   // package: anchored glob; rules: ruleId|category
   deny:  { package; reason? }[];

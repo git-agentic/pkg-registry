@@ -11,6 +11,14 @@ export interface EnterprisePolicy {
     diffMultiplier: number;
     thresholds: { allow: number; warn: number };
     hardBlockSeverity: Severity;
+    /** Caps a single rule's total penalty contribution at this multiple of its
+     *  single worst-instance weight (ADR-0053), so N findings from the same rule
+     *  (e.g. one `obfuscation` hit per minified file) can't alone drive the score
+     *  to zero. More instances still never score better than fewer (monotonic);
+     *  they just stop adding marginal penalty past the cap. Optional so policies
+     *  signed before this field existed still parse; absent ⇒
+     *  {@link DEFAULT_PER_RULE_CAP_MULTIPLIER}. Must be a finite number >= 1. */
+    perRuleCapMultiplier?: number;
   };
   rules: { disabled: string[] };
   allow: { package: string; rules: string[]; reason?: string }[];
@@ -44,6 +52,9 @@ export interface ProvenanceIdentityRequirement {
   builder?: string;
 }
 
+/** Default {@link EnterprisePolicy.scoring.perRuleCapMultiplier} (ADR-0053). */
+export const DEFAULT_PER_RULE_CAP_MULTIPLIER = 3;
+
 /** Compiled-in default. Equals the historical POLICY so out-of-the-box behavior is unchanged. */
 export const DEFAULT_POLICY: EnterprisePolicy = {
   schema: 1,
@@ -53,6 +64,7 @@ export const DEFAULT_POLICY: EnterprisePolicy = {
     diffMultiplier: 1.6,
     thresholds: { allow: 80, warn: 50 },
     hardBlockSeverity: "critical",
+    perRuleCapMultiplier: DEFAULT_PER_RULE_CAP_MULTIPLIER,
   },
   rules: { disabled: [] },
   allow: [],
@@ -143,6 +155,13 @@ export function parsePolicy(raw: Buffer): EnterprisePolicy {
   // Validate hardBlockSeverity.
   if (!(SEVERITIES as readonly string[]).includes(s.hardBlockSeverity as string)) {
     throw new Error(`invalid policy: scoring.hardBlockSeverity must be one of ${SEVERITIES.join(", ")} (got "${s.hardBlockSeverity}")`);
+  }
+
+  // Validate perRuleCapMultiplier if present (ADR-0053). Absent ⇒ DEFAULT_PER_RULE_CAP_MULTIPLIER at score time.
+  if (s.perRuleCapMultiplier !== undefined) {
+    if (typeof s.perRuleCapMultiplier !== "number" || !Number.isFinite(s.perRuleCapMultiplier) || s.perRuleCapMultiplier < 1) {
+      throw new Error(`invalid policy: scoring.perRuleCapMultiplier must be a finite number >= 1 (got "${s.perRuleCapMultiplier}")`);
+    }
   }
 
   // Validate rules.disabled if present.

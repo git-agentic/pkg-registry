@@ -5,6 +5,7 @@ export { score, severityRank, POLICY_SYNTHESIZED_RULE_IDS } from "./score.js";
 export { lintPolicy, type LintFinding } from "./policy-lint.js";
 export {
   DEFAULT_POLICY,
+  DEFAULT_PER_RULE_CAP_MULTIPLIER,
   policyHashOf,
   policyHashOfBytes,
   matchPackage,

@@ -10,7 +10,7 @@ import { Command } from "commander";
 import {
   auditTarball, type AuditReport,
   loadPolicy, signPolicy, generateKeypair, policyHashOfBytes,
-  parsePolicy, lintPolicy, DEFAULT_POLICY,
+  parsePolicy, lintPolicy, DEFAULT_POLICY, DEFAULT_PER_RULE_CAP_MULTIPLIER,
   type EnterprisePolicy,
   extractCapabilities, capabilityAtom, type Capability, type PackageFile,
   type TreeAuditResult,
@@ -250,6 +250,7 @@ export function summarizePolicy(p: EnterprisePolicy): string {
     `version    ${p.version}`,
     `thresholds allow ${t.allow} · warn ${t.warn} · hardBlock ${p.scoring.hardBlockSeverity}`,
     `diffMult   ${p.scoring.diffMultiplier}`,
+    `perRuleCap ${p.scoring.perRuleCapMultiplier ?? DEFAULT_PER_RULE_CAP_MULTIPLIER}x single-instance weight`,
     `disabled: ${p.rules.disabled.length ? p.rules.disabled.join(", ") : "(none)"}`,
     `allow rules: ${p.allow.length}   deny rules: ${p.deny.length}`,
   ].join("\n  ");

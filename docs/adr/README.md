@@ -147,6 +147,12 @@ first shipped slice; Phases 31 and 32 complete claiming and retraction.
 | [0051](./0051-sandboxed-exec.md) | Sandboxed `sentinel exec` | `Sandbox.runArgv` (no-shell, execFile-style) + `sentinel exec -- <cmd>` reuse the approved-capability model, scrubbed env, and violation telemetry to contain Sentinel-mediated command execution; scoped to explicit invocations only — raw `require()`/`npx` outside it stay uncontained, defense-in-depth behind the ADR-0049 registry gate |
 | [0052](./0052-native-helper-release-packaging.md) | Landlock helper release packaging | The published `@git-agentic/sentinel-sandbox` ships the helper as source only (`native/landlock-exec.c` + `build-native.mjs`) — never a prebuilt binary, never a `postinstall` compile; fresh Linux installs run the documented advisory exec floor with a one-time notice until the operator explicitly compiles the helper; enforced by the package-contents test and a missing-helper CI test |
 
+## Score-engine hardening (Accepted, implemented)
+
+| ADR | Title | Decision in one line |
+|-----|-------|----------------------|
+| [0053](./0053-per-rule-score-cap.md) | Per-rule score cap | `scoring.perRuleCapMultiplier` (policy data, default 3) bounds a rule's total penalty at that multiple of its own worst-instance weight, so N file-level findings from one rule can't alone drive the score to zero; monotonic, waiver-compatible (ADR-0014), optional for backward compat with already-signed policies |
+
 ## Conventions
 
 - One decision per record; number sequentially; never renumber.
