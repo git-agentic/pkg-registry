@@ -17,7 +17,7 @@ const REMEDIATIONS: Record<string, Guide> = {
   "install-scripts": { summary: "Runs install-time lifecycle scripts.", action: "Review the scripts; approve the capability manifest (`sentinel approve …`) if they're required, otherwise prefer a script-free alternative." },
   "secret-exfil": { summary: "Reads credentials/tokens and may exfiltrate them.", action: "Do not install until reviewed. If this is a false positive, waive with a recorded rationale; otherwise remove the dependency." },
   "network-egress": { summary: "Makes network connections.", action: "Confirm the egress is expected for this package's purpose; if not, remove it or pin to a version without it." },
-  "obfuscation": { summary: "Contains obfuscated/minified-beyond-normal code.", action: "Inspect the source; obfuscation in a dependency is a red flag — prefer a readable, well-known alternative." },
+  "obfuscation": { summary: "Executes concealed or decoded dynamic code.", action: "Inspect the cited execution path and decoded source; if its behavior cannot be verified, prefer a readable, well-known alternative." },
   "provenance": { summary: "Missing or unverifiable build provenance.", action: "Request an exception, or choose a package that publishes SLSA build provenance (`dist.attestations`)." },
   "provenance-identity": { summary: "Provenance identity does not match the required repo/workflow/builder.", action: "Verify the release's build identity; if the mismatch is unexpected, do not install and report it." },
   "typosquat": { summary: "Name resembles a popular package.", action: "Confirm you meant this exact package name — check for a one-character typo against the intended dependency." },

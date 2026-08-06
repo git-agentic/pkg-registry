@@ -53,7 +53,7 @@ at audit time. Also here: multi-format lockfile parsing (npm/yarn/pnpm) + Cyclon
 signed audit attestations (ADR-0032), `lintPolicy` (ADR-0033).
 
 **Proxy (`@git-agentic/sentinel-proxy`)** — sync inline gate over bytes in memory, cached by
-`dist.integrity`; transparent packument passthrough rewriting only `dist.tarball`.
+`(name, version, actual integrity)`; transparent packument passthrough rewriting only `dist.tarball`.
 Private-namespace packages are served only from the private store, fail-closed
 (ADR-0010/0015). `POST /-/audit-tree` whole-lockfile gate with dedupe + 413 cap
 (ADR-0020/0037); `GET /-/explain` walk-back (ADR-0031); `POST /-/policy/preview`
@@ -167,10 +167,13 @@ enforcement is tested with benign probe packages.
    `NoopLlmAdapter`; the engine is fully offline.
 3. **The inline gate is sync + cheap; everything slow is async.** The proxy audits
    on the tarball request (static analysis over bytes already in memory) and caches
-   by `dist.integrity`. Never put a network call or an LLM call on the request path.
-4. **Cache key = integrity hash.** A published tarball is immutable, so
-   `(name, version, integrity)` is a safe immutable key. Don't key caches on
-   version alone.
+   by `(name, version, actual integrity)`. Never put a network call or an LLM call
+   on the request path.
+4. **Cache key = coordinate + integrity hash.** Complete reports contain
+   coordinate-dependent findings, so `(name, version, actual integrity)` is the
+   safe immutable key. Integrity remains mandatory so changed bytes always miss;
+   name/version prevent byte-identical coordinates from sharing findings
+   (ADR-0055). Don't key caches on version or integrity alone.
 5. **The proxy is transparent.** For packuments we pass the upstream document
    through and rewrite *only* `dist.tarball`. Don't synthesize or strip fields on
    the npm path — it breaks resolution (dependencies, peer deps, etc.).

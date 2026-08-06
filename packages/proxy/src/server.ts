@@ -329,11 +329,12 @@ export function createServer(opts: ServerOptions) {
   });
 
   // Transient concurrency dedupe: concurrent uncached public audits for the same
-  // name@version share one pipeline. The integrity-keyed `store` stays the durable
-  // cache (invariant #4); this map lives only within the overlapping-request window.
+  // name@version share one pipeline. The coordinate-and-integrity-keyed `store`
+  // stays the durable cache (invariant #4); this map lives only within the
+  // overlapping-request window.
   const inFlight = new Map<string, Promise<{ report: AuditReport; tarball: Buffer }>>();
 
-  /** Audit a specific version, using the verdict cache (integrity-keyed). */
+  /** Audit a specific version, using the coordinate-and-integrity-keyed verdict cache. */
   async function auditVersion(
     pkg: string,
     version: string,
@@ -375,7 +376,7 @@ export function createServer(opts: ServerOptions) {
     // runAudit for the tamper check (ADR-0022).
     const actualIntegrity = integrityOf(tarball);
 
-    const cached = store.get(actualIntegrity);
+    const cached = store.get(pkg, version, actualIntegrity);
     if (cached) return { report: withClaimCorpus(cached.report), tarball };
 
     const prev = previousVersion(Object.keys(pm.versions), version);
@@ -777,12 +778,21 @@ export function createServer(opts: ServerOptions) {
     const recorded: Approval[] = [];
     try {
       for (const d of body) {
-        if (!d?.integrity || (d.decision !== "approved" && d.decision !== "denied")) {
-          return res.status(400).json({ error: "each approval needs integrity and decision(approved|denied)" });
+        if (!d || typeof d.integrity !== "string" ||
+            (d.decision !== "approved" && d.decision !== "denied") ||
+            ((d.name === undefined) !== (d.version === undefined)) ||
+            (d.name !== undefined && (typeof d.name !== "string" || typeof d.version !== "string"))) {
+          return res.status(400).json({ error: "each approval needs integrity, decision(approved|denied), and optional name + version" });
         }
-        const audited = store.get(d.integrity);
+        const audited = typeof d.name === "string" && typeof d.version === "string"
+          ? store.get(d.name, d.version, d.integrity)
+          : store.getUniqueByIntegrity(d.integrity);
         if (!audited) {
-          return res.status(400).json({ error: `audit ${d.name}@${d.version} first (no report for that integrity)` });
+          return res.status(400).json({
+            error: typeof d.name === "string"
+              ? `audit ${d.name}@${d.version} first (no report for that coordinate and integrity)`
+              : "no unique audited coordinate for that integrity; include name and version",
+          });
         }
         recorded.push(approvals.put({
           name: audited.report.meta.name, version: audited.report.meta.version,
@@ -814,7 +824,7 @@ export function createServer(opts: ServerOptions) {
     if (typeof b?.name !== "string" || typeof b.version !== "string" || typeof b.integrity !== "string" || typeof b.reason !== "string") {
       return res.status(400).json({ error: "need name, version, integrity, reason" });
     }
-    const audited = store.get(b.integrity);
+    const audited = store.get(b.name, b.version, b.integrity);
     if (!audited) return res.status(400).json({ error: `audit ${b.name}@${b.version} first (no report for that integrity)` });
     const reqByType = b.requestedBy?.type;
     const requestedBy: { type: "human" | "agent"; id: string } =
@@ -839,7 +849,7 @@ export function createServer(opts: ServerOptions) {
         (v.kind !== "filesystem" && v.kind !== "network" && v.kind !== "process")) {
       return res.status(400).json({ error: "invalid violation: need name, version, integrity, kind, confidence" });
     }
-    if (!store.get(v.integrity)) {
+    if (!store.get(v.name, v.version, v.integrity)) {
       return res.status(400).json({ error: `no audited report for integrity ${v.integrity} — audit before reporting` });
     }
     const rec = violations.record(

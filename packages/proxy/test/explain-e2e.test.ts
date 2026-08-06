@@ -58,6 +58,80 @@ describe("GET /-/explain (e2e)", () => {
   });
 });
 
+class SameBytesUpstream implements Upstream {
+  readonly name = "same-bytes";
+
+  constructor(private readonly tarball: Buffer) {}
+
+  async getPackument(pkg: string): Promise<UpstreamPackument> {
+    const version = "1.0.0";
+    return {
+      doc: {
+        name: pkg,
+        versions: {
+          [version]: { name: pkg, version, dist: { tarball: `https://registry.example/${pkg}.tgz`, integrity: integrityOf(this.tarball) } },
+        },
+      },
+      versions: {
+        [version]: {
+          version,
+          author: null,
+          maintainers: [],
+          license: null,
+          signatures: null,
+          hasProvenance: false,
+          integrity: integrityOf(this.tarball),
+          hasInstallScripts: false,
+        },
+      },
+    };
+  }
+
+  async getTarball(_pkg: string, _version: string): Promise<Buffer> {
+    return this.tarball;
+  }
+
+  async getAttestations(_pkg: string, _version: string): Promise<unknown | null> {
+    return null;
+  }
+}
+
+describe("GET /-/explain — coordinate-bound cache identity", () => {
+  let server: Server; let base: string;
+
+  before(async () => {
+    ensureFixtures();
+    const sharedTarball = readFileSync(join(FIXTURES, ".tarballs", "leftpad-lite-1.0.0.tgz"));
+    const app = createServer({
+      upstream: new SameBytesUpstream(sharedTarball),
+      store: new AuditStore(), approvals: new ApprovalStore(),
+      enterprisePolicy: DEFAULT_POLICY, privateStore: new PrivatePackageStore(),
+      violations: new ViolationStore(), approvalRequests: new ApprovalRequestStore(),
+    });
+    await new Promise<void>((resolve) => {
+      server = app.listen(0, () => {
+        base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+        resolve();
+      });
+    });
+  });
+  after(() => server?.close());
+
+  test("returns findings for the requested coordinate when two packages share identical bytes", async () => {
+    const clean = await (await fetch(`${base}/-/explain/express/1.0.0`)).json() as {
+      report: { meta: { name: string }; findings: { ruleId: string }[] };
+    };
+    const lookalike = await (await fetch(`${base}/-/explain/expres/1.0.0`)).json() as {
+      report: { meta: { name: string }; findings: { ruleId: string }[] };
+    };
+
+    assert.equal(clean.report.meta.name, "express");
+    assert.equal(lookalike.report.meta.name, "expres");
+    assert.equal(clean.report.findings.some((finding) => finding.ruleId === "typosquat"), false);
+    assert.equal(lookalike.report.findings.some((finding) => finding.ruleId === "typosquat"), true);
+  });
+});
+
 // A stub upstream that THROWS on any public call — proves findLastKnownGood never
 // reaches it for a claimed private namespace (invariant #7: claimed names are
 // authoritative private, never consulted on public npm).

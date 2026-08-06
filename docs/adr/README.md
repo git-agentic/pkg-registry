@@ -22,7 +22,7 @@ not yet built · `Superseded` / `Deprecated` — replaced; see the linked succes
 | [0001](./0001-auditing-proxy-wedge.md) | Auditing proxy, not an npm replacement | Insert a transparent proxy; attach signal, don't own packages |
 | [0002](./0002-deterministic-scoring-llm-enrichment.md) | Deterministic scoring; LLM enrichment only | Rules set the score; the LLM may only add context, never the verdict |
 | [0003](./0003-sync-gate-async-enrich.md) | Sync gate / async enrich split | Cheap deterministic gate inline; everything slow or networked runs async |
-| [0004](./0004-integrity-hash-cache-key.md) | Integrity-hash cache key | Key verdicts on the tarball SRI hash — content-addressed, never stale |
+| [0004](./0004-integrity-hash-cache-key.md) | Integrity-hash cache key | Key verdicts on the tarball SRI hash — content-addressed, never stale; logical coordinate binding implemented by ADR-0055 |
 | [0005](./0005-transparent-packument-passthrough.md) | Transparent packument pass-through | Forward the upstream doc; rewrite only `dist.tarball` |
 | [0006](./0006-stack-node-typescript-workspaces.md) | Stack: Node + TS + npm workspaces | Live in the runtime we audit; one shared `AuditReport` contract |
 | [0007](./0007-client-integration-registry-redirection.md) | Integrate via registry redirection | Point `registry` at the proxy — covers all PMs + transitive deps |
@@ -152,6 +152,8 @@ first shipped slice; Phases 31 and 32 complete claiming and retraction.
 | ADR | Title | Decision in one line |
 |-----|-------|----------------------|
 | [0053](./0053-per-rule-score-cap.md) | Per-rule score cap | `scoring.perRuleCapMultiplier` (policy data, default 3) bounds a rule's total penalty at that multiple of its own worst-instance weight, so N file-level findings from one rule can't alone drive the score to zero; monotonic, waiver-compatible (ADR-0014), optional for backward compat with already-signed policies |
+| [0054](./0054-obfuscation-execution-correlation.md) | Obfuscation requires an execution sink | Encoded/minified data and readable runtime glue are not obfuscation by themselves; retain high findings for direct `eval`, decoded `Function` source, and computed decoded `require` |
+| [0055](./0055-coordinate-bound-audit-cache.md) | Coordinate-bound audit cache | Bind complete reports to `(name, version, actual integrity)` so byte-identical package coordinates cannot share metadata-dependent findings |
 
 ## Conventions
 

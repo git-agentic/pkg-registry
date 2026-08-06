@@ -1,18 +1,44 @@
-import type { AuditInput, Evidence, Finding, Rule } from "../types.js";
-import { codeFiles, mkFinding, scanLines, truncate } from "./util.js";
+import type { AuditInput, Evidence, Finding, PackageFile, Rule } from "../types.js";
+import { codeFiles, mkFinding, scanLines } from "./util.js";
 
 const PATTERNS = [
-  { re: /\beval\s*\(/, sev: "high" as const, why: "uses eval()" },
-  { re: /new\s+Function\s*\(/, sev: "high" as const, why: "uses the Function constructor" },
-  { re: /\batob\s*\(|Buffer\.from\([^)]*['"]base64['"]\)/, sev: "medium" as const, why: "base64-decodes at runtime" },
-  { re: /\bunescape\s*\(|decodeURIComponent\(escape/, sev: "medium" as const, why: "uses unescape-style decoding" },
-  { re: /(\\x[0-9a-f]{2}){6,}/i, sev: "medium" as const, why: "contains \\xNN-encoded string runs" },
-  { re: /String\.fromCharCode\(|charCodeAt\(/, sev: "low" as const, why: "char-code string assembly" },
+  // A property called `eval` is an ordinary method, not JavaScript's direct
+  // evaluator. Matching `.eval(` misattributes domain/runtime APIs as code
+  // execution (for example WebAssembly N-API shims). Explicit global-object
+  // access still reaches the language evaluator and must remain covered.
+  {
+    re: /(?:(?<![.$\w])eval|(?:globalThis|global|window|self)\s*(?:(?:\?\.|\.)\s*eval|\[\s*['"]eval['"]\s*\]))\s*\(/,
+    sev: "high" as const,
+    why: "uses JavaScript eval()",
+  },
   { re: /require\s*\(\s*(atob|Buffer\.from|_0x|[a-z]\([^)]*\))/i, sev: "high" as const, why: "dynamic require of a computed string" },
 ];
 
-/** Long base64/hex blobs are a strong obfuscation signal on their own. */
-const BLOB = /['"`][A-Za-z0-9+/=]{120,}['"`]/;
+const DECODED_ASSIGNMENT = /\b(?:const|let|var)\s+([$A-Z_a-z][$\w]*)\s*=\s*(?:atob\s*\(|Buffer\.from\s*\([^;\n]*?['"]base64['"])/g;
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Find decoded source that is subsequently executed by the Function constructor. */
+function decodedFunctionEvidence(file: PackageFile): Evidence[] {
+  const evidence = scanLines(
+    file,
+    /new\s+Function\s*\(\s*(?:atob\s*\(|Buffer\.from\s*\([^;\n]*?['"]base64['"])/i,
+    2,
+  );
+  if (evidence.length >= 2) return evidence;
+
+  DECODED_ASSIGNMENT.lastIndex = 0;
+  for (const match of file.content.matchAll(DECODED_ASSIGNMENT)) {
+    const variable = match[1];
+    if (!variable) continue;
+    const usesDecodedSource = new RegExp(`new\\s+Function\\s*\\(\\s*${escapeRegExp(variable)}\\b`);
+    evidence.push(...scanLines(file, usesDecodedSource, 2 - evidence.length));
+    if (evidence.length >= 2) break;
+  }
+  return evidence;
+}
 
 export const obfuscationRule: Rule = {
   id: "obfuscation",
@@ -35,15 +61,15 @@ export const obfuscationRule: Rule = {
         );
       }
 
-      const blob = BLOB.exec(file.content);
-      if (blob) {
+      const dynamicFunction = decodedFunctionEvidence(file);
+      if (dynamicFunction.length > 0) {
         findings.push(
           mkFinding({
             ruleId: this.id,
             category: this.category,
-            severity: "medium",
-            message: "Contains a large encoded blob (≥120 chars) consistent with packed/obfuscated payloads.",
-            evidence: [{ file: file.path, snippet: truncate(blob[0], 80) }],
+            severity: "high",
+            message: "Obfuscation: executes decoded source with the Function constructor.",
+            evidence: dynamicFunction,
             files: input.files,
           }),
         );

@@ -117,7 +117,7 @@ export interface PackageMeta {
   fileCount: number;
 }
 
-/** Policy-independent audit: what is cached by integrity. */
+/** Policy-independent audit: cached by package coordinate plus actual integrity. */
 export interface Audit {
   schema: 3;
   meta: PackageMeta;
