@@ -21,6 +21,7 @@ import {
 } from "@git-agentic/sentinel-core";
 import { createSandbox, runLifecycleScripts, scrubEnv } from "@git-agentic/sentinel-sandbox";
 import { formatReport, formatManifest, verdictExitCode, formatTree, treeExitCode, formatViolations, formatStats, formatHistory, formatExplain, formatLint, formatPreview, type Manifest, type ViolationRow, type ExplainResult, type PreviewResult } from "./format.js";
+import { packageCoordinateFromTarball } from "./scan-coordinate.js";
 
 const DEFAULT_PROXY = process.env.SENTINEL_PROXY ?? "http://localhost:4873";
 
@@ -55,10 +56,10 @@ program
   .option("--json", "emit the raw JSON report", false)
   .action(async (tarballPath: string, opts: { json: boolean }) => {
     const tarball = readFileSync(tarballPath) as Buffer;
-    const name = tarballPath.split("/").pop()?.replace(/\.tgz$/, "") ?? "local";
+    const { name, version } = await packageCoordinateFromTarball(tarball);
     const report = await auditTarball({
       meta: {
-        name, version: "local", author: null, maintainers: [], license: null,
+        name, version, author: null, maintainers: [], license: null,
         hasInstallScripts: false,
       },
       tarball,
