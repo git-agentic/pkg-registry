@@ -36,6 +36,7 @@ export {
   type SriAlgorithm,
   type ExtractResult,
 } from "./extract.js";
+export { readPackageManifest, type PackageCoordinate } from "./manifest.js";
 export { RULES } from "./rules/index.js";
 export { SENSITIVE_PATHS, sensitivePathsFor, type SensitivePath } from "./sensitive-paths.js";
 export { extractCapabilities, diffCapabilities } from "./capabilities.js";

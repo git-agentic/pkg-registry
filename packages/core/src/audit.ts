@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
 import { baselineFrom, extractTarball, integrityOf } from "./extract.js";
+import { readPackageManifest } from "./manifest.js";
 import { extractCapabilities, diffCapabilities } from "./capabilities.js";
 import { RULES } from "./rules/index.js";
 import { capabilityNoveltyFindings } from "./rules/capability-novelty.js";
@@ -118,17 +119,7 @@ export async function runAudit(input: AuditTarballInput): Promise<Audit> {
   // not replace that complete report with a secondary "missing manifest" parse
   // error caused by the intentionally-truncated extraction.
   if (input.requirePackageManifest && !extracted.truncated) {
-    if (extracted.packageManifestEntryCount > 1) {
-      throw new Error("malformed npm tarball: duplicate package/package.json entries");
-    }
-    const file = extracted.files.find((f) => f.path === "package/package.json");
-    if (!file) throw new Error("malformed npm tarball: missing readable package/package.json");
-    let manifest: { name?: unknown; version?: unknown };
-    try { manifest = JSON.parse(file.content) as { name?: unknown; version?: unknown }; }
-    catch { throw new Error("malformed npm tarball: package/package.json is not valid JSON"); }
-    if (typeof manifest.name !== "string" || typeof manifest.version !== "string") {
-      throw new Error("malformed npm tarball: package/package.json requires string name and version");
-    }
+    const manifest = readPackageManifest(extracted);
     if (manifest.name !== input.requirePackageManifest.name || manifest.version !== input.requirePackageManifest.version) {
       throw new Error(
         `malformed npm tarball: package/package.json identity ${manifest.name}@${manifest.version} does not match publish target ${input.requirePackageManifest.name}@${input.requirePackageManifest.version}`,
