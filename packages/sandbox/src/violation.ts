@@ -42,7 +42,7 @@ const SPAWN_EXEC_PATH = /spawn(?:Sync)?\s+(\/\S+)\s+(?:EPERM|EACCES)/;
 // "/bin/sh: <lineno>: <path>: Permission denied" (lineno optional across shells). Two
 // linear tests (detect + extract), mirroring the SH_EXEC split, to stay ReDoS-safe.
 const LINUX_EXEC_PERM = /[Pp]ermission denied/;
-const LINUX_EXEC_PATH = /(?:^|[/\s])(?:sh|bash|dash|zsh): (?:\d+: )?(\/[^:\n]+):/;
+const LINUX_EXEC_PATH = /(?:^|[/\s])(?:sh|bash|dash|zsh): (?:(?:line )?\d+: )?(\/[^:\n]+):/;
 
 function firstMatchingLine(stderr: string, re: RegExp): string | null {
   for (const line of stderr.split(/\r?\n/)) if (re.test(line)) return line.trim();

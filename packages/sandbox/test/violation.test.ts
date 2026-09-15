@@ -265,6 +265,16 @@ const LL_DS = {
 const failLL = (stderr: string) => ({ exitCode: 126, stdout: "", stderr });
 
 describe("classifyViolation — Linux Landlock floor mode (Phase 2)", () => {
+  test("Bash line-number denials identify masked processes and keep allowed exec failures ambient", () => {
+    for (const denySet of [LINUX_DS, LL_DS]) {
+      const denied = classifyViolation(failLL("/bin/sh: line 1: /usr/bin/curl: Permission denied"), denySet);
+      assert.equal(denied?.kind, "process");
+      assert.equal(denied?.confidence, "confirmed");
+      assert.equal(denied?.target, "/usr/bin/curl");
+      assert.equal(classifyViolation(failLL("/bin/sh: line 1: /usr/bin/make: Permission denied"), denySet), null);
+    }
+  });
+
   test("a floor-OUTSIDE exec denial (dropped /tmp binary) is confirmed exec-floor-deny", () => {
     const v = classifyViolation(failLL("/bin/sh: 1: /tmp/spikestash/payload: Permission denied"), LL_DS);
     assert.equal(v?.kind, "process");
