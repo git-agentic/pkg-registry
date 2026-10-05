@@ -319,4 +319,4 @@ Default vocabulary — `needs-triage`, `needs-info`, `ready-for-agent`, `ready-f
 
 ### Domain docs
 
-Single-context: [`CONTEXT.md`](./CONTEXT.md) (the ubiquitous-language glossary — use its terms, not the synonyms it avoids) + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+Single-context: [`GLOSSARY.md`](./GLOSSARY.md) (the ubiquitous-language glossary — use its terms, not the synonyms it avoids) + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
