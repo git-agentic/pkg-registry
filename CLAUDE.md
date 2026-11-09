@@ -298,6 +298,7 @@ Test-suite platform facts (the part worth knowing, not the count):
   commander-15 `requiredOption` interaction (ADR-0032).
 - CLI-child e2e tests must use async `execFile`, never `execFileSync`, or the
   in-process proxy deadlocks.
+- Put PR bodies, reviews, comments and commit messages in a file written with a file-writing tool and pass its path (`gh ... -F <file>`, `git commit -F <file>`). Never inline prose in a shell command, heredoc or `bash -c` string: an apostrophe ends the quoting and backticks run as commands in the current checkout.
 
 ## Definition of done for a change
 
