@@ -313,6 +313,8 @@ Accepted one to reverse it; supersede it).
 
 Issues are tracked as **GitHub Issues** in `git-agentic/pkg-registry` via the `gh` CLI. External PRs are **not** a triage surface. See `docs/agents/issue-tracker.md`.
 
+Write PR, issue and review bodies, comments and commit messages to a file outside the checkout with a file-writing tool, and pass its path (`gh ... --body-file <file>`, `gh api ... -F body=@<file>`, `git commit -F <file>`). Never inline them in a shell command, heredoc or `bash -c` string: quotes break, and backticks or `$(...)` then run as commands in the current checkout. Titles may stay inline without backticks.
+
 ### Triage labels
 
 Default vocabulary — `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
