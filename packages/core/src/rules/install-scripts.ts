@@ -265,9 +265,9 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
   // A command word is judged by its basename (`/usr/bin/env` is `env`). A relative path that names a package file
   // (`./bin/env`) is that file too: it is scanned (`localCommand`) and still plays the wrapper/interpreter role.
   const localCommand = (w: string): PackageFile | undefined =>
-    w.includes("/") && !w.startsWith("/") ? exact(`package/${trimPunct(w).replace(/^\.\//, "")}`) : undefined;
+    w.includes("/") && !/^(?:[/-]|[A-Za-z_]\w*=)/.test(w) ? resolveWord(trimPunct(w), "path") : undefined; // exact, then suffix (after a `cd`); not a flag or `VAR=value`
   const isPrefix = (words: string[], i: number) =>
-    /^[A-Za-z_]\w*=/.test(words[i]!) || WRAPPERS.has(base(words[i]!)) || (i > 0 && WRAPPERS.has(base(words[i - 1]!)) && words[i]!.startsWith("-"));
+    /^[A-Za-z_]\w*=/.test(words[i]!) || WRAPPERS.has(base(trimPunct(words[i]!))) || (i > 0 && WRAPPERS.has(base(trimPunct(words[i - 1]!))) && words[i]!.startsWith("-"));
   const isInterpreterCommand = (simple: string): boolean => {
     const ws = simple.split(/\s+/).filter(Boolean).map(unquote);
     let k = 0;

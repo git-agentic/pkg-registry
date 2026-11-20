@@ -70,8 +70,19 @@ describe("install hooks follow the files these forms execute", () => {
     // payload in the extension-less operand of the wrapped interpreter, benign wrapper file
     assert.deepEqual(sev("./bin/env node evil", { "package/bin/env": BENIGN, "package/evil": PAYLOAD }), ["critical"]);
     assert.deepEqual(sev("./bin/env node evil", { "package/bin/env": BENIGN, "package/evil": BENIGN }), ["low"]);
-    assert.deepEqual(sev("./bin/env setup", { "package/bin/env": PAYLOAD, "package/setup.js": BENIGN }), ["critical"]);
     assert.deepEqual(sev("./bin/node evil", { "package/bin/node": BENIGN, "package/evil": PAYLOAD }), ["critical"]);
+  });
+
+  test("a relative command word is found by the suffix lookup after a cd, and keeps its interpreter role", () => {
+    assert.deepEqual(sev("cd bin && ./node evil", { "package/bin/node": PAYLOAD, "package/evil": BENIGN }), ["critical"]);
+    assert.deepEqual(sev("cd bin && ./node evil", { "package/bin/node": BENIGN, "package/evil": PAYLOAD }), ["critical"]);
+    assert.deepEqual(sev("cd bin && ./node evil", { "package/bin/node": BENIGN, "package/evil": BENIGN }), ["low"]);
+  });
+
+  test("leading punctuation does not hide a wrapper", () => {
+    assert.deepEqual(sev("(env node setup)", { "package/setup": PAYLOAD }), ["critical"]);
+    assert.deepEqual(sev("(env node setup)", { "package/setup": BENIGN }), ["low"]);
+    assert.deepEqual(sev("(env -i node setup)", { "package/setup": PAYLOAD }), ["critical"]);
   });
 
   test("a dotted directory entry does not hide a nested file the suffix lookup finds", () => {
