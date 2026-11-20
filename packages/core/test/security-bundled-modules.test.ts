@@ -130,10 +130,41 @@ describe("round 2 hardening", () => {
     assert.deepEqual(sev("A='x y' NODE_OPTIONS=--require=./h.js node -v", { "package/h.js": PAYLOAD }), ["critical"]);
     assert.deepEqual(sev("A='x y' NODE_OPTIONS=--require=./h.js node -v", { "package/h.js": BENIGN }), ["low"]);
   });
-  test("option text inside a quoted argument is not a preload flag", () => {
+  test("option tokens are the union of a quote-aware and a plain whitespace split", () => {
     const mod = { "package/node_modules/evil/index.js": PAYLOAD };
-    assert.deepEqual(sev('NODE_OPTIONS=--title="a --require evil" node -v', mod), ["low"]);
-    assert.deepEqual(sev("NODE_OPTIONS='--title=\"a --require evil\"' node -v", mod), ["low"]);
+    // Node's own tokenizer may differ from ours, so text that only a plain split sees as a flag is followed too
+    assert.deepEqual(sev('NODE_OPTIONS=--title="a --require evil" node -v', mod), ["critical"]);
+    assert.deepEqual(sev("NODE_OPTIONS='--title=\"a --require evil\"' node -v", mod), ["critical"]);
+    assert.deepEqual(sev("NODE_OPTIONS=--title=x node -v", mod), ["low"]);
+  });
+  test("a bin key is normalized as npm does: separators and colons, then the basename", () => {
+    const pkg = (key: string) => ({ "package/node_modules/evil/package.json": JSON.stringify({ bin: { [key]: "cli.js" } }), "package/node_modules/evil/cli.js": PAYLOAD });
+    assert.deepEqual(sev("evil", pkg("foo:evil")), ["critical"]);
+    assert.deepEqual(sev("evil", pkg("foo\\evil")), ["critical"]);
+    assert.deepEqual(sev("foo:evil", pkg("foo:evil")), ["low"]);
+  });
+  test("a fail-closed package counts every retained file, not only code", () => {
+    const dir = `package/node_modules/${"a".repeat(215)}`;
+    assert.deepEqual(sev("evil", { [`${dir}/package.json`]: '{"bin":{"evil":"cli.js"}}', [`${dir}/notes.txt`]: PAYLOAD }), ["critical"]);
+    const exports: Record<string, string> = {};
+    for (let i = 0; i < 1100; i++) exports[`./f${i}`] = `./f${i}.js`;
+    const big = { "package/node_modules/evil/package.json": JSON.stringify({ exports }), "package/node_modules/evil/data/blob": PAYLOAD };
+    assert.deepEqual(sev("node -r evil setup.js", { ...setup, ...big }), ["critical"]);
+  });
+  test("many bin aliases of a fail-closed package merge its file list once", () => {
+    const dir = `package/node_modules/${"a".repeat(215)}`;
+    const bin: Record<string, string> = {};
+    for (let i = 0; i < 20000; i++) bin[`b${i}`] = "cli.js";
+    const files: Record<string, string> = { [`${dir}/package.json`]: JSON.stringify({ bin }) };
+    for (let i = 0; i < 1500; i++) files[`${dir}/lib/f${i}.js`] = BENIGN;
+    const t0 = performance.now();
+    assert.deepEqual(sev(Array.from({ length: 20000 }, (_, i) => `b${i}`).join(" && "), files), ["low"]);
+    const ms = performance.now() - t0;
+    assert.ok(ms < 1000, `took ${ms} ms`);
+  });
+  test("a closing quote followed by an unquoted suffix still ends the span", () => {
+    assert.deepEqual(sev("A='x y'z NODE_OPTIONS=--require=./h node -v", { "package/h.js": PAYLOAD }), ["critical"]);
+    assert.deepEqual(sev("A='x y'z NODE_OPTIONS=--require=./h node -v", { "package/h.js": BENIGN }), ["low"]);
   });
   test("xargs hands its command operand to the bundled-bin lookup", () => {
     assert.deepEqual(sev("xargs evil-bin", { "package/node_modules/.bin/evil-bin": PAYLOAD }), ["critical"]);

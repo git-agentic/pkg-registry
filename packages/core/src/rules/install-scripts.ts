@@ -254,8 +254,8 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
     return pkgIndex.get(pkgDir) ?? [];
   };
   // Over-follow: the package main / index.js and every string target of its `exports`. Fail closed: when the
-  // package cannot be enumerated cheaply (over-long name, `exports` over the node bound), every retained code file
-  // in it counts as executed.
+  // package cannot be enumerated cheaply (over-long name, `exports` over the node bound), every retained file in
+  // it counts as executed (which includes its entry, its declared bin targets and any `exports` targets).
   const candidates = new Map<string, PackageFile[]>();
   const candidatesOf = (pkgDir: string): PackageFile[] => {
     let c = candidates.get(pkgDir);
@@ -273,7 +273,7 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
           else if (v && typeof v === "object") for (const x of Object.values(v)) stack.push(x);
         }
       }
-      c = closed ? filesIn(pkgDir).filter((f) => PKG_CODE.test(f.path)) : [entry(pkgDir), ...targets.map((t) => exact(`${pkgDir}/${t}`))].filter((f): f is PackageFile => !!f);
+      c = closed ? filesIn(pkgDir) : [entry(pkgDir), ...targets.map((t) => exact(`${pkgDir}/${t}`))].filter((f): f is PackageFile => !!f);
       candidates.set(pkgDir, c);
     }
     return c;
@@ -286,7 +286,7 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
   };
   // Every file a bundled package's `bin` (a string or an object) points at, per command name, plus `node_modules/.bin/<name>`.
   // Built once on first use, in any tar order; targets are npm-normalized exact paths. A package that fails closed
-  // contributes all of its code files.
+  // contributes all of its files, merged once per hook like a module's package fallback.
   let bins: Map<string, Set<PackageFile | string>> | undefined;
   const bundledBins = (name: string): (PackageFile | undefined)[] => {
     if (!bins) {
@@ -298,7 +298,7 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
         try { bin = JSON.parse(f.content)?.bin; } catch { continue; }
         const map: Record<string, unknown> = typeof bin === "string" ? { [pkg]: bin } : bin && typeof bin === "object" ? (bin as Record<string, unknown>) : {};
         for (const [key, rel] of Object.entries(map)) {
-          const n = normalizeRel(key)?.split("/").pop(); // npm: the command name is the normalized key's basename
+          const n = posix.join("/", posix.basename(key.replace(/[\\:]/g, "/"))).slice(1); // npm: `\` and `:` to `/`, basename, then normalize
           const r = typeof rel === "string" ? normalizeRel(rel) : undefined;
           if (!n || !r) continue;
           const dir = `package/node_modules/${pkg}`;
@@ -307,7 +307,7 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
         }
       }
     }
-    return [...(bins.get(name) ?? [])].flatMap((h) => (typeof h === "string" ? candidatesOf(h) : [h])).concat(exact(`package/node_modules/.bin/${name}`) ?? []);
+    return [...(bins.get(name) ?? [])].flatMap((h) => (typeof h !== "string" ? [h] : once(`pkg:${h}`) ? candidatesOf(h) : [])).concat(exact(`package/node_modules/.bin/${name}`) ?? []);
   };
   // The file a preload flag value (`-r <value>`) loads: a local path, else a bundled module. The `.js` retry applies
   // even when the basename has a dot (`./hook.prod`), also after a `cd` (suffix lookup).
@@ -427,8 +427,9 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
       // Indexes of words ending in each quote char, built once per command so repeated inline flags
       // do not rescan the remaining arguments.
       const closers: Record<string, number[] | undefined> = {};
-      const nextClose = (q: string, from: number): number | undefined => {
-        const list = (closers[q] ??= rawWords.flatMap((rw, k) => (rw.endsWith(q) ? [k] : [])));
+      const nextClose = (q: string, from: number, anywhere = false): number | undefined => {
+        const key = anywhere ? `${q}*` : q;
+        const list = (closers[key] ??= rawWords.flatMap((rw, k) => ((anywhere ? hasUnescaped(rw, q) : rw.endsWith(q)) ? [k] : [])));
         let lo = 0, hi = list.length;
         while (lo < hi) { const mid = (lo + hi) >> 1; if (list[mid]! < from) lo = mid + 1; else hi = mid; }
         return list[lo];
@@ -446,14 +447,16 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
         // `NODE_OPTIONS='-r ./hook'`: a quote left open by the word spans to the next word that ends with it. The
         // spanned words are also scanned as a command line of their own, then prefix parsing resumes after the span.
         const q = openQuote(val);
-        const e = q ? nextClose(q, i + 1) : undefined;
+        const e = q ? nextClose(q, i + 1, true) : undefined;
         if (e !== undefined) {
           const spanned = rawWords.slice(i + 1, e + 1).join(" ");
           val += ` ${spanned}`;
           if (depth < MAX_INLINE_DEPTH) scan(spanned, out, depth + 1);
           i = e;
         }
+        // Node's tokenizer may differ from ours: scan the quote-aware and the plain split, so a difference only adds coverage.
         scanOptionTokens(splitUnquoted(unquote(val)), out);
+        scanOptionTokens(unquote(val).split(/\s+/).filter(Boolean), out);
       }
       const command = words[i];
       if (!command) continue;
@@ -552,7 +555,6 @@ const LOCAL_PATH = /^(?:\.{1,2}\/|\/)/;
 const EXTERNAL_WRAPPERS = new Set(["env", "exec", "nohup", "sudo", "npx", "xargs"]);
 // Builtins of every shell npm may use (sh, bash, dash, zsh, cmd): in direct command position they never run a bundled bin.
 const SHELL_BUILTINS = new Set([":", "[", "cd", "echo", "exit", "export", "false", "printf", "pwd", "read", "set", "shift", "test", "true", "umask", "unset", "wait"]);
-const PKG_CODE = /\.(?:c?js|mjs|m?ts|cts|jsx|tsx|sh|py|pl|rb)$/i;
 
 /** The quote character a shell word leaves open (`'-r`), counting unescaped quotes; "" when balanced. */
 function openQuote(w: string): string {
@@ -564,6 +566,15 @@ function openQuote(w: string): string {
     else if (c === "'" || c === '"') q = c;
   }
   return q;
+}
+
+/** Whether a word holds an unescaped quote character `q` (it closes a span opened by `q`). */
+function hasUnescaped(w: string, q: string): boolean {
+  for (let i = 0; i < w.length; i++) {
+    if (w[i] === "\\" && q !== "'") i++;
+    else if (w[i] === q) return true;
+  }
+  return false;
 }
 
 /** A declared relative path as npm normalizes it: `\` to `/`, then `path.posix.join("/", v).slice(1)` (clamps `..` at the root). */
