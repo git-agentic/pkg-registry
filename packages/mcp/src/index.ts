@@ -26,7 +26,7 @@ export function createMcpServer(client: ProxyClient): McpServer {
 }
 
 async function main(): Promise<void> {
-  const client = new ProxyClient(process.env.SENTINEL_PROXY ?? "http://localhost:4873");
+  const client = new ProxyClient(process.env.SENTINEL_PROXY ?? "http://127.0.0.1:4873");
   const server = createMcpServer(client);
   await server.connect(new StdioServerTransport());
 }

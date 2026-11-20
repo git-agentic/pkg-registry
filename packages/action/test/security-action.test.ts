@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { describe, test } from "node:test";
 import { parse } from "yaml";
 import { LocalFixtureUpstream } from "@git-agentic/sentinel-proxy";
@@ -120,5 +120,24 @@ describe("Markdown in the PR comment", () => {
     assert.equal(row.split(/(?<!\\)\|/).length, 7, `table cells intact: ${row}`);
     const multiline = renderPrComment({ ...result, packages: [{ ...result.packages[0]!, topFinding: "a\nb" }] }, { now: "t" });
     assert.match(multiline, /a b/);
+  });
+});
+
+describe("fatal errors are escaped like annotations", () => {
+  test("a multi-line parse error carrying '::' cannot inject a workflow command", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "sentinel-fatal-"));
+    // Invalid YAML whose offending lines are echoed in the parser error.
+    writeFileSync(join(dir, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\npackages:\n  ::set-output name=pwn::1\n    bad: [unclosed\n::add-mask::secret\n");
+    const env: NodeJS.ProcessEnv = { ...process.env, SENTINEL_CI_FIXTURES: FIXTURES };
+    for (const k of Object.keys(env)) if (k.startsWith("GITHUB_")) delete env[k];
+    const out = await new Promise<{ code: number; text: string }>((resolve) => {
+      execFile("node", [join(REPO, "packages", "action", "dist", "index.js")], { cwd: dir, env }, (err, stdout, stderr) => {
+        resolve({ code: err ? Number((err as { code?: number }).code ?? 1) : 0, text: `${stdout}\n${stderr}` });
+      });
+    });
+    assert.equal(out.code, 1);
+    const commands = out.text.split(/\r?\n|\r/).filter((l) => l.trimStart().startsWith("::")); // the runner trims leading whitespace before matching
+    assert.equal(commands.length, 1, `exactly one workflow command expected, got: ${JSON.stringify(commands)}`);
+    assert.match(commands[0]!, /^::error::sentinel-ci failed: /);
   });
 });

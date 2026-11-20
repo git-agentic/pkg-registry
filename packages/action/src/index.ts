@@ -3,7 +3,7 @@ import { readFileSync, realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { NpmUpstream, LocalFixtureUpstream, type Upstream } from "@git-agentic/sentinel-proxy";
 import { loadPolicy, DEFAULT_POLICY, type EnterprisePolicy } from "@git-agentic/sentinel-core";
-import { runCi } from "./run.js";
+import { runCi, escapeData } from "./run.js";
 
 function env(name: string, fallback = ""): string {
   return process.env[name] ?? fallback;
@@ -55,7 +55,7 @@ function isEntrypoint(): boolean {
 }
 if (isEntrypoint()) {
   main().catch((err) => {
-    console.error(`::error::sentinel-ci failed: ${(err as Error).message}`);
+    console.error(`::error::sentinel-ci failed: ${escapeData((err as Error).message)}`);
     process.exit(1);
   });
 }
