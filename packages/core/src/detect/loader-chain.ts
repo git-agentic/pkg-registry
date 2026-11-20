@@ -97,7 +97,7 @@ export function analyzeLoaderChain(source: string, opts: { moduleLoadReachable?:
   // Scopes in which a decode occurred (gate for written-path).
   const decodeScopes = new Set<any>();
   // Structurally-recorded written-path expressions (for inline-repeat launch matching).
-  const writtenPaths: { node: any; scope: any }[] = [];
+  const writtenPaths = new Map<string, Set<any>>();   // structKey → scopes that wrote it
 
   const scopeTaint = (s: any): Map<string, Set<Tag>> => {
     let m = taint.get(s);
@@ -169,7 +169,7 @@ export function analyzeLoaderChain(source: string, opts: { moduleLoadReachable?:
     // Buffer.from(<data>, 'base64') → decode
     if (callee?.type === "MemberExpression" && callee.object?.type === "Identifier" && callee.object.name === "Buffer" && propName(callee) === "from") {
       const enc = call.arguments?.[1];
-      return enc?.type === "Literal" && enc.value === "base64" ? "decode" : null;
+      return enc?.type === "Literal" && typeof enc.value === "string" && /^base64(?:url)?$/i.test(enc.value) ? "decode" : null;
     }
     // atob(<data>) → decode (ambient global)
     if (callee?.type === "Identifier" && callee.name === "atob") return "decode";
@@ -293,38 +293,46 @@ export function analyzeLoaderChain(source: string, opts: { moduleLoadReachable?:
   const carriesPayload = (tags: Set<Tag>): boolean => tags.has("read") || tags.has("decoded");
 
   // ---------- structural expression equality (S3, bounded) ----------
-  function structEq(a: any, b: any, depth = 0): boolean {
-    if (!a || !b || depth > 20) return false;
-    if (a.type !== b.type) return false;
-    switch (a.type) {
-      case "Identifier": return a.name === b.name;
-      case "Literal": return a.value === b.value;
-      case "MemberExpression":
-        return a.computed === b.computed && structEq(a.object, b.object, depth + 1)
-          && (a.computed ? structEq(a.property, b.property, depth + 1) : a.property?.name === b.property?.name);
+  /**
+   * Canonical string of an expression's shape: two expressions have the same key
+   * iff they are structurally equal (node types, names, literal values, member /
+   * call / template shape) within the depth bound. `null` means never equal to
+   * anything (unsupported node, regex literal, deeper than 20). Indexing writes
+   * by this key makes each launch lookup O(1) instead of a scan of every write.
+   */
+  function structKey(n: any, depth = 0): string | null {
+    if (!n || depth > 20) return null;
+    switch (n.type) {
+      case "Identifier": return `I${JSON.stringify(n.name)}`;
+      case "Literal": {
+        const v = n.value;
+        if (v !== null && typeof v === "object") return null;   // RegExp: === never equal
+        return `L${typeof v}${JSON.stringify(String(v))}`;
+      }
+      case "MemberExpression": {
+        const o = structKey(n.object, depth + 1);
+        const p = n.computed ? structKey(n.property, depth + 1) : `N${JSON.stringify(String(n.property?.name))}`;
+        return o === null || p === null ? null : `M${n.computed ? 1 : 0}(${o},${p})`;
+      }
       case "CallExpression": {
-        if (!structEq(a.callee, b.callee, depth + 1)) return false;
-        const aa = a.arguments ?? [], ba = b.arguments ?? [];
-        return aa.length === ba.length && aa.every((x: any, i: number) => structEq(x, ba[i], depth + 1));
+        const parts = [structKey(n.callee, depth + 1), ...(n.arguments ?? []).map((x: any) => structKey(x, depth + 1))];
+        return parts.includes(null) ? null : `C(${parts.join(",")})`;
       }
       case "TemplateLiteral": {
-        const aq = a.quasis ?? [], bq = b.quasis ?? [];
-        if (aq.length !== bq.length || !aq.every((q: any, i: number) => q.value?.cooked === bq[i].value?.cooked)) return false;
-        const ax = a.expressions ?? [], bx = b.expressions ?? [];
-        return ax.length === bx.length && ax.every((x: any, i: number) => structEq(x, bx[i], depth + 1));
+        const q = (n.quasis ?? []).map((x: any) => JSON.stringify(x.value?.cooked ?? null));
+        const e = (n.expressions ?? []).map((x: any) => structKey(x, depth + 1));
+        return e.includes(null) ? null : `T(${q.join(",")};${e.join(",")})`;
       }
-      default: return false;
+      default: return null;
     }
   }
   /** Is `target` a written-path? Identifier via scoped taint, or structural match to a visible recorded path. */
   function targetIsWrittenPath(target: any, chain: any[]): boolean {
     if (!target) return false;
     if (target.type === "Identifier" && lookupTaint(chain, target.name)?.has("written-path")) return true;
-    for (const w of writtenPaths) {
-      if (!chain.includes(w.scope)) continue;   // visibility: the write scope must enclose the launch
-      if (structEq(target, w.node)) return true;
-    }
-    return false;
+    const key = structKey(target);
+    const scopes = key === null ? undefined : writtenPaths.get(key);
+    return !!scopes && chain.some((s) => scopes.has(s));   // visibility: the write scope must enclose the launch
   }
 
   // ---------- temp/hidden booster ----------
@@ -416,7 +424,8 @@ export function analyzeLoaderChain(source: string, opts: { moduleLoadReachable?:
             const s = declaringScope(chain, pathArg.name);
             (scopeTaint(s).get(pathArg.name) ?? scopeTaint(s).set(pathArg.name, new Set()).get(pathArg.name)!).add("written-path");
           } else {
-            writtenPaths.push({ node: pathArg, scope: chain[0] });
+            const key = structKey(pathArg);
+            if (key !== null) (writtenPaths.get(key) ?? writtenPaths.set(key, new Set()).get(key)!).add(chain[0]);
           }
         }
         if (pathArg && isTempOrHidden(pathArg)) boosters.tempOrHidden = true;

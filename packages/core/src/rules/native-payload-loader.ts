@@ -16,7 +16,8 @@ const JS_PARSEABLE = /\.(c?js|mjs)$/i;
 
 const GUNZIP_LIKE = /\b(gunzip|inflate|brotliDecompress|unzip)\w*\s*\(/;
 const BUFFER_FROM = /Buffer\.from\(/g;
-const BASE64 = /['"]base64['"]/g;
+// Node accepts any case and `base64url` as an encoding name.
+const BASE64 = /['"]base64(?:url)?['"]/gi;
 
 /** Regex signals for the parse-failure fallback. Detect independently; NEVER claim dataflow. */
 const FALLBACK: Record<"read" | "decode" | "write" | "launch", (src: string) => boolean> = {

@@ -295,7 +295,8 @@ export function integrityOf(tgz: Buffer): string {
  */
 function npmPath(p: string): string | null {
   // Leading slashes left by `package//x` are stripped (node-tar's stripAbsolutePath).
-  const rest = posix.normalize(p.split("/").slice(1).join("/").replace(/^\/+/, ""));
+  // Windows npm clients treat `\` as a separator (`package\package.json` lands at package/package.json).
+  const rest = posix.normalize(p.replace(/\\/g, "/").split("/").slice(1).join("/").replace(/^\/+/, ""));
   if (rest === "." || rest === ".." || rest.startsWith("../")) return null;
   return `package/${rest}`;
 }
