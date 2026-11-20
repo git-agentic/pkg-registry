@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { after, before, describe, test } from "node:test";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
-import { DEFAULT_POLICY, integrityOf, integrityOfAlgo, parseAnyLockfile, type TreeAuditResult } from "@git-agentic/sentinel-core";
+import { DEFAULT_POLICY, integrityOf, integrityOfAlgo, parseAnyLockfile, parseLockfile, type TreeAuditResult } from "@git-agentic/sentinel-core";
 import { createServer, integrityClaimMismatch } from "../src/server.js";
 import { AuditStore } from "../src/store.js";
 import { LocalFixtureUpstream, type Upstream } from "../src/upstream.js";
@@ -148,5 +148,24 @@ describe("F19: audit-tree blocks non-registry coordinates without fetching anyth
       assert.equal(out.packages[0]!.status, "block");
       assert.ok(!/pw|sig=abc|evil\.example|cdn\.example/.test(JSON.stringify(out)), JSON.stringify(out));
     }
+  });
+
+  test("a sha384-only pinned lockfile entry stays registry and is verified by audit-tree", async () => {
+    const lock = (integrity: string) => JSON.stringify({ lockfileVersion: 3, packages: { "": {}, "node_modules/leftpad-lite": { version: "1.0.0", resolved: "https://r.example/leftpad-lite/-/leftpad-lite-1.0.0.tgz", integrity } } });
+    const good = parseLockfile(lock(integrityOfAlgo(TARBALL, "sha384")));
+    assert.equal(good[0]!.nonRegistry, undefined);
+    const ok = await post(good);
+    assert.equal(ok.packages[0]!.integrityMismatch, false);
+    assert.notEqual(ok.packages[0]!.status, "block");
+    const bad = await post(parseLockfile(lock("sha384-" + Buffer.alloc(48, 9).toString("base64"))));
+    assert.equal(bad.packages[0]!.integrityMismatch, true);
+    assert.equal(bad.packages[0]!.status, "block");
+  });
+
+  test("a pnpm v5 URL key with a credential segment leaks nothing into the audit-tree response", async () => {
+    const raw = `lockfileVersion: 5.4\n\npackages:\n\n  codeload.example/user/repo/tar.gz/s3cr3t-token:\n    resolution: {tarball: 'https://codeload.example/user/repo/tar.gz/s3cr3t-token'}\n`;
+    const out = await post(parseAnyLockfile(raw, { filename: "pnpm-lock.yaml" }));
+    assert.equal(out.packages[0]!.status, "block");
+    assert.ok(!/s3cr3t|codeload|tar\.gz/.test(JSON.stringify(out)), JSON.stringify(out));
   });
 });

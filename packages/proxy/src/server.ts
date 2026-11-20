@@ -4,6 +4,8 @@ import express, { type Request, type Response } from "express";
 import { rateLimit } from "express-rate-limit";
 import {
   runAudit,
+  SRI_ALGORITHMS,
+  type SriAlgorithm,
   ENGINE_VERSION,
   AUDIT_REVISION,
   score,
@@ -349,13 +351,18 @@ export function createServer(opts: ServerOptions) {
     const cached = reauditedNative.get(key);
     if (cached) return cached;
     const attestations = privateStore.getAttestations(pkg, version);
+    const imported = privateStore.getVersion(pkg, version)?.actor === "imported";
     const fresh = await runAudit({
       meta: { ...stored.meta, integrity: integrityOf(tarball) }, tarball,
       // Only an IMPORTED version's manifest is the upstream registry's. A publisher controls its own
       // manifest, so it must never supply signatures: null, exactly as the publish-time audit used.
-      signatures: privateStore.getVersion(pkg, version)?.actor === "imported" ? retainedSignatures(privateStore.getVersion(pkg, version)?.manifest) : null,
+      signatures: imported ? retainedSignatures(privateStore.getVersion(pkg, version)?.manifest) : null,
       hasProvenance: attestations !== undefined,
-      attestations: attestations ?? null, signingKeys, trustMaterial: opts.trustMaterial, extractLimits,
+      attestations: attestations ?? null,
+      // A legacy import verified its bundle and then discarded it. The stored result was verified against these same
+      // bytes (integrity unchanged), so carry it over rather than downgrading a verified release to absent.
+      ...(imported && attestations === undefined ? { provenanceCarryOver: { status: stored.meta.provenance, identity: stored.meta.provenanceIdentity ?? null } } : {}),
+      signingKeys, trustMaterial: opts.trustMaterial, extractLimits,
       advisories: [...(advisories ?? []), ...retractionCorpus.advisories], vulnerabilities,
     });
     reauditedNative.set(key, fresh);
@@ -1013,7 +1020,7 @@ export function createServer(opts: ServerOptions) {
     if (privateStore.has(name)) return res.status(409).json({ error: "native history already exists", package: name });
     try {
       const pm = await upstream.getPackument(name);
-      const staged: { version: string; manifest: Record<string, unknown>; tarball: Buffer; audit: Audit; publishedAt?: string }[] = [];
+      const staged: { version: string; manifest: Record<string, unknown>; tarball: Buffer; audit: Audit; attestations?: unknown; publishedAt?: string }[] = [];
       for (const version of Object.keys(pm.doc.versions).sort(cmpSemver)) {
         const manifest = structuredClone(pm.doc.versions[version] as unknown as Record<string, unknown>);
         const tarball = await upstream.getTarball(name, version);
@@ -1035,7 +1042,7 @@ export function createServer(opts: ServerOptions) {
         if (verdictAtOrAbove(report.verdict, publishGateOf(enterprisePolicy))) {
           return res.status(403).json({ error: "history import blocked by Sentinel policy", package: `${name}@${version}`, report });
         }
-        staged.push({ version, manifest, tarball, audit, ...(pm.time?.[version] ? { publishedAt: pm.time[version] } : {}) });
+        staged.push({ version, manifest, tarball, audit, ...(normalized.hasProvenance && attestations ? { attestations } : {}), ...(pm.time?.[version] ? { publishedAt: pm.time[version] } : {}) });
       }
       const importedTags = Object.entries(pm.doc["dist-tags"] ?? {});
       if (importedTags.some(([, version]) => !staged.some((item) => item.version === version))) {
@@ -1044,7 +1051,7 @@ export function createServer(opts: ServerOptions) {
       for (const item of staged) {
         const primaryTag = importedTags.find(([, version]) => version === item.version)?.[0];
         privateStore.publish({ name, version: item.version, integrity: integrityOf(item.tarball), manifest: item.manifest,
-          tarball: item.tarball, audit: item.audit, actor: "imported", publishedAt: item.publishedAt, distTag: primaryTag ?? null });
+          tarball: item.tarball, audit: item.audit, actor: "imported", ...(item.attestations !== undefined ? { attestations: item.attestations } : {}), publishedAt: item.publishedAt, distTag: primaryTag ?? null });
       }
       for (const [tag, version] of importedTags) {
         if (privateStore.packument(name)?.["dist-tags"][tag] !== version) privateStore.setDistTag(name, tag, version);
@@ -1467,7 +1474,7 @@ function retainedSignatures(manifest: Record<string, unknown> | undefined): { ke
   return ok.length ? ok : null;
 }
 
-const SRI_ALGOS = new Set(["sha1", "sha256", "sha384", "sha512"]);
+const SRI_ALGOS: ReadonlySet<string> = new Set(SRI_ALGORITHMS);
 
 /**
  * True when a lockfile-claimed SRI cannot be matched to the served bytes. Every token must carry a
@@ -1482,7 +1489,7 @@ export function integrityClaimMismatch(tarball: Buffer, claimed: string): boolea
     const algo = t.split("-", 1)[0]!;
     if (!SRI_ALGOS.has(algo)) return true;
     let digest = served.get(algo);
-    if (digest === undefined) { digest = integrityOfAlgo(tarball, algo as "sha1" | "sha256" | "sha384" | "sha512"); served.set(algo, digest); }
+    if (digest === undefined) { digest = integrityOfAlgo(tarball, algo as SriAlgorithm); served.set(algo, digest); }
     if (t !== digest) return true;
   }
   return false;

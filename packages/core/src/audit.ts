@@ -17,6 +17,8 @@ import type {
   Finding,
   PackageFile,
   PackageMeta,
+  ProvenanceIdentity,
+  ProvenanceStatus,
   ReleaseContext,
 } from "./types.js";
 import type { Advisory } from "./advisory-corpus.js";
@@ -87,6 +89,11 @@ export interface AuditTarballInput {
   signingKeys?: NpmSigningKey[];
   /** Fetched attestation-endpoint response (acquisition path), or null when unfetchable. */
   attestations?: unknown | null;
+  /**
+   * A provenance result already verified against these same bytes (a stored audit whose attestation bundle was not
+   * retained). Used only when no attestations are supplied; never fetched, never from a publisher-controlled field.
+   */
+  provenanceCarryOver?: { status: ProvenanceStatus; identity: ProvenanceIdentity | null };
   /** Pinned Sigstore trust material. undefined ⇒ bundled default; null ⇒ none (provenance stays unknown when claimed). */
   trustMaterial?: ProvenanceTrustMaterial | null;
   /** Injectable clock (ISO) for trust-root staleness; defaults to now. */
@@ -140,7 +147,9 @@ export async function runAudit(input: AuditTarballInput): Promise<Audit> {
     input.signatures ?? null,
     input.signingKeys ?? NPM_SIGNING_KEYS,
   );
-  const prov = verifyProvenance({
+  const prov = input.provenanceCarryOver && !input.attestations
+    ? { status: input.provenanceCarryOver.status, identity: input.provenanceCarryOver.identity, rootStale: false }
+    : verifyProvenance({
     name: input.meta.name,
     version: input.meta.version,
     integrity: actualIntegrity,

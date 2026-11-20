@@ -1,4 +1,5 @@
 import { parse as parseYaml } from "yaml";
+import { SRI_ALGORITHMS } from "./extract.js";
 
 export interface Coordinate {
   name: string;
@@ -23,7 +24,7 @@ interface LockPackageEntry {
 
 /** True when `integrity` carries at least one pin in an algorithm the proxy can recompute. */
 function hasKnownPin(integrity: string | undefined): boolean {
-  return typeof integrity === "string" && integrity.split(/\s+/).some((t) => /^(?:sha1|sha256|sha512)-\S/.test(t));
+  return typeof integrity === "string" && integrity.split(/\s+/).some((t) => SRI_ALGORITHMS.some((a) => t.startsWith(`${a}-`) && t.length > a.length + 1));
 }
 
 /**
@@ -250,8 +251,11 @@ export function parsePnpmLock(raw: string, _opts: { omitDev?: boolean } = {}): C
     const res = entry?.resolution;
     if (res?.directory !== undefined || res?.type === "directory") continue;
     if (typeof res?.tarball === "string" && (res.tarball.startsWith("file:") || res.tarball.startsWith("link:"))) continue;
-    // URL-keyed entries (`name@https://...`) carry the real version in the entry.
-    if (/[:/]/.test(version) && typeof entry?.version === "string") version = entry.version;
+    // URL-keyed entries (`name@https://...`, or a v5 key with no leading `/`) are not name/version keys:
+    // the version comes only from the entry's declared `version`, never from the key (its last segment can
+    // be a credential). No declared version falls back to 0.0.0.
+    const urlKeyed = /[:/]/.test(version) || (slashStyle && !key.startsWith("/"));
+    if (urlKeyed) version = typeof entry?.version === "string" ? entry.version : "0.0.0";
     const coord: Coordinate = { name, version };
     const integrity = res?.integrity;
     if (integrity) coord.integrity = integrity;

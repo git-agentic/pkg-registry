@@ -15,7 +15,7 @@ import { ApprovalStore } from "../src/approvals.js";
 import { PrivatePackageStore } from "../src/private-store.js";
 import { ViolationStore } from "../src/violations.js";
 import { ApprovalRequestStore } from "../src/approval-requests.js";
-import type { Upstream } from "../src/upstream.js";
+import { LocalFixtureUpstream, type Upstream } from "../src/upstream.js";
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "fixtures");
 
@@ -171,5 +171,57 @@ describe("native serve path re-audits stored bytes after an engine upgrade", () 
     assert.equal(body.engine.revision, AUDIT_REVISION, "must have been re-audited");
     assert.equal(body.meta.signature, "unsigned", "a planted dist.signatures must not verify");
     assert.notEqual(body.verdict, "allow", "requireSignature still fails for the publisher version");
+  });
+
+  describe("re-audit keeps import provenance (review round 3, item 3)", () => {
+    const claim = (name: string) => ({ schema: 1 as const, version: "prov", issuedAt: "2026-07-13T00:00:00.000Z", claims: [{
+      namespace: name, domain: "example.test", claimantPublicKey: generateKeyPairSync("ed25519").publicKey.export({ type: "spki", format: "pem" }).toString(), status: "active" as const,
+      challenge: { method: "dns-txt" as const, id: "c", verifiedAt: "2026-07-12T00:00:00.000Z" }, renewalDueAt: "2027-07-12T00:00:00.000Z" }] });
+    const reqProv: EnterprisePolicy = { ...DEFAULT_POLICY, privateNamespaces: [], requireProvenance: ["sigstore"] };
+    const fixtureUpstream = new LocalFixtureUpstream(FIXTURES);
+    const stale = (store: PrivatePackageStore) => { delete (store.getVersion("sigstore", "3.0.0")!.audit.engine as { revision?: number }).revision; };
+    const get = async (base: string) => (await (await fetch(`${base}/-/audit/sigstore/3.0.0`)).json()) as AuditReport;
+
+    test("(a) history import stores the attestations, so a re-audit still verifies provenance under requireProvenance", async () => {
+      const privateStore = new PrivatePackageStore();
+      const base = await mkServer(privateStore, { upstream: fixtureUpstream, enterprisePolicy: reqProv, claimCorpus: claim("sigstore"), publishTokens: ["tok"] });
+      const imp = await fetch(`${base}/-/registry/import`, { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer tok" }, body: JSON.stringify({ name: "sigstore" }) });
+      assert.equal(imp.status, 201, await imp.clone().text());
+      assert.ok(privateStore.getAttestations("sigstore", "3.0.0"), "the verified bundle is stored with the publication");
+      stale(privateStore);
+      const r = await get(base);
+      assert.equal(r.engine.revision, AUDIT_REVISION, "must have been re-audited");
+      assert.equal(r.meta.provenance, "verified");
+      assert.notEqual(r.verdict, "block");
+    });
+
+    test("(b) a legacy imported version with no stored bundle keeps its verified provenance and identity", async () => {
+      const tarball = await fixtureUpstream.getTarball("sigstore", "3.0.0");
+      const attestations = await fixtureUpstream.getAttestations("sigstore", "3.0.0");
+      const integrity = integrityOf(tarball);
+      const original = await runAudit({ meta: { name: "sigstore", version: "3.0.0", author: null, maintainers: [], license: null, hasInstallScripts: false, integrity }, tarball, hasProvenance: true, attestations });
+      assert.equal(original.meta.provenance, "verified");
+      const privateStore = new PrivatePackageStore();
+      privateStore.publish({ name: "sigstore", version: "3.0.0", integrity, tarball, actor: "imported", audit: original, manifest: { name: "sigstore", version: "3.0.0", dist: { integrity } } });
+      assert.equal(privateStore.getAttestations("sigstore", "3.0.0"), undefined);
+      stale(privateStore);
+      const base = await mkServer(privateStore, { upstream, enterprisePolicy: reqProv, claimCorpus: claim("sigstore") });
+      const r = await get(base);
+      assert.equal(r.engine.revision, AUDIT_REVISION);
+      assert.equal(r.meta.provenance, "verified");
+      assert.equal(r.meta.provenanceIdentity?.sourceRepository, "https://github.com/sigstore/sigstore-js");
+      assert.notEqual(r.verdict, "block");
+    });
+
+    test("a publisher-actor version never inherits a stored provenance claim without a bundle", async () => {
+      const tarball = await fixtureUpstream.getTarball("sigstore", "3.0.0");
+      const integrity = integrityOf(tarball);
+      const original = await runAudit({ meta: { name: "sigstore", version: "3.0.0", author: null, maintainers: [], license: null, hasInstallScripts: false, integrity }, tarball, hasProvenance: true, attestations: await fixtureUpstream.getAttestations("sigstore", "3.0.0") });
+      const privateStore = new PrivatePackageStore();
+      privateStore.publish({ name: "sigstore", version: "3.0.0", integrity, tarball, actor: "publisher", audit: original, manifest: { name: "sigstore", version: "3.0.0", dist: { integrity } } });
+      stale(privateStore);
+      const base = await mkServer(privateStore, { upstream, enterprisePolicy: reqProv, claimCorpus: claim("sigstore") });
+      assert.equal((await get(base)).meta.provenance, "absent");
+    });
   });
 });

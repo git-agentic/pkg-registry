@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { createHash } from "node:crypto";
 import { parseLockfile, parsePnpmLock, parseYarnLock } from "../src/lockfile.js";
-import { integrityOfAlgo } from "../src/extract.js";
+import { integrityOfAlgo, SRI_ALGORITHMS } from "../src/extract.js";
 
 const npm = (packages: Record<string, unknown>) => JSON.stringify({ lockfileVersion: 3, packages: { "": { name: "root" }, ...packages } });
 const get = (raw: string, name: string) => parseLockfile(raw).find((c) => c.name === name)!;
@@ -128,5 +128,24 @@ describe("name and version are sanitized so source text never reaches the coordi
     const cs = parseLockfile(raw);
     assert.deepEqual(cs.map((c) => `${c.name}@${c.version}`).sort(), ["@scope/pkg@1.2.3-beta.1+build.5", "JSONStream@1.3.5"]);
     assert.ok(cs.every((c) => c.nonRegistry === undefined));
+  });
+
+  test("one shared supported-algorithm list: sha1, sha256, sha384, sha512", () => {
+    assert.deepEqual([...SRI_ALGORITHMS], ["sha1", "sha256", "sha384", "sha512"]);
+  });
+
+  test("a registry tarball with a sha384-only pin stays a registry coordinate (review round 3, item 1)", () => {
+    const c = get(npm({ "node_modules/x": { version: "1.0.0", resolved: "https://r.example/x/-/x-1.0.0.tgz", integrity: "sha384-AAAA" } }), "x");
+    assert.equal(c.nonRegistry, undefined);
+    assert.equal(c.integrity, "sha384-AAAA");
+  });
+
+  test("pnpm v5: a URL key never supplies the version, even when its last segment looks like one (item 2)", () => {
+    const raw = `lockfileVersion: 5.4\n\npackages:\n\n  codeload.example/user/repo/tar.gz/s3cr3t-token:\n    resolution: {tarball: 'https://codeload.example/user/repo/tar.gz/s3cr3t-token'}\n    name: repo\n    version: 2.0.0\n\n  evil.example/x/tar.gz/hunter2:\n    resolution: {tarball: 'https://evil.example/x/tar.gz/hunter2'}\n\n  /lodash/4.17.21:\n    resolution: {integrity: sha512-L==}\n`;
+    const cs = parsePnpmLock(raw);
+    for (const c of cs) assert.ok(!/s3cr3t|hunter2|codeload|evil/.test(`${c.name}@${c.version}`), `${c.name}@${c.version}`);
+    assert.ok(cs.some((c) => c.version === "2.0.0" && c.nonRegistry), "the declared version field is used");
+    assert.ok(cs.some((c) => c.version === "0.0.0" && c.nonRegistry), "no declared version falls back to 0.0.0");
+    assert.ok(cs.some((c) => c.name === "lodash" && c.version === "4.17.21" && !c.nonRegistry), "a plain v5 key still parses");
   });
 });

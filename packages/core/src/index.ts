@@ -35,6 +35,7 @@ export {
   integrityOf,
   integrityOfAlgo,
   type SriAlgorithm,
+  SRI_ALGORITHMS,
   type ExtractResult,
 } from "./extract.js";
 export { readPackageManifest, type PackageCoordinate } from "./manifest.js";
