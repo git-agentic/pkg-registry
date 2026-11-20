@@ -1,5 +1,6 @@
 import { sensitivePathsFor, type Capability } from "@git-agentic/sentinel-core";
 import { pathCovers } from "./path-cover.js";
+import { assertCwdNotRoot } from "./run-paths.js";
 import { expandHome, isSafeGrantTarget } from "./deny-set.js";
 import { writeAllowFloor } from "./write-floor.js";
 import { readAllowList } from "./read-allow.js";
@@ -42,6 +43,7 @@ export function generateBwrapArgs(
     listDirs?: (dir: string) => string[];
   },
 ): string[] {
+  assertCwdNotRoot(opts.cwd);
   const approvedFs = approved.filter((c) => c.kind === "filesystem").map((c) => c.target);
   const hasNetwork = approved.some((c) => c.kind === "network");
   const exists = opts.pathExists ?? (() => true);
