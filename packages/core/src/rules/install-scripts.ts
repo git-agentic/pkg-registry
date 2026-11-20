@@ -1,5 +1,5 @@
 import type { AuditInput, Finding, PackageFile, Rule } from "../types.js";
-import { codeFiles, mkFinding, scanLines, truncate } from "./util.js";
+import { mkFinding, scanLines, truncate } from "./util.js";
 
 const LIFECYCLE = ["preinstall", "install", "postinstall"] as const;
 
@@ -32,9 +32,7 @@ export const installScriptsRule: Rule = {
     }
 
     const findings: Finding[] = [];
-    const code = codeFiles(input);
-    const byPath = new Map(input.files.map((f) => [f.path, f] as const));
-    const bySuffix = suffixIndex(code);
+    const referencedFiles = makeResolver(input.files);
 
     for (const hook of LIFECYCLE) {
       const cmd = scripts[hook];
@@ -44,7 +42,7 @@ export const installScriptsRule: Rule = {
       const inlineDangers = DANGER_IN_SCRIPT.filter((d) => d.re.test(cmd));
 
       // If it runs a local script file, inspect that file's contents too.
-      const referenced = referencedFiles(cmd, byPath, bySuffix);
+      const referenced = referencedFiles(cmd);
       const fileDangers = referenced.flatMap((f) =>
         DANGER_IN_SCRIPT.flatMap((d) =>
           scanLines(f, d.re, 2).map((ev) => ({ why: d.why, ev })),
@@ -88,39 +86,46 @@ export const installScriptsRule: Rule = {
   },
 };
 
-// Docs/data named as an argument (`cat README`, `node -p package.json`) are not executed; scanning them is noise.
-const NOT_SCRIPT = /(?:\.(?:md|markdown|json|txt|ya?ml|lock|map)|(?:^|\/)(?:readme|licen[cs]e|changelog|notice))$/i;
 const JS_REF = /\.(?:c?js|mjs|cjs|ts)$/;
 // Shell separators and expansion characters. No token-count or length cap: a cap lets padding push a real script name out.
 const TOKEN_SPLIT = /[\s;&|<>()"'`=,${}\\]+/;
 
-/** Every `/`-suffix of each code path (`a/b.js` → `b.js`), first file wins, so a suffix match is one lookup. */
-function suffixIndex(code: PackageFile[]): Map<string, PackageFile> {
-  const m = new Map<string, PackageFile>();
-  for (const f of code) {
-    for (let i = f.path.indexOf("/"); i !== -1; i = f.path.indexOf("/", i + 1)) {
-      const suffix = f.path.slice(i + 1);
-      if (!m.has(suffix)) m.set(suffix, f);
-    }
-  }
-  return m;
-}
-
 /**
- * Resolve local script files referenced by a lifecycle command. Every
- * shell-separated token that names a retained package file counts (`node setup`,
- * `sh build.sh`, `node scripts/x.js`); JS names also match by path suffix.
- * One linear pass plus Map lookups, whatever the command length.
+ * Resolves local script files named by a lifecycle command. Indexes are built on
+ * first use, so a package with no hooks pays nothing. Work is linear in total
+ * path length: exact paths through a Map, JS suffix matches through a basename
+ * bucket (never every suffix of every path).
  */
-function referencedFiles(cmd: string, byPath: Map<string, PackageFile>, bySuffix: Map<string, PackageFile>): PackageFile[] {
-  const out = new Set<PackageFile>();
-  const seen = new Set<string>();
-  for (const t of cmd.split(TOKEN_SPLIT)) {
-    const ref = t.replace(/^\.\//, "");
-    if (!ref || seen.has(ref)) continue;
-    seen.add(ref);
-    const hit = byPath.get(`package/${ref}`) ?? (JS_REF.test(ref) ? bySuffix.get(ref) : undefined);
-    if (hit && !NOT_SCRIPT.test(hit.path)) out.add(hit);
-  }
-  return [...out];
+function makeResolver(files: PackageFile[]): (cmd: string) => PackageFile[] {
+  let byPath: Map<string, PackageFile> | undefined;
+  let byBase: Map<string, PackageFile[]> | undefined;
+  const exact = (p: string) => (byPath ??= new Map(files.map((f) => [f.path, f] as const))).get(p);
+  const suffix = (ref: string) => {
+    if (!byBase) {
+      byBase = new Map();
+      for (const f of files) {
+        const base = f.path.slice(f.path.lastIndexOf("/") + 1);
+        (byBase.get(base) ?? byBase.set(base, []).get(base)!).push(f);
+      }
+    }
+    return byBase.get(ref.slice(ref.lastIndexOf("/") + 1))?.find((f) => f.path.endsWith(`/${ref}`));
+  };
+
+  return (cmd) => {
+    const out = new Set<PackageFile>();
+    const seen = new Set<string>();
+    for (const t of cmd.split(TOKEN_SPLIT)) {
+      const ref = t.replace(/^\.\//, "");
+      if (!ref || seen.has(ref)) continue;
+      seen.add(ref);
+      let hit = exact(`package/${ref}`);
+      // Node resolves `node setup` / `node scripts` as setup.js / scripts/index.js.
+      if (!hit && !ref.slice(ref.lastIndexOf("/") + 1).includes(".")) {
+        hit = exact(`package/${ref}.js`) ?? exact(`package/${ref}/index.js`);
+      }
+      hit ??= JS_REF.test(ref) ? suffix(ref) : undefined;
+      if (hit) out.add(hit);
+    }
+    return [...out];
+  };
 }

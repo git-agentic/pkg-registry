@@ -72,11 +72,14 @@ export const nativePayloadLoaderRule: Rule = {
         // Only fall back for genuinely-JS files: on TS/JSX/.d.ts a parse failure is
         // expected (acorn is JS-only), so a regex guess is noise, not signal.
         if (!JS_PARSEABLE.test(rel)) continue;
-        // Regex fallback — independent signal only, capped below critical.
+        // Regex fallback — independent signal only, capped below critical. Exception: an
+        // overflow means hostile nesting defeated the parser, so a full read+decode+write+launch
+        // chain is not downgraded (a pad of `x.b.b…` must not turn block into warn).
         const hits = (Object.keys(FALLBACK) as (keyof typeof FALLBACK)[]).filter((k) => FALLBACK[k](file.content));
         if (hits.length >= 2) {
           findings.push(mkFinding({
-            ruleId: this.id, category: this.category, severity: "high",
+            ruleId: this.id, category: this.category,
+            severity: a.walkOverflow && hits.length === 4 ? "critical" : "high",
             message: `Possible payload loader (unparsed source, regex signal only): ${hits.join(" + ")} in \`${rel}\` — dataflow not verified.`,
             evidence: [{ file: file.path, snippet: truncate(file.content.trim().split("\n")[0] ?? "", 120) }],
             files: input.files,
