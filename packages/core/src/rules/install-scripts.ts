@@ -229,46 +229,38 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
   const isPrefix = (words: string[], i: number) =>
     /^[A-Za-z_]\w*=/.test(words[i]!) || WRAPPERS.has(words[i]!) || (i > 0 && WRAPPERS.has(words[i - 1]!) && words[i]!.startsWith("-"));
 
-  // Fewest script hops at which each name was scanned: a self-referencing script terminates, and a name first
-  // reached at the hop limit (children out of reach) is rescanned when a shorter path reaches it.
-  let followed = new Map<string, number>();
-  let followedBodies: [string, string][] = [];
+  // Package scripts reached from a command line, scanned from a worklist (not recursion): each name once, so
+  // the work is bounded by the number of scripts and a long chain cannot overflow the stack.
+  let visited = new Set<string>();
+  let queue: [string, string][] = [];
+  const enqueue = (n: string) => {
+    const body = Object.hasOwn(scripts, n) ? scripts[n] : undefined;
+    if (typeof body === "string" && !visited.has(n)) { visited.add(n); queue.push([n, body]); }
+  };
   /**
-   * The script a package-manager command runs (`npm run x`, `pnpm -C . x`, `yarn test`), or undefined.
-   * Bare `yarn x` / `pnpm x` and `bun run x` count only when `x` is defined (`yarn install` is a builtin).
+   * Deliberate over-following: after `npm`/`pnpm`/`yarn`/`bun`, every word that names a script is followed,
+   * wherever it sits (after `--` or an unknown option too), with its `pre`/`post` scripts. Following a script
+   * that does not run costs a false positive only if that script is itself dangerous; missing one that runs is a bypass.
    */
-  const scriptRef = (words: string[], i: number): string | undefined => {
-    const pm = trimPunct(words[i]!);
-    const pmName = pm.slice(pm.lastIndexOf("/") + 1);
-    if (pmName !== "npm" && pmName !== "pnpm" && pmName !== "yarn" && pmName !== "bun") return undefined;
-    const args: string[] = [];
-    for (let k = i + 1; k < words.length && args.length < 2 && words[k] !== "--"; k++) {
-      const w = words[k]!;
-      if (!w.startsWith("-")) args.push(w);
-      else if (PM_VALUE_OPTS.has(w) && !(w === "-w" && pmName !== "npm")) k++; // pnpm's `-w` is a boolean
+  const followScriptWords = (words: string[], from: number): void => {
+    for (let j = from; j < words.length; j++) {
+      const w = PM_ALIAS[words[j]!] ?? words[j]!;
+      for (const n of w === "restart" ? ["restart", "stop", "start"] : [w]) {
+        if (!Object.hasOwn(scripts, n)) continue;
+        enqueue(`pre${n}`);
+        enqueue(n);
+        enqueue(`post${n}`);
+      }
     }
-    const [a0, a1] = args;
-    if (!a0) return undefined;
-    let name: string | undefined;
-    let explicit = false; // explicit: `pre`/`post` run even when `<name>` itself is undefined
-    if (pmName === "npm" ? NPM_RUN.has(a0) : a0 === "run" || a0 === "run-script") {
-      name = a1;
-      explicit = pmName !== "bun";
-    } else if (pmName === "npm" || pmName === "pnpm") {
-      if (LIFECYCLE_CMDS.has(a0)) { name = a0; explicit = true; }
-      else if (pmName === "pnpm") name = a0;
-    } else if (pmName === "yarn") name = a0;
-    return name && (explicit || Object.hasOwn(scripts, name)) ? name : undefined;
   };
 
   /**
    * Scan one command line; `sh -c "<code>"` code is scanned again as a command line (depth-bounded, so linear).
-   * A followed `scripts[name]` body is scanned the same way, at most MAX_SCRIPT_HOPS scripts deep.
    */
-  const scan = (cmd: string, out: Set<PackageFile>, depth: number, hops = 0): void => {
+  const scan = (cmd: string, out: Set<PackageFile>, depth: number): void => {
     // Quote tracking can only ADD coverage: a stray apostrophe (`# it's`) must not hide later commands,
     // so the plain split is scanned too, and `$(...)` / backtick bodies are scanned as command lines.
-    if (depth < MAX_INLINE_DEPTH) for (const body of substitutionBodies(cmd)) scan(body, out, depth + 1, hops);
+    if (depth < MAX_INLINE_DEPTH) for (const body of substitutionBodies(cmd)) scan(body, out, depth + 1);
     for (const simple of new Set([...splitSimpleCommands(cmd), ...cmd.split(SIMPLE_COMMAND_SPLIT)])) {
       const rawWords = simple.split(/\s+/).filter(Boolean);
       const words = rawWords.map(unquote);
@@ -293,20 +285,9 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
       }
       const command = words[i];
       if (!command) continue;
-      const ref = scriptRef(words, i);
-      // npm, pnpm and yarn v1 also run a defined `pre<name>` and `post<name>` around `<name>`.
-      if (ref !== undefined && hops < MAX_SCRIPT_HOPS) {
-        for (const n of [`pre${ref}`, ref, `post${ref}`]) {
-          const body = Object.hasOwn(scripts, n) ? scripts[n] : undefined;
-          const seen = followed.get(n);
-          if (typeof body !== "string" || (seen !== undefined && seen <= hops + 1)) continue;
-          followed.set(n, hops + 1);
-          if (seen === undefined) followedBodies.push([n, body]);
-          scan(body, out, depth, hops + 1);
-        }
-      }
       const name = trimPunct(command);
       const interpreter = name.slice(name.lastIndexOf("/") + 1);
+      if (PACKAGE_MANAGERS.has(interpreter)) followScriptWords(words, i + 1);
       const inline = Object.hasOwn(INLINE_FLAG, interpreter) ? INLINE_FLAG[interpreter] : undefined;
       // The command word itself may be a package script (`./setup`).
       if (!inline) {
@@ -346,7 +327,7 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
               j = end;
             }
             code = unquote(code);
-            if (inline === SHELL_INLINE && depth < MAX_INLINE_DEPTH) scan(code, out, depth + 1, hops);
+            if (inline === SHELL_INLINE && depth < MAX_INLINE_DEPTH) scan(code, out, depth + 1);
             else {
               // Non-shell inline code (`node -e "require('./x.js')"`): code-extension names inside still count.
               for (const cw of code.split(/\s+/)) {
@@ -379,19 +360,17 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
 
   return (cmd) => {
     const out = new Set<PackageFile>();
-    followed = new Map();
-    followedBodies = [];
+    visited = new Set();
+    queue = [];
     scan(cmd, out, 0);
-    return { files: [...out], scripts: followedBodies };
+    for (let q = 0; q < queue.length; q++) scan(queue[q]![1], out, 0); // the queue grows while it is read
+    return { files: [...out], scripts: queue };
   };
 }
 
 const MAX_INLINE_DEPTH = 3;
-// Options that take a separate value word, skipped with it (`npm --prefix . run x`).
-const PM_VALUE_OPTS = new Set(["--prefix", "-C", "--dir", "--cwd", "--workspace", "-w", "--filter", "-F", "--loglevel"]);
-const NPM_RUN = new Set(["run", "run-script", "rum", "urn"]);
-const LIFECYCLE_CMDS = new Set(["test", "start", "stop", "restart"]); // `npm test` runs scripts.test
-const MAX_SCRIPT_HOPS = 8; // `npm run a` -> `npm run b` -> ... : a chain deeper than this is not followed
+const PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun"]);
+const PM_ALIAS: Record<string, string> = Object.assign(Object.create(null), { t: "test", tst: "test", it: "test", "install-test": "test" });
 const isPunct = (c: string | undefined) => c === "(" || c === ")" || c === '"' || c === "'" || c === "`";
 
 /** Trim quote/paren punctuation from both ends with two pointers (a `)+$` regex is quadratic on `)))…x`). */
