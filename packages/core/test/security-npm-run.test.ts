@@ -120,6 +120,18 @@ describe("install hooks follow package-manager script references", () => {
     assert.deepEqual(sev({ postinstall: "npm run __proto__" }), ["low"]);
   });
 
+  test("an empty `start` script does not suppress the server.js fallback", () => {
+    assert.deepEqual(sev({ postinstall: "npm start", start: "" }, { "package/server.js": `${CURL_SH}\n` }), ["critical"]);
+  });
+
+  test("`cit`, the install aliases, `verison` and an unknown subcommand reach their lifecycle scripts", () => {
+    for (const hook of ["npm cit", "npm install-ci-test", "npm add left-pad", "npm isntall", "npm frobnicate", "npm run setup"]) {
+      assert.deepEqual(sev({ postinstall: hook, prepare: CURL_SH }), ["critical"], `${hook} -> prepare`);
+    }
+    assert.deepEqual(sev({ postinstall: "npm verison", postversion: CURL_SH }), ["critical"]);
+    assert.deepEqual(sev({ postinstall: "npm cit", test: CURL_SH }), ["critical"]);
+  });
+
   test("a self-referencing script terminates", () => {
     assert.deepEqual(sev({ postinstall: "npm run a", a: "npm run a" }), ["low"]);
     assert.deepEqual(sev({ postinstall: "npm run a", a: "npm run b", b: `npm run a && ${CURL_SH}` }), ["critical"]);

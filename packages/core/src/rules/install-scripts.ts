@@ -244,6 +244,9 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
    * itself dangerous; missing one that runs is a bypass.
    */
   const followScriptWords = (words: string[], from: number, out: Set<PackageFile>): void => {
+    // An unknown subcommand (not a known command, not a script) may still run `prepare`: follow it by default.
+    const sub = words.slice(from).find((w) => !w.startsWith("-"));
+    if (sub !== undefined && !PM_COMMANDS.has(sub) && !Object.hasOwn(scripts, sub)) enqueue("prepare");
     for (let j = from; j < words.length; j++) {
       const w = words[j]!;
       for (const x of [w, ...(PM_COMMANDS.get(w) ?? [])]) {
@@ -252,7 +255,7 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
         enqueue(`post${x}`);
       }
       // `npm start` with no `start` script runs `node server.js`.
-      if ((w === "start" || w === "restart") && !Object.hasOwn(scripts, "start")) {
+      if ((w === "start" || w === "restart") && !(Object.hasOwn(scripts, "start") && typeof scripts.start === "string" && scripts.start !== "")) {
         const hit = exact("package/server.js");
         if (hit) out.add(hit);
       }
@@ -376,13 +379,16 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
 const MAX_INLINE_DEPTH = 3;
 const PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun"]);
 // Scripts a built-in package-manager command runs besides the script of its own name (npm lifecycle).
+const INSTALL_SCRIPTS = ["preinstall", "install", "postinstall", "prepare"];
 const PM_COMMANDS = new Map<string, string[]>([
-  ...["t", "tst", "it", "install-test", "cit", "install-ci-test"].map((c) => [c, ["test"]] as [string, string[]]),
+  ...["t", "tst"].map((c) => [c, ["test"]] as [string, string[]]),
+  ...["it", "install-test", "cit", "install-ci-test"].map((c) => [c, [...INSTALL_SCRIPTS, "test"]] as [string, string[]]),
   ["restart", ["restart", "stop", "start"]],
   ["pack", ["prepack", "prepare", "postpack"]],
   ["publish", ["prepublishOnly", "prepack", "prepare", "postpack", "publish", "postpublish"]],
-  ["version", ["preversion", "version", "postversion"]],
-  ...["install", "i", "ci", "rebuild"].map((c) => [c, ["preinstall", "install", "postinstall", "prepare"]] as [string, string[]]),
+  ...["version", "verison"].map((c) => [c, ["preversion", "version", "postversion"]] as [string, string[]]),
+  ...["install", "i", "ci", "rebuild", "add", "in", "ins", "inst", "insta", "instal", "isnt", "isnta", "isntal", "isntall"]
+    .map((c) => [c, INSTALL_SCRIPTS] as [string, string[]]),
 ]);
 const isPunct = (c: string | undefined) => c === "(" || c === ")" || c === '"' || c === "'" || c === "`";
 
