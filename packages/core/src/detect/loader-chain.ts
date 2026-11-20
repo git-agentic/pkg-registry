@@ -1,5 +1,6 @@
 import * as acorn from "acorn";
 import * as walk from "acorn-walk";
+import { lineLocator } from "../rules/util.js";
 
 export interface LoaderPrimitive {
   stage: "read" | "decode" | "write" | "launch";
@@ -49,9 +50,10 @@ function propName(m: any): string | null {
   if (m.computed) return m.property?.type === "Literal" ? String(m.property.value) : null;
   return m.property?.type === "Identifier" ? m.property.name : null;
 }
-function lineOf(src: string, pos: number): number { return src.slice(0, pos).split("\n").length; }
+/** Snippets keep the first 160 chars; never copy a whole (possibly huge, nested) node to build one. */
+const SNIP_SOURCE_CAP = 4096;
 function snip(src: string, node: any): string {
-  const s = src.slice(node.start, node.end).replace(/\s+/g, " ");
+  const s = src.slice(node.start, Math.min(node.end, node.start + SNIP_SOURCE_CAP)).replace(/\s+/g, " ");
   return s.length > 160 ? s.slice(0, 159) + "…" : s;
 }
 function isScope(n: any): boolean {
@@ -110,15 +112,21 @@ export function analyzeLoaderChain(source: string, opts: { moduleLoadReachable?:
     for (const s of chain) { if (taint.get(s)?.has(name)) return s; }
     return chain[0];
   };
+  const lineAt = lineLocator(source);   // built once; a per-primitive rescan from 0 is quadratic
   const record = (stage: LoaderPrimitive["stage"], node: any, readTarget?: string) =>
-    primitives.push({ stage, line: lineOf(source, node.start), snippet: snip(source, node), ...(readTarget ? { readTarget } : {}) });
+    primitives.push({ stage, line: lineAt(node.start), snippet: snip(source, node), ...(readTarget ? { readTarget } : {}) });
 
   // ---------- module reference resolution ----------
   function stripNode(m: string): string { return m.startsWith("node:") ? m.slice(5) : m; }
   function requireModule(node: any): string | null {
     if (node?.type === "CallExpression" && node.callee?.type === "Identifier" && node.callee.name === "require"
-      && node.arguments?.length === 1 && node.arguments[0].type === "Literal" && typeof node.arguments[0].value === "string") {
-      return stripNode(node.arguments[0].value);
+      && node.arguments?.length === 1) {
+      const a = node.arguments[0];
+      if (a.type === "Literal" && typeof a.value === "string") return stripNode(a.value);
+      // require(`fs`): a template literal with no expressions is a static string.
+      if (a.type === "TemplateLiteral" && a.expressions.length === 0 && typeof a.quasis[0]?.value?.cooked === "string") {
+        return stripNode(a.quasis[0].value.cooked);
+      }
     }
     return null;
   }
@@ -349,6 +357,9 @@ export function analyzeLoaderChain(source: string, opts: { moduleLoadReachable?:
     }
   }
 
+  // A hostile file (50k chained members, absurd nesting) can overflow the walker's
+  // recursion; that must degrade to the parse-failure path, never throw out of the rule.
+  try {
   walk.ancestor(ast, {
     ImportDeclaration(node: any) {
       if (node.source?.type !== "Literal" || typeof node.source.value !== "string") return;
@@ -453,8 +464,10 @@ export function analyzeLoaderChain(source: string, opts: { moduleLoadReachable?:
       if (node.callee?.type === "MemberExpression" && propName(node.callee) === "unref") boosters.unref = true;
     },
   });
-
   boosters.moduleLoad = Boolean(opts.moduleLoadReachable) && topLevelExecution(ast);
+  } catch {
+    return { primitives: [], correlated: false, boosters: { tempOrHidden: false, chmod: false, detached: false, unref: false, moduleLoad: false }, parseFailed: true };
+  }
 
   return { primitives, correlated, boosters, parseFailed: false };
 }

@@ -31,6 +31,51 @@ export function scanLines(
   return out;
 }
 
+/**
+ * Linear-time stand-in for `HEAD[^STOP]*?MARKER`: yields each `head` match that
+ * has a `marker` before the next `stop` match. The naive regex rescans to the
+ * statement end from every head and goes quadratic on repeated heads; here each
+ * statement is scanned once. `head` and `marker` must be global; `stop` is a
+ * source pattern (no flags).
+ */
+export function* headsWithTail(
+  content: string,
+  head: RegExp,
+  stop: string,
+  marker: RegExp,
+): Generator<RegExpMatchArray> {
+  const stopRe = new RegExp(stop, "g");
+  let segEnd = -1;
+  let lastMarker = -1;
+  for (const m of content.matchAll(head)) {
+    const end = m.index! + m[0].length;
+    if (end > segEnd) {
+      stopRe.lastIndex = end;
+      const hit = stopRe.exec(content);
+      segEnd = hit ? hit.index : content.length;
+      lastMarker = -1;
+      for (const k of content.slice(end, segEnd).matchAll(marker)) lastMarker = end + k.index!;
+    }
+    if (lastMarker >= end) yield m;
+  }
+}
+
+/** Offset → 1-based line lookup built once (binary search), instead of rescanning from 0. */
+export function lineLocator(content: string): (pos: number) => number {
+  const starts = [0];
+  for (let i = content.indexOf("\n"); i !== -1; i = content.indexOf("\n", i + 1)) starts.push(i + 1);
+  return (pos) => {
+    let lo = 0;
+    let hi = starts.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (starts[mid]! <= pos) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo + 1;
+  };
+}
+
 export function truncate(s: string, n: number): string {
   return s.length > n ? s.slice(0, n - 1) + "…" : s;
 }
