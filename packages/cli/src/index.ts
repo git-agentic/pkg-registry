@@ -581,6 +581,8 @@ export function enforceNpmEnv(base: NodeJS.ProcessEnv, opts: { proxy: string; wr
     SENTINEL_ENFORCE: "1",
     SENTINEL_PROXY: opts.proxy,
     SENTINEL_APPROVE: opts.approve.join(" "),
+    // The install root, pinned here because INIT_CWD is reset by a nested npm (git dependency prepare).
+    SENTINEL_ROOT: realpathSync(process.cwd()),
   };
 }
 
