@@ -79,6 +79,18 @@ describe("install hooks follow the files these forms execute", () => {
     assert.deepEqual(sev("cd bin && ./node evil", { "package/bin/node": BENIGN, "package/evil": BENIGN }), ["low"]);
   });
 
+  test("a root .ts or .js retry does not hide a nested candidate", () => {
+    assert.deepEqual(sev("cd scripts && sh setup", { "package/setup.ts": BENIGN, "package/scripts/setup": PAYLOAD }), ["critical"]);
+    assert.deepEqual(sev("cd scripts && sh setup", { "package/setup.js": BENIGN, "package/scripts/setup": PAYLOAD }), ["critical"]);
+    assert.deepEqual(sev("cd scripts && sh setup", { "package/setup.ts": BENIGN, "package/scripts/setup": BENIGN }), ["low"]);
+  });
+
+  test("a bare wrapper or interpreter name may itself be a package file", () => {
+    assert.deepEqual(sev("PATH=.:$PATH sudo", { "package/sudo": PAYLOAD }), ["critical"]);
+    assert.deepEqual(sev("tsx x", { "package/tsx": PAYLOAD, "package/x.ts": BENIGN }), ["critical"]);
+    assert.deepEqual(sev("tsx x", { "package/tsx": BENIGN, "package/x.ts": BENIGN }), ["low"]);
+  });
+
   test("leading punctuation does not hide a wrapper", () => {
     assert.deepEqual(sev("(env node setup)", { "package/setup": PAYLOAD }), ["critical"]);
     assert.deepEqual(sev("(env node setup)", { "package/setup": BENIGN }), ["low"]);

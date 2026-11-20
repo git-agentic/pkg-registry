@@ -243,14 +243,12 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
     const nested = () => suffix(ref) ?? (dotted ? undefined : suffix(`${ref}.js`) ?? suffix(`${ref}.ts`));
     // Node resolves `node setup` / `node scripts` as setup.js / scripts/<main or index.js>; TS runners also try setup.ts.
     if (!dotted) hit = exact(`package/${ref}.js`);
-    const dir = hit ? undefined : entry(`package/${ref}`); // a directory may have a dot in its name (`tools.v2`)
-    if (dir) {
-      const n = nested(); // over-follow: a directory entry must not hide a nested file the suffix lookup finds
-      if (n && n !== dir) spill.push(n);
-      return dir;
-    }
+    hit ??= entry(`package/${ref}`); // a directory may have a dot in its name (`tools.v2`)
     if (!dotted) hit ??= exact(`package/${ref}.ts`);
-    return hit ?? nested();
+    if (!hit) return nested();
+    const n = nested(); // over-follow: a root candidate must not hide a nested file the suffix lookup finds
+    if (n && n !== hit) spill.push(n);
+    return hit;
   };
   const resolveWord = (word: string, mode: Mode): PackageFile | undefined => {
     const w = trimPunct(word);
@@ -264,8 +262,13 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
   };
   // A command word is judged by its basename (`/usr/bin/env` is `env`). A relative path that names a package file
   // (`./bin/env`) is that file too: it is scanned (`localCommand`) and still plays the wrapper/interpreter role.
-  const localCommand = (w: string): PackageFile | undefined =>
-    w.includes("/") && !/^(?:[/-]|[A-Za-z_]\w*=)/.test(w) ? resolveWord(trimPunct(w), "path") : undefined; // exact, then suffix (after a `cd`); not a flag or `VAR=value`
+  // Path-qualified: exact, then suffix (after a `cd`). Bare: only a wrapper or interpreter name, exact (`tsx` may be `package/tsx`).
+  const localCommand = (w: string): PackageFile | undefined => {
+    if (/^(?:[/-]|[A-Za-z_]\w*=)/.test(w)) return undefined; // not a flag, absolute path or `VAR=value`
+    const t = trimPunct(w);
+    if (w.includes("/")) return resolveWord(t, "path");
+    return WRAPPERS.has(t) || Object.hasOwn(INLINE_FLAG, t) ? exact(`package/${t}`) : undefined;
+  };
   const isPrefix = (words: string[], i: number) =>
     /^[A-Za-z_]\w*=/.test(words[i]!) || WRAPPERS.has(base(trimPunct(words[i]!))) || (i > 0 && WRAPPERS.has(base(trimPunct(words[i - 1]!))) && words[i]!.startsWith("-"));
   const isInterpreterCommand = (simple: string): boolean => {
