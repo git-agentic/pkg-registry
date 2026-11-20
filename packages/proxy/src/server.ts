@@ -345,6 +345,8 @@ export function createServer(opts: ServerOptions) {
   // Native audits recorded by an older engine are recomputed from the stored bytes (never upstream) and
   // cached here, keyed by name, version and integrity. The stored publication record is never rewritten.
   const reauditedNative = new Map<string, Audit>();
+  // From this audit revision on, provenance sourceRepository/ref come from the Fulcio certificate, not the predicate.
+  const CERT_IDENTITY_REVISION = 2;
   async function currentEngineAudit(pkg: string, version: string, stored: Audit, tarball: Buffer): Promise<Audit> {
     if (stored.engine?.version === ENGINE_VERSION && stored.engine.revision === AUDIT_REVISION) return stored;
     const key = `${pkg}\u0000${version}\u0000${stored.meta.integrity}`;
@@ -361,7 +363,15 @@ export function createServer(opts: ServerOptions) {
       attestations: attestations ?? null,
       // A legacy import verified its bundle and then discarded it. The stored result was verified against these same
       // bytes (integrity unchanged), so carry it over rather than downgrading a verified release to absent.
-      ...(imported && attestations === undefined ? { provenanceCarryOver: { status: stored.meta.provenance, identity: stored.meta.provenanceIdentity ?? null } } : {}),
+      // Only onto the SAME bytes (a restore could pair old metadata with another tarball), and a pre-hardening
+      // audit's repository and ref came from the signer-written predicate, so they are dropped (workflow and
+      // issuer come from the certificate and stay).
+      ...(imported && attestations === undefined && stored.meta.integrity === integrityOf(tarball) ? { provenanceCarryOver: {
+        status: stored.meta.provenance,
+        identity: stored.meta.provenanceIdentity
+          ? ((stored.engine?.revision ?? 0) >= CERT_IDENTITY_REVISION ? stored.meta.provenanceIdentity : { ...stored.meta.provenanceIdentity, sourceRepository: null, ref: null })
+          : null,
+      } } : {}),
       signingKeys, trustMaterial: opts.trustMaterial, extractLimits,
       advisories: [...(advisories ?? []), ...retractionCorpus.advisories], vulnerabilities,
     });

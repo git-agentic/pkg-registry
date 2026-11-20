@@ -204,13 +204,55 @@ describe("native serve path re-audits stored bytes after an engine upgrade", () 
       const privateStore = new PrivatePackageStore();
       privateStore.publish({ name: "sigstore", version: "3.0.0", integrity, tarball, actor: "imported", audit: original, manifest: { name: "sigstore", version: "3.0.0", dist: { integrity } } });
       assert.equal(privateStore.getAttestations("sigstore", "3.0.0"), undefined);
-      stale(privateStore);
+      // Stale by engine VERSION only: this audit already carries a certificate-sourced identity (revision 2), so it is kept.
+      (privateStore.getVersion("sigstore", "3.0.0")!.audit.engine as { version: string }).version = "0.0.1-ancient";
       const base = await mkServer(privateStore, { upstream, enterprisePolicy: reqProv, claimCorpus: claim("sigstore") });
       const r = await get(base);
       assert.equal(r.engine.revision, AUDIT_REVISION);
       assert.equal(r.meta.provenance, "verified");
       assert.equal(r.meta.provenanceIdentity?.sourceRepository, "https://github.com/sigstore/sigstore-js");
       assert.notEqual(r.verdict, "block");
+    });
+
+    const original = async () => {
+      const tarball = await fixtureUpstream.getTarball("sigstore", "3.0.0");
+      const integrity = integrityOf(tarball);
+      const audit = await runAudit({ meta: { name: "sigstore", version: "3.0.0", author: null, maintainers: [], license: null, hasInstallScripts: false, integrity }, tarball, hasProvenance: true, attestations: await fixtureUpstream.getAttestations("sigstore", "3.0.0") });
+      return { tarball, integrity, audit };
+    };
+    const publishLegacy = (store: PrivatePackageStore, o: Awaited<ReturnType<typeof original>>, audit = o.audit, tarball = o.tarball) =>
+      store.publish({ name: "sigstore", version: "3.0.0", integrity: integrityOf(tarball), tarball, actor: "imported", audit, manifest: { name: "sigstore", version: "3.0.0", dist: {} } });
+
+    test("(round 4, item 2) a pre-hardening import's predicate-sourced repository and ref are not carried over", async () => {
+      const o = await original();
+      // Pre-hardening metadata built by hand: predicate repository/ref set, no engine.revision.
+      const legacy = structuredClone(o.audit);
+      legacy.meta.provenanceIdentity = { ...legacy.meta.provenanceIdentity!, sourceRepository: "https://github.com/acme/lib", ref: "refs/heads/forged" };
+      delete (legacy.engine as { revision?: number }).revision;
+      const privateStore = new PrivatePackageStore();
+      publishLegacy(privateStore, o, legacy);
+      const enterprisePolicy = { ...reqProv, provenanceIdentities: [{ pattern: "sigstore", repository: "https://github.com/acme/*" }] };
+      const base = await mkServer(privateStore, { upstream, enterprisePolicy, claimCorpus: claim("sigstore") });
+      const r = await get(base);
+      assert.equal(r.meta.provenance, "verified");
+      assert.equal(r.meta.provenanceIdentity?.sourceRepository, null);
+      assert.equal(r.meta.provenanceIdentity?.ref, null);
+      assert.equal(r.meta.provenanceIdentity?.workflow, o.audit.meta.provenanceIdentity?.workflow, "the certificate-sourced workflow is kept");
+      assert.equal(r.meta.provenanceIdentity?.issuer, o.audit.meta.provenanceIdentity?.issuer);
+      assert.equal(r.verdict, "block", "a repository-only policy requirement must not be met without certificate evidence");
+    });
+
+    test("(round 4, item 3) legacy metadata paired with DIFFERENT bytes does not inherit verified provenance", async () => {
+      const o = await original();
+      const other = await fixtureUpstream.getTarball("leftpad-lite", "1.0.0");
+      const legacy = structuredClone(o.audit);
+      delete (legacy.engine as { revision?: number }).revision;
+      const privateStore = new PrivatePackageStore();
+      publishLegacy(privateStore, o, legacy, other); // stored audit.meta.integrity is the sigstore bytes, the tarball is not
+      const base = await mkServer(privateStore, { upstream, enterprisePolicy: reqProv, claimCorpus: claim("sigstore") });
+      const r = await get(base);
+      assert.equal(r.meta.provenance, "absent");
+      assert.equal(r.meta.provenanceIdentity ?? null, null);
     });
 
     test("a publisher-actor version never inherits a stored provenance claim without a bundle", async () => {

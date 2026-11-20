@@ -148,4 +148,19 @@ describe("name and version are sanitized so source text never reaches the coordi
     assert.ok(cs.some((c) => c.version === "0.0.0" && c.nonRegistry), "no declared version falls back to 0.0.0");
     assert.ok(cs.some((c) => c.name === "lodash" && c.version === "4.17.21" && !c.nonRegistry), "a plain v5 key still parses");
   });
+
+  test("pnpm v9: a key is split right after the package name; an '@' in a URL query never reaches name or version (round 4, item 1)", () => {
+    const raw = `lockfileVersion: '9.0'\n\npackages:\n\n  pkg@https://h/x.tgz?a=b@s3cr3t:\n    resolution: {tarball: 'https://h/x.tgz?a=b@s3cr3t'}\n\n  '@scope/pkg@https://h/y.tgz?a=b@s3cr3t':\n    resolution: {tarball: 'https://h/y.tgz?a=b@s3cr3t'}\n    version: 3.0.0\n\n  '@scope/ok@1.2.3':\n    resolution: {integrity: sha512-OK==}\n`;
+    const cs = parsePnpmLock(raw);
+    for (const c of cs) assert.ok(!/s3cr3t|https|h\/x/.test(`${c.name}@${c.version}`), `${c.name}@${c.version}`);
+    assert.ok(cs.some((c) => c.name === "pkg" && c.version === "0.0.0" && c.nonRegistry));
+    assert.ok(cs.some((c) => c.name === "@scope/pkg" && c.version === "3.0.0" && c.nonRegistry));
+    assert.ok(cs.some((c) => c.name === "@scope/ok" && c.version === "1.2.3" && !c.nonRegistry));
+  });
+
+  test("pnpm v9: a non-plain remainder with no resolution is still non-registry", () => {
+    const cs = parsePnpmLock(`lockfileVersion: '9.0'\n\npackages:\n\n  pkg@npm:other@1.0.0:\n    resolution: {integrity: sha512-A==}\n`);
+    assert.ok(cs[0]!.nonRegistry);
+    assert.ok(!/other/.test(`${cs[0]!.name}@${cs[0]!.version}`));
+  });
 });

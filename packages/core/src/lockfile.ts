@@ -227,7 +227,8 @@ function pnpmNameVersion(key: string, slashStyle: boolean): [string, string] | n
     if (at <= 0) return null;
     return [k.slice(0, at), k.slice(at + 1)];
   }
-  const at = k.lastIndexOf("@");
+  // Split right after the package name (skipping a leading `@scope/`): the remainder may be a URL whose query holds '@'.
+  const at = k.indexOf("@", k.startsWith("@") ? 1 : 0);
   if (at <= 0) return null;
   return [k.slice(0, at), k.slice(at + 1)];
 }
@@ -254,13 +255,14 @@ export function parsePnpmLock(raw: string, _opts: { omitDev?: boolean } = {}): C
     // URL-keyed entries (`name@https://...`, or a v5 key with no leading `/`) are not name/version keys:
     // the version comes only from the entry's declared `version`, never from the key (its last segment can
     // be a credential). No declared version falls back to 0.0.0.
-    const urlKeyed = /[:/]/.test(version) || (slashStyle && !key.startsWith("/"));
+    const urlKeyed = !VERSION_RE.test(version) || (slashStyle && !key.startsWith("/"));
     if (urlKeyed) version = typeof entry?.version === "string" ? entry.version : "0.0.0";
     const coord: Coordinate = { name, version };
     const integrity = res?.integrity;
     if (integrity) coord.integrity = integrity;
     if (res?.type !== undefined && res.type !== "directory") coord.nonRegistry = `${res.type}:${res.repo ?? ""}#${res.commit ?? ""}`;
     else if (typeof res?.tarball === "string" && !isRegistrySource(res.tarball, integrity)) coord.nonRegistry = res.tarball;
+    else if (urlKeyed) coord.nonRegistry = key; // a non-plain remainder is never a registry coordinate
     putCoord(byKey, coord);
   }
   return sortCoords([...byKey.values()]);
