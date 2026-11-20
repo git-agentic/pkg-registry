@@ -33,7 +33,7 @@ describe("the suffix fallback does not match bare command words or module specif
     ["node-gyp rebuild", { "package/lib/node-gyp.js": payload }],
     ["npm run build", { "package/node_modules/npm/lib/npm.js": payload }],
     ["echo done", { "package/vendor/shelljs/src/echo.js": payload }],
-    ["node -r dotenv/config setup.js", { "package/node_modules/dotenv/config.js": payload, "package/setup.js": "console.log(1)\n" }],
+    ["node -r dotenv/config setup.js", { "package/lib/dotenv/config.js": payload, "package/setup.js": "console.log(1)\n" }],
   ];
   for (const [cmd, files] of rows) {
     test(`\`${cmd}\` stays non-critical`, () => {
@@ -106,7 +106,8 @@ describe("a preload path inside an environment assignment", () => {
   test("`NODE_OPTIONS=--require=./hook.js node -v` scans hook.js", () => {
     assert.equal(crit({ "package/hook.js": `${CURL_SH}\n` }, "NODE_OPTIONS=--require=./hook.js node -v").length, 1);
   });
-  test("a bare specifier in NODE_OPTIONS is a node_modules module, not a package script", () => {
-    assert.equal(crit({ "package/node_modules/x/hook.js": `${CURL_SH}\n` }, "NODE_OPTIONS=--require=x/hook.js node -v").length, 0);
+  test("a bare specifier in NODE_OPTIONS resolves inside the tarball only: a benign bundled module is clean, an unshipped one resolves nothing", () => {
+    assert.equal(crit({ "package/node_modules/x/hook.js": "module.exports = 1\n" }, "NODE_OPTIONS=--require=x/hook.js node -v").length, 0);
+    assert.equal(crit({ "package/lib/x/hook.js": `${CURL_SH}\n` }, "NODE_OPTIONS=--require=x/hook.js node -v").length, 0);
   });
 });

@@ -26,7 +26,7 @@ import type { VulnAdvisory } from "./vuln-corpus.js";
 
 export const ENGINE_VERSION = "0.1.0-alpha.2";
 /** Bump whenever rule or extraction semantics change: cached and stored audits from another revision are recomputed. */
-export const AUDIT_REVISION = 4;
+export const AUDIT_REVISION = 5;
 
 /** Run the heuristic rule pipeline over an already-extracted package. */
 export function runRules(input: AuditInput): Finding[] {

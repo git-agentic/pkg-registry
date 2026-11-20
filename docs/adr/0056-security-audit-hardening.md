@@ -280,14 +280,13 @@ and `transferRequestBytes` take `currentChallengeId`.
   critical finding, and re-import is refused once native history exists. The
   operator's remedy is a policy exception for that name (or relaxing the
   repository constraint) until a new release is published with provenance.
-- Detection gaps left for follow-up (`npm run <name>` was closed in #85, by deliberate over-following:
+- Detection gaps (`npm run <name>` was closed in #85, by deliberate over-following:
   after `npm`, `pnpm`, `yarn` or `bun`, every word that names a defined script is followed with its
   `pre`/`post` scripts, each script once from a worklist, and its body gets the hook's inline-danger
   check; #86 closed `.`/`source` as interpreters, pipes into an interpreter, pathed wrappers,
-  `tsx`/`ts-node`/`.ts` operands and `node <dir>`; `AUDIT_REVISION` is 4): bare
-  `-r`/`NODE_OPTIONS` specifiers and extension-less preload paths are not
-  resolved, command words are not looked up in bundled `node_modules/.bin`,
-  and the overflow fallback stays regex-based. Other rules still scan those
+  `tsx`/`ts-node`/`.ts` operands and `node <dir>`; #87 closed bare `-r`/`NODE_OPTIONS` specifiers,
+  extension-less preload paths and bundled `node_modules/.bin` / `bin` commands, all resolved against the
+  tarball only; `AUDIT_REVISION` is 5). The overflow fallback stays regex-based. Other rules still scan those
   files; only the lifecycle-script escalation is lost.
 
 ## Not changed

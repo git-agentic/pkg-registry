@@ -230,6 +230,43 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
     }
     return hit ?? undefined;
   };
+  // A bare module name resolves inside the tarball only: node_modules/<spec> as a file, `.js`, then its package main / index.js.
+  const resolveModule = (spec: string): PackageFile | undefined => {
+    const m = `package/node_modules/${spec}`;
+    return exact(m) ?? exact(`${m}.js`) ?? entry(m);
+  };
+  // Bins of bundled packages (`bin` is a string or an object), mapped to the files they point at; built once on first use.
+  let bins: Map<string, PackageFile> | undefined;
+  const bundledBin = (name: string): PackageFile | undefined => {
+    if (!bins) {
+      bins = new Map();
+      for (const f of files) {
+        const pkg = /^package\/node_modules\/((?:@[^/]+\/)?[^/]+)\/package\.json$/.exec(f.path)?.[1];
+        if (!pkg) continue;
+        let bin: unknown;
+        try { bin = JSON.parse(f.content)?.bin; } catch { continue; }
+        const map: Record<string, unknown> = typeof bin === "string" ? { [pkg.slice(pkg.lastIndexOf("/") + 1)]: bin } : bin && typeof bin === "object" ? (bin as Record<string, unknown>) : {};
+        for (const [n, rel] of Object.entries(map)) {
+          const t = typeof rel === "string" ? `package/node_modules/${pkg}/${rel.replace(/^\.\//, "")}` : "";
+          const hit = t ? exact(t) ?? exact(`${t}.js`) : undefined;
+          if (hit && !bins.has(n)) bins.set(n, hit);
+        }
+      }
+    }
+    return bins.get(name) ?? exact(`package/node_modules/.bin/${name}`);
+  };
+  // The file a preload flag value (`-r <value>`) loads: a local path, else a bundled module.
+  const preload = (value: string): PackageFile | undefined =>
+    value ? (LOCAL_PATH.test(value) ? resolveWord(value, "script") : resolveModule(value)) : undefined;
+  /** Tokens of a `VAR=value` assignment (`NODE_OPTIONS`): `-r <x>` / `--require <x>` preloads and relative code files. */
+  const scanOptionTokens = (tokens: string[], out: Set<PackageFile>): void => {
+    for (let k = 0; k < tokens.length; k++) {
+      const t = trimPunct(tokens[k]!);
+      const hit = CODE_VALUE_FLAG.test(t) ? preload(trimPunct(tokens[++k] ?? ""))
+        : CODE_WORD.test(t) && LOCAL_PATH.test(t) ? resolveWord(t, "script") : undefined;
+      if (hit) out.add(hit);
+    }
+  };
   let spill: PackageFile[] = []; // extra candidates a resolution found besides the one it returned
   const resolveRef = (raw: string, mode: Mode): PackageFile | undefined => {
     const ref = raw.replace(/^\.\//, "").replace(/\/$/, "") || (raw === "./" ? "." : "");
@@ -267,7 +304,10 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
     if (/^(?:[/-]|[A-Za-z_]\w*=)/.test(w)) return undefined; // not a flag, absolute path or `VAR=value`
     const t = trimPunct(w);
     if (w.includes("/")) return resolveWord(t, "path");
-    return WRAPPERS.has(t) || Object.hasOwn(INLINE_FLAG, t) ? exact(`package/${t}`) : undefined;
+    const own = WRAPPERS.has(t) || Object.hasOwn(INLINE_FLAG, t) ? exact(`package/${t}`) : undefined;
+    const bin = bundledBin(t);
+    if (own && bin) spill.push(bin);
+    return own ?? bin;
   };
   const isPrefix = (words: string[], i: number) =>
     /^[A-Za-z_]\w*=/.test(words[i]!) || WRAPPERS.has(base(trimPunct(words[i]!))) || (i > 0 && WRAPPERS.has(base(trimPunct(words[i - 1]!))) && words[i]!.startsWith("-"));
@@ -338,13 +378,17 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
       for (; i < words.length && isPrefix(words, i); i++) {
         const local = localCommand(words[i]!);
         if (local) out.add(local);
-        // `NODE_OPTIONS=--require=./hook.js node -v`: a code file inside an assignment value runs too.
+        // `NODE_OPTIONS=--require=./hook node -v`: preload flags and code files inside an assignment value run too.
         const eq = words[i]!.indexOf("=");
         if (eq < 0) continue;
-        for (const piece of words[i]!.slice(eq + 1).split(/[\s=]+/)) {
-          const hit = CODE_WORD.test(piece) && /^(?:\.{1,2}\/|\/)/.test(piece) ? resolveWord(piece, "script") : undefined;
-          if (hit) out.add(hit);
+        let val = words[i]!.slice(eq + 1);
+        const q = val[0] === "'" || val[0] === '"' ? val[0] : "";
+        if (q && !(val.length > 1 && val.endsWith(q))) { // `NODE_OPTIONS='-r ./hook'`: the quote spans words (none closing: one word)
+          let e = i + 1;
+          while (e < rawWords.length && !rawWords[e]!.endsWith(q)) e++;
+          if (e < rawWords.length) { val += ` ${rawWords.slice(i + 1, e + 1).join(" ")}`; i = e; }
         }
+        scanOptionTokens(unquote(val).split(/[\s=]+/), out);
       }
       const command = words[i];
       if (!command) continue;
@@ -407,8 +451,8 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
           const eq = w.indexOf("=");
           const generic = !m && eq > 0 && CODE_WORD.test(w.slice(eq + 1)) ? w.slice(eq + 1) : undefined;
           const value = m ? (m[1] ?? words[++j]) : generic;
-          // A bare specifier (`dotenv/config`) is a node_modules module, not a package script.
-          const hit = value && /^(?:\.{1,2}\/|\/)/.test(value) ? resolveWord(value, "script") : undefined;
+          // A bare specifier (`dotenv/config`) is a bundled node_modules module, resolved inside the tarball only.
+          const hit = value && (m || LOCAL_PATH.test(value)) ? preload(value) : undefined;
           if (hit) out.add(hit);
           continue;
         }
@@ -437,6 +481,7 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
 }
 
 const MAX_INLINE_DEPTH = 3;
+const LOCAL_PATH = /^(?:\.{1,2}\/|\/)/;
 const base = (w: string) => w.slice(w.lastIndexOf("/") + 1);
 const PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun"]);
 // Scripts a built-in package-manager command runs besides the script of its own name (npm lifecycle).
