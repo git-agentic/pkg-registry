@@ -36,6 +36,21 @@ export function isRootScript(cwd: string, sentinelRoot: string | undefined): boo
 }
 
 /**
+ * `npm_package_integrity` is only trustworthy on npm >= 7: npm 6 exports EVERY package.json field
+ * as `npm_package_*` (so a package can declare its own `integrity`), while npm 7+ exports only a
+ * fixed set (RFC 183, `@npmcli/run-script` package-envs) and arborist sets the integrity itself.
+ * Fail closed unless `npm_config_user_agent` (set by npm, not the package) starts with `npm/<7+>`.
+ */
+export function assertNpmTrustsIntegrity(userAgent: string | undefined): void {
+  const major = /^npm\/(\d+)\./.exec(userAgent ?? "")?.[1];
+  if (major === undefined || Number(major) < 7) {
+    throw new EnforceError(
+      `dependency scripts under --enforce need npm >= 7 (user agent ${JSON.stringify((userAgent ?? "").slice(0, 60))}): before npm 7 a package controls npm_package_integrity`,
+    );
+  }
+}
+
+/**
  * Bind a dependency script to the audited package. npm's `npm_package_name`/`version` come from
  * the package's own package.json (a git/URL/file dependency controls them), so the approval lookup
  * keyed on them is only trustworthy if `npm_package_integrity` — what npm verified the installed

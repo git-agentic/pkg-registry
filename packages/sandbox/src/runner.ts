@@ -35,10 +35,10 @@ export function runLifecycleScripts(opts: {
   for (const hook of LIFECYCLE) {
     const command = scripts[hook];
     if (!command) continue;
-    const gyp = withPerRunDevdir(env, approved);
+    const gyp = withPerRunDevdir(env, approved, opts.homeDir);
     let r;
     try {
-      r = opts.sandbox.run(command, { cwd: opts.packageDir, approved, homeDir: opts.homeDir, env: gyp.env, projectRoot: opts.projectRoot });
+      r = opts.sandbox.run(command, { cwd: opts.packageDir, approved: gyp.approved, homeDir: opts.homeDir, env: gyp.env, projectRoot: opts.projectRoot });
     } finally {
       gyp.cleanup();
     }
