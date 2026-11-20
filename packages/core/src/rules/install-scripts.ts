@@ -314,7 +314,7 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
   const preload = (value: string): PackageFile | undefined => {
     const v = trimPunct(value);
     if (!v) return undefined;
-    if (!LOCAL_PATH.test(v)) return spillAll(resolveModule(v));
+    if (!LOCAL_PATH.test(v)) return isNodeBuiltin(v) ? undefined : spillAll(resolveModule(v));
     const ref = v.replace(/^\.\//, "");
     return spillAll([resolveWord(v, "script"), ...(v.startsWith("/") ? [] : [exact(`package/${ref}.js`), suffix(`${ref}.js`)])]);
   };
@@ -555,6 +555,14 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
     return { files: [...out], scripts: queue };
   };
 }
+
+// Node loads its own core module for these names (or any `node:` specifier), never a bundled package of the same name.
+// A fixed list keeps the verdict independent of the Node version running the audit.
+const NODE_BUILTINS = new Set(["assert", "async_hooks", "buffer", "child_process", "cluster", "console", "constants", "crypto",
+  "dgram", "diagnostics_channel", "dns", "domain", "events", "fs", "http", "http2", "https", "inspector", "module", "net", "os",
+  "path", "perf_hooks", "process", "punycode", "querystring", "readline", "repl", "stream", "string_decoder", "sys", "timers",
+  "tls", "trace_events", "tty", "url", "util", "v8", "vm", "wasi", "worker_threads", "zlib"]);
+const isNodeBuiltin = (spec: string) => spec.startsWith("node:") || NODE_BUILTINS.has(spec.split("/")[0]!);
 
 const MAX_INLINE_DEPTH = 3;
 const LOCAL_PATH = /^(?:\.{1,2}\/|\/)/;

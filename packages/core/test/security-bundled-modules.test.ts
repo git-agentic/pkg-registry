@@ -217,3 +217,16 @@ describe("commands from bundled bins", () => {
     assert.deepEqual(sev("evil", { "package/node_modules/evil/package.json": "{not json", "package/node_modules/evil/cli.js": PAYLOAD }), ["low"]);
   });
 });
+
+describe("Node built-ins are not bundled modules", () => {
+  test("`-r buffer` and `NODE_OPTIONS=--require=util` load core modules, not bundled copies", () => {
+    const dangerous = `${CURL_SH}\n`;
+    for (const hook of ["node -r buffer -v", "NODE_OPTIONS=--require=util node -v", "node -r node:events -v", "node -r fs/promises -v"]) {
+      const files: Record<string, string> = {
+        "package/node_modules/buffer/index.js": dangerous, "package/node_modules/util/index.js": dangerous,
+        "package/node_modules/events/index.js": dangerous, "package/node_modules/fs/promises.js": dangerous,
+      };
+      assert.ok(!sev(hook, files).includes("critical"), hook);
+    }
+  });
+});
