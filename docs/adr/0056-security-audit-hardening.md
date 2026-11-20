@@ -38,7 +38,7 @@ decisions. Findings that stayed as documented trade-offs are listed at the end.
    by `package`, trailing separators are dropped, the rest is normalized as a
    posix path, and `..` is rejected. A backslash is a filename character on POSIX
    and a separator on Windows, so the root-manifest count uses both readings,
-   while retained files keep the POSIX path. Root manifests are counted
+   and a file whose two readings differ is retained under both paths. Root manifests are counted
    case-insensitively after normalization. A new synthesized finding,
    `manifest-confusion` (critical, category `metadata`), fires when there is
    more than one root manifest, a case-variant manifest, or a root manifest too
@@ -64,9 +64,12 @@ decisions. Findings that stayed as documented trade-offs are listed at the end.
 8. **Rules fail soft on hostile input.** Non-string lifecycle hooks are
    skipped. The `native-payload-loader` `exports` walk stops at depth 32. A
    stack overflow in the loader-chain AST walk maps to `parseFailed`. Quadratic
-   regexes are bounded or replaced by linear scans, and `install-scripts`
-   resolves every command token with no token-count cap (a cap let padding
-   hide `node evil`). Base64 markers match any case and `base64url`, since Node
+   regexes are bounded or replaced by linear scans. `install-scripts`
+   parses each simple command (split on `&&`, `||`, `;`, `|`, `&`, newline),
+   skips `VAR=value` and wrapper words, and scans the files that are executed:
+   an interpreter's script operand (and `-r`/`--import` values), or the command
+   word itself. Data arguments such as `README.md` are not scanned. There is no
+   token-count cap, so padding cannot hide `node evil`. Base64 markers match any case and `base64url`, since Node
    accepts both, in the obfuscation rule, the loader fallback and the
    loader-chain decode step. A template literal without expressions,
    ``require(`fs`)``, is a static binding.
