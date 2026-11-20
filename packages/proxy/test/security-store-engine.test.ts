@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
+import { createSign, generateKeyPairSync } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -7,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { after, describe, test } from "node:test";
-import { DEFAULT_POLICY, ENGINE_VERSION, integrityOf, runAudit, type AuditReport, type EnterprisePolicy } from "@git-agentic/sentinel-core";
+import { AUDIT_REVISION, DEFAULT_POLICY, ENGINE_VERSION, integrityOf, runAudit, type AuditReport, type EnterprisePolicy } from "@git-agentic/sentinel-core";
 import { createServer } from "../src/server.js";
 import { AuditStore } from "../src/store.js";
 import { ApprovalStore } from "../src/approvals.js";
@@ -18,10 +19,11 @@ import type { Upstream } from "../src/upstream.js";
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "fixtures");
 
-function report(name: string, integrity: string, engineVersion?: string): AuditReport {
+function report(name: string, integrity: string, engineVersion?: string, revision: number | null = AUDIT_REVISION): AuditReport {
   return {
     schema: 3, meta: { name, version: "1.0.0", integrity }, verdict: "allow", score: 100, findings: [],
-    policy: { version: "t", hash: "h" }, ...(engineVersion ? { engine: { version: engineVersion, rules: [], mode: "full" } } : {}),
+    policy: { version: "t", hash: "h" },
+    ...(engineVersion ? { engine: { version: engineVersion, rules: [], mode: "full", ...(revision !== null ? { revision } : {}) } } : {}),
   } as unknown as AuditReport;
 }
 
@@ -33,11 +35,16 @@ describe("AuditStore load skips reports from another engine version", () => {
       { name: "old", r: report("old", "sha512-old", "0.0.1-ancient") },
       { name: "cur", r: report("cur", "sha512-cur", ENGINE_VERSION) },
       { name: "none", r: report("none", "sha512-none") },
+      // Same engine version, but no audit revision: rule semantics may have changed under it.
+      { name: "norev", r: report("norev", "sha512-norev", ENGINE_VERSION, null) },
+      { name: "oldrev", r: report("oldrev", "sha512-oldrev", ENGINE_VERSION, AUDIT_REVISION - 1) },
     ].map(({ name, r }) => ({ key: `${name}@1.0.0`, name, version: "1.0.0", report: r }));
     writeFileSync(file, JSON.stringify(rows));
     const store = new AuditStore(file);
     assert.equal(store.get("old", "1.0.0", "sha512-old"), undefined);
     assert.equal(store.get("none", "1.0.0", "sha512-none"), undefined);
+    assert.equal(store.get("norev", "1.0.0", "sha512-norev"), undefined, "a missing revision counts as stale");
+    assert.equal(store.get("oldrev", "1.0.0", "sha512-oldrev"), undefined, "an older revision counts as stale");
     assert.ok(store.get("cur", "1.0.0", "sha512-cur"));
   });
 });
@@ -84,6 +91,7 @@ describe("native serve path re-audits stored bytes after an engine upgrade", () 
     const fresh = await runAudit({ meta: { name: "@acme/widget", version: "1.0.0", author: null, maintainers: [], license: null, hasInstallScripts: false, integrity }, tarball });
     assert.ok(fresh.findings.length > 0, "fixture must produce findings under the current engine");
     const stale = { ...fresh, findings: [], capabilities: [], engine: { ...fresh.engine, version: "0.0.1-ancient" } };
+    assert.equal(fresh.engine.revision, AUDIT_REVISION);
     const privateStore = new PrivatePackageStore();
     privateStore.publish({ name: "@acme/widget", version: "1.0.0", integrity, tarball, manifest: { name: "@acme/widget", version: "1.0.0", dist: { integrity } }, audit: stale, actor: "t" });
     const app = createServer({ upstream, store: new AuditStore(), approvals: new ApprovalStore(), privateStore, enterprisePolicy: policy,
@@ -103,7 +111,7 @@ describe("native serve path re-audits stored bytes after an engine upgrade", () 
     const tarball = Buffer.from("not-a-tarball-so-a-rerun-would-throw");
     const integrity = integrityOf(tarball);
     const audit = { schema: 3 as const, meta: { name: "@acme/w2", version: "1.0.0", integrity, author: null, maintainers: [], license: null, hasInstallScripts: false, signature: "unsigned" as const, provenance: "absent" as const, unpackedSize: 1, fileCount: 1 },
-      findings: [], capabilities: [], capabilityDelta: null, engine: { version: ENGINE_VERSION, rules: [], mode: "full" as const }, auditedAt: "2026-07-13T00:00:00.000Z", durationMs: 1 };
+      findings: [], capabilities: [], capabilityDelta: null, engine: { version: ENGINE_VERSION, revision: AUDIT_REVISION, rules: [], mode: "full" as const }, auditedAt: "2026-07-13T00:00:00.000Z", durationMs: 1 };
     const privateStore = new PrivatePackageStore();
     privateStore.publish({ name: "@acme/w2", version: "1.0.0", integrity, tarball, manifest: { name: "@acme/w2", version: "1.0.0", dist: { integrity } }, audit, actor: "t" });
     const app = createServer({ upstream, store: new AuditStore(), approvals: new ApprovalStore(), privateStore, enterprisePolicy: policy,
@@ -112,5 +120,45 @@ describe("native serve path re-audits stored bytes after an engine upgrade", () 
     servers.push(server);
     const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     assert.equal((await fetch(`${base}/-/audit/@acme%2fw2/1.0.0`)).status, 200);
+  });
+
+  const mkServer = async (privateStore: PrivatePackageStore, extra: Partial<Parameters<typeof createServer>[0]> = {}) => {
+    const app = createServer({ upstream, store: new AuditStore(), approvals: new ApprovalStore(), privateStore, enterprisePolicy: policy,
+      violations: new ViolationStore(), approvalRequests: new ApprovalRequestStore(), ...extra });
+    const server = await new Promise<Server>((resolve) => { const s = app.listen(0, () => resolve(s)); });
+    servers.push(server);
+    return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  };
+
+  test("a stored audit at the current version but with no revision is re-audited", async () => {
+    const tarball = readFileSync(join(FIXTURES, ".tarballs", "color-stream-1.4.1.tgz"));
+    const integrity = integrityOf(tarball);
+    const fresh = await runAudit({ meta: { name: "@acme/norev", version: "1.0.0", author: null, maintainers: [], license: null, hasInstallScripts: false, integrity }, tarball });
+    const { revision: _r, ...engine } = fresh.engine;
+    const stale = { ...fresh, findings: [], capabilities: [], engine };
+    const privateStore = new PrivatePackageStore();
+    privateStore.publish({ name: "@acme/norev", version: "1.0.0", integrity, tarball, manifest: { name: "@acme/norev", version: "1.0.0", dist: { integrity } }, audit: stale, actor: "t" });
+    const base = await mkServer(privateStore);
+    const body = (await (await fetch(`${base}/-/audit/@acme%2fnorev/1.0.0`)).json()) as AuditReport;
+    assert.ok(body.findings.length > 0, "the revision-less audit must be recomputed");
+    assert.equal(body.engine.revision, AUDIT_REVISION);
+  });
+
+  test("re-audit keeps the retained registry signatures, so an imported version still satisfies requireSignature", async () => {
+    const tarball = readFileSync(join(FIXTURES, ".tarballs", "leftpad-lite-1.0.0.tgz"));
+    const integrity = integrityOf(tarball);
+    const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const sig = createSign("sha256").update(`@acme/signed@1.0.0:${integrity}`).sign(privateKey, "base64");
+    const signingKeys = [{ keyid: "test-key", spkiPem: publicKey.export({ type: "spki", format: "pem" }).toString(), expires: null }];
+    const stale = await runAudit({ meta: { name: "@acme/signed", version: "1.0.0", author: null, maintainers: [], license: null, hasInstallScripts: false, integrity }, tarball, signatures: [{ keyid: "test-key", sig }], signingKeys });
+    const { revision: _r, ...engine } = stale.engine;
+    const privateStore = new PrivatePackageStore();
+    privateStore.publish({ name: "@acme/signed", version: "1.0.0", integrity, tarball, actor: "t", audit: { ...stale, engine },
+      manifest: { name: "@acme/signed", version: "1.0.0", dist: { integrity, signatures: [{ keyid: "test-key", sig }] } } });
+    const base = await mkServer(privateStore, { signingKeys, enterprisePolicy: { ...policy, requireSignature: ["@acme/*"] } });
+    const body = (await (await fetch(`${base}/-/audit/@acme%2fsigned/1.0.0`)).json()) as AuditReport;
+    assert.equal(body.engine.revision, AUDIT_REVISION, "must have been re-audited");
+    assert.equal(body.meta.signature, "verified");
+    assert.equal(body.verdict, "allow");
   });
 });

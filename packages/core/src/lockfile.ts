@@ -48,16 +48,38 @@ function isRegistrySource(resolved: string, integrity: string | undefined): bool
   return isRegistryTarball(resolved) && hasKnownPin(integrity);
 }
 
+const NAME_RE = /^(?:@[A-Za-z0-9~._-]+\/)?[A-Za-z0-9~._-]+$/;
+const VERSION_RE = /^[^\s/:@?#]+$/;
+
 /**
- * Dedupe on name@version. `nonRegistry` is sticky so a git row is never hidden by a
- * registry twin, and two entries with different integrity pins conflict: npm would
- * install one of them, so the coordinate cannot be verified against a single hash.
+ * Lockfile text must not become coordinate text: a name outside the npm grammar becomes
+ * `<unparsed>` and a version that is not a plain version string becomes `0.0.0`, and the entry is
+ * flagged non-registry. (URLs, userinfo and signed query strings then cannot reach audit-tree output.)
  */
-function putCoord(byKey: Map<string, Coordinate>, coord: Coordinate): void {
+function sanitize(coord: Coordinate): Coordinate {
+  const goodName = coord.name.length <= 214 && NAME_RE.test(coord.name);
+  const goodVersion = VERSION_RE.test(coord.version);
+  if (goodName && goodVersion) return coord;
+  return {
+    ...coord,
+    name: goodName ? coord.name : "<unparsed>",
+    version: goodVersion ? coord.version : "0.0.0",
+    nonRegistry: coord.nonRegistry ?? "unparsed lockfile entry",
+  };
+}
+
+/**
+ * Dedupe on name@version. `nonRegistry` is sticky so a git row is never hidden by a registry twin, and
+ * so is the integrity pin (a later duplicate without one must not erase it). Two entries with different
+ * pins conflict: npm would install one of them, so the coordinate cannot be verified against one hash.
+ */
+function putCoord(byKey: Map<string, Coordinate>, raw: Coordinate): void {
+  const coord = sanitize(raw);
   const key = `${coord.name}@${coord.version}`;
   const prev = byKey.get(key);
   if (prev?.nonRegistry !== undefined && coord.nonRegistry === undefined) coord.nonRegistry = prev.nonRegistry;
-  if (prev?.integrity && coord.integrity && prev.integrity !== coord.integrity && coord.nonRegistry === undefined) {
+  if (prev?.integrity && !coord.integrity) coord.integrity = prev.integrity;
+  else if (prev?.integrity && coord.integrity && prev.integrity !== coord.integrity && coord.nonRegistry === undefined) {
     coord.nonRegistry = "conflicting integrity pins for the same name@version";
   }
   byKey.set(key, coord);

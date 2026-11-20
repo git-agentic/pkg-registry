@@ -23,6 +23,8 @@ import type { Advisory } from "./advisory-corpus.js";
 import type { VulnAdvisory } from "./vuln-corpus.js";
 
 export const ENGINE_VERSION = "0.1.0-alpha.2";
+/** Bump whenever rule or extraction semantics change: cached and stored audits from another revision are recomputed. */
+export const AUDIT_REVISION = 2;
 
 /** Run the heuristic rule pipeline over an already-extracted package. */
 export function runRules(input: AuditInput): Finding[] {
@@ -63,7 +65,7 @@ export function buildAudit(
     findings,
     capabilities,
     capabilityDelta,
-    engine: { version: ENGINE_VERSION, rules: RULES.map((r) => r.id), mode: opts.mode },
+    engine: { version: ENGINE_VERSION, revision: AUDIT_REVISION, rules: RULES.map((r) => r.id), mode: opts.mode },
     auditedAt: new Date().toISOString(),
     durationMs: opts.durationMs,
   };

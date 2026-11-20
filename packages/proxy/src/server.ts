@@ -5,6 +5,7 @@ import { rateLimit } from "express-rate-limit";
 import {
   runAudit,
   ENGINE_VERSION,
+  AUDIT_REVISION,
   score,
   POLICY_SYNTHESIZED_RULE_IDS,
   policyHashOf,
@@ -343,13 +344,15 @@ export function createServer(opts: ServerOptions) {
   // cached here, keyed by name, version and integrity. The stored publication record is never rewritten.
   const reauditedNative = new Map<string, Audit>();
   async function currentEngineAudit(pkg: string, version: string, stored: Audit, tarball: Buffer): Promise<Audit> {
-    if (stored.engine?.version === ENGINE_VERSION) return stored;
+    if (stored.engine?.version === ENGINE_VERSION && stored.engine.revision === AUDIT_REVISION) return stored;
     const key = `${pkg}\u0000${version}\u0000${stored.meta.integrity}`;
     const cached = reauditedNative.get(key);
     if (cached) return cached;
     const attestations = privateStore.getAttestations(pkg, version);
     const fresh = await runAudit({
-      meta: { ...stored.meta, integrity: integrityOf(tarball) }, tarball, signatures: null, hasProvenance: attestations !== undefined,
+      meta: { ...stored.meta, integrity: integrityOf(tarball) }, tarball,
+      // An imported version keeps its registry signatures in the stored manifest; a native publish has none.
+      signatures: retainedSignatures(privateStore.getVersion(pkg, version)?.manifest), hasProvenance: attestations !== undefined,
       attestations: attestations ?? null, signingKeys, trustMaterial: opts.trustMaterial, extractLimits,
       advisories: [...(advisories ?? []), ...retractionCorpus.advisories], vulnerabilities,
     });
@@ -465,7 +468,7 @@ export function createServer(opts: ServerOptions) {
     const rescored = scoreAudit({
       schema: 3, meta: report.meta, findings: [finding, ...findings],
       capabilities: report.capabilities, capabilityDelta: report.capabilityDelta,
-      engine: { version: report.engine.version, rules: report.engine.rules, mode: report.engine.mode },
+      engine: { version: report.engine.version, ...(report.engine.revision !== undefined ? { revision: report.engine.revision } : {}), rules: report.engine.rules, mode: report.engine.mode },
       auditedAt: report.auditedAt, durationMs: report.durationMs,
     });
     // A security retraction blocks by default even where its numeric weight would
@@ -1454,14 +1457,33 @@ function sourceKind(spec: string): "git" | "url" | "other" {
   return "other";
 }
 
+/** Registry signatures kept in a stored manifest's `dist.signatures` (imported versions), or null. */
+function retainedSignatures(manifest: Record<string, unknown> | undefined): { keyid: string; sig: string }[] | null {
+  const list = (manifest?.dist as { signatures?: unknown } | undefined)?.signatures;
+  if (!Array.isArray(list)) return null;
+  const ok = list.filter((x): x is { keyid: string; sig: string } => typeof (x as { keyid?: unknown })?.keyid === "string" && typeof (x as { sig?: unknown })?.sig === "string");
+  return ok.length ? ok : null;
+}
+
+const SRI_ALGOS = new Set(["sha1", "sha256", "sha384", "sha512"]);
+
 /**
- * True when a lockfile-claimed SRI cannot be matched to the served bytes: some known-algorithm token
- * differs, or there is no known-algorithm token to check (unknown algorithms must not fail open).
+ * True when a lockfile-claimed SRI cannot be matched to the served bytes. Every token must carry a
+ * known algorithm (sha1/256/384/512, npm picks the strongest of a mixed claim) and match; any unknown
+ * token blocks, because skipping it would fail open. Each algorithm's digest is computed at most once.
  */
-function integrityClaimMismatch(tarball: Buffer, claimed: string): boolean {
-  const known = claimed.trim().split(/\s+/).filter((t) => /^(sha1|sha256|sha512)-/.test(t));
-  if (known.length === 0) return true;
-  return known.some((t) => t !== integrityOfAlgo(tarball, t.split("-", 1)[0] as "sha1" | "sha256" | "sha512"));
+export function integrityClaimMismatch(tarball: Buffer, claimed: string): boolean {
+  const tokens = claimed.trim().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return true;
+  const served = new Map<string, string>();
+  for (const t of tokens) {
+    const algo = t.split("-", 1)[0]!;
+    if (!SRI_ALGOS.has(algo)) return true;
+    let digest = served.get(algo);
+    if (digest === undefined) { digest = integrityOfAlgo(tarball, algo as "sha1" | "sha256" | "sha384" | "sha512"); served.set(algo, digest); }
+    if (t !== digest) return true;
+  }
+  return false;
 }
 
 function sendError(res: Response, err: unknown): void {
