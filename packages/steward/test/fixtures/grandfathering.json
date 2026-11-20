@@ -12,9 +12,9 @@
       }
     },
     {
-      "name": "repository organization corroborates the domain label",
+      "name": "a same-named GitHub organization does not corroborate the domain",
       "domain": "tanstack.com",
-      "expected": true,
+      "expected": false,
       "packument": { "name": "@tanstack/query", "repository": "https://github.com/TanStack/query" }
     },
     {

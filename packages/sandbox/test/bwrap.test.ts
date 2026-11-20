@@ -70,7 +70,7 @@ describe("generateBwrapArgs — write-deny (Phase 25)", () => {
   test("the write floor is re-bound read-write (bind-try tolerates missing cache dirs)", () => {
     const args = generateBwrapArgs([], OPTS2);
     const rw = [...binds(args, "--bind"), ...binds(args, "--bind-try")];
-    for (const p of ["/work/pkg", "/tmp/build", "/home/x/.node-gyp", "/home/x/.npm/_logs"]) {
+    for (const p of ["/work/pkg", "/tmp/build", "/home/x/.npm/_logs"]) {
       assert.ok(rw.includes(p), `floor path ${p} must be re-bound rw`);
     }
   });

@@ -194,7 +194,8 @@ describe("Phase 33 npm compatibility surface", () => {
     }
     assert.deepEqual(seen.map((call) => call.path), routes.map((route) => route.path));
     for (const [index, call] of seen.entries()) {
-      assert.equal(call.headers.authorization, "Bearer upstream-token");
+      // F17: the client's token is for Sentinel, never the upstream, on every compat route (login included).
+      assert.equal(call.headers.authorization, undefined);
       assert.equal(call.headers["if-none-match"], "old-etag");
       assert.equal(call.headers["x-probe"], "preserve");
       assert.equal(call.headers["content-encoding"], routes[index]!.encoding);
@@ -227,7 +228,7 @@ describe("Phase 33 npm compatibility surface", () => {
       enterprisePolicy: { ...DEFAULT_POLICY, privateNamespaces: [] }, claimCorpus, upstream: legacyUpstream,
     });
     assert.equal((await fetch(`${base}/leftpad-lite`)).status, 404);
-    const imported = await fetch(`${base}/-/registry/import`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "leftpad-lite" }) });
+    const imported = await fetch(`${base}/-/registry/import`, { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer publish-token" }, body: JSON.stringify({ name: "leftpad-lite" }) });
     assert.equal(imported.status, 201, await imported.text());
     const after = await (await fetch(`${base}/leftpad-lite`)).json();
     assert.equal(after.versions["1.0.1"].dist.integrity, expectedIntegrity);

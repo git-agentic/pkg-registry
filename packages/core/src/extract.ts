@@ -1,14 +1,15 @@
 import { createHash } from "node:crypto";
-import { Buffer } from "node:buffer";
+import { Buffer, isUtf8 } from "node:buffer";
+import { posix } from "node:path";
 import { createGunzip } from "node:zlib";
 import * as tar from "tar";
 import type { PackageFile, ContentMismatchEntry } from "./types.js";
 import { classifyContent, MAGIC_PREFIX_BYTES } from "./detect/magic.js";
 
 const MAX_FILE_BYTES = 2 * 1024 * 1024; // skip very large files from text scanning
-const TEXT_EXT = /\.(c?js|mjs|cjs|ts|mts|cts|jsx|tsx|json|map|sh|txt|md|yml|yaml)$/i;
+const TEXT_EXT = /\.(c?js|mjs|cjs|ts|mts|cts|jsx|tsx|json|map|sh|py|pl|rb|txt|md|yml|yaml)$/i;
 /** Executable code extensions (subset of TEXT_EXT); flagged as unscanned when over MAX_FILE_BYTES. */
-const CODE_EXT = /\.(c?js|mjs|cjs|ts|mts|cts|jsx|tsx)$/i;
+const CODE_EXT = /\.(c?js|mjs|cjs|ts|mts|cts|jsx|tsx|py|pl|rb)$/i;
 /** Native / binary executable extensions; never scanned, flagged as unscanned when present. */
 const NATIVE_EXT = /\.(node|wasm|so|dll|dylib|exe)$/i;
 /** Cap on the unscanned list to bound memory on a pathological many-binary tarball. */
@@ -26,8 +27,17 @@ export interface UnscannedEntry {
 
 export interface ExtractResult {
   files: PackageFile[];
-  /** Number of tar entries targeting the npm package manifest path, regardless of entry type. */
+  /**
+   * Number of tar entries that land on the root package.json after npm-style path
+   * normalization (any first segment, `.`/`//` collapsed, case-insensitive), regardless of entry type.
+   */
   packageManifestEntryCount: number;
+  /**
+   * Reasons the root manifest npm would install cannot be trusted to be the one scanned:
+   * several entries land on it (npm keeps the last), it is case-variant, or it is too large to scan.
+   * Empty for a normal tarball (and for one with no manifest at all).
+   */
+  manifestConfusion: string[];
   unpackedSize: number;
   fileCount: number;
   /** True when a cap was hit and extraction was aborted early (ADR-0039). */
@@ -79,6 +89,14 @@ export async function extractTarball(
   const maxFiles = opts.maxFileCount ?? DEFAULT_MAX_FILE_COUNT;
   const files: PackageFile[] = [];
   let packageManifestEntryCount = 0;
+  let manifestVariant = false;
+  let manifestOversized = false;
+  // Case-folded paths of EVERY file entry under the POSIX and the Windows reading of its name. A
+  // Windows-only path landing on any other entry (retained or not) means one client installs a
+  // different file than the other. POSIX-only pairs are an ordinary, separate matter.
+  const posixSeen = new Set<string>();
+  const winSeen = new Set<string>();
+  let pathCollision = false;
   const unscanned: UnscannedEntry[] = [];
   const unscannedTotals = { count: 0, native: 0, bytes: 0 };
   const contentMismatch: ContentMismatchEntry[] = [];
@@ -106,10 +124,38 @@ export async function extractTarball(
       entry.resume();
       return;
     }
-    const normalizedPath = normalize(entry.path);
-    if (normalizedPath === "package/package.json") packageManifestEntryCount += 1;
-    const isFile = entry.type === "File";
-    if (isFile) fileCount += 1;
+    // `null` ⇒ npm would not extract it (escapes the root / no name): never retained.
+    // The POSIX reading (`\` is a filename character, as node-tar does on Linux/macOS) is the retained path.
+    // node-tar on a win32 audit host already turned `\` into `/` in `entry.path`; the header path (which
+    // includes a PAX `path`) is still raw, so both readings are derived from it on every host.
+    let rawPath = entry.path;
+    // header.path is `prefix/PAXpath` when a PAX path and a ustar prefix are combined, while entry.path is the
+    // effective PAX path: use the raw header path only when it is the same name before win32 normalization.
+    // Residual: win32 host + PAX path + ustar prefix still sees the backslash-normalized entry.path.
+    if (entry.header?.path && entry.header.path.replace(/\\/g, "/") === entry.path) rawPath = entry.header.path;
+    const normalizedPath = npmPath(rawPath);
+    // Windows clients read `\` as a separator: an entry lands on the root manifest under EITHER reading.
+    const winPath = npmPath(rawPath.replace(/\\/g, "/"));
+    const isManifest = [normalizedPath, winPath].some((x) => x?.toLowerCase() === "package/package.json");
+    if (isManifest) {
+      packageManifestEntryCount += 1;
+      if (normalizedPath !== "package/package.json") manifestVariant = true;
+    }
+    // node-tar reports typeflag 7 as "ContiguousFile" and 0/NUL as "File"/"OldFile"; npm installs all as files.
+    const isFile = /File$/.test(entry.type);
+    if (isFile) {
+      fileCount += 1;
+      const posixKey = normalizedPath?.toLowerCase() ?? null;
+      const winKey = winPath !== null && winPath !== normalizedPath ? winPath.toLowerCase() : null;
+      if (posixKey !== null) {
+        if (winSeen.has(posixKey)) pathCollision = true;
+        posixSeen.add(posixKey);
+      }
+      if (winKey !== null) {
+        if (posixSeen.has(winKey) && winKey !== posixKey || winSeen.has(winKey)) pathCollision = true;
+        winSeen.add(winKey);
+      }
+    }
     const chunks: Buffer[] = [];
     let bytes = 0;
     const prefixChunks: Buffer[] = [];
@@ -127,26 +173,44 @@ export async function extractTarball(
     });
     entry.on("end", () => {
       if (truncated || !isFile) return;
-      const path = normalizedPath;
+      // A Windows client installs `package\setup.js` as setup.js while POSIX keeps a literal name (or
+      // drops it): when the readings differ, retain under both so rules see whatever either installs.
+      const path = normalizedPath ?? winPath;
+      if (path === null) return;
+      if (isManifest && bytes > MAX_FILE_BYTES) manifestOversized = true;
       const cls = classifyContent(Buffer.concat(prefixChunks));
       const declaredExt = extOf(path);
-      const textLooking = TEXT_EXT.test(path);
-      if (cls.class !== "text" && textLooking) {
-        // Binary/compressed/archive/ambiguous signature hiding behind a text-looking
-        // extension → mismatch. Never retained as text; tracked only here.
+      const buf = bytes <= MAX_FILE_BYTES ? Buffer.concat(chunks) : null;
+      if (cls.class !== "text" && TEXT_EXT.test(path)) {
+        // Binary/compressed/archive/ambiguous signature behind a text-looking
+        // extension → mismatch, always reported.
         contentMismatchTotals.count += 1;
         contentMismatchTotals.byKind[cls.kind] = (contentMismatchTotals.byKind[cls.kind] ?? 0) + 1;
         if (contentMismatch.length < MAX_UNSCANNED) {
           contentMismatch.push({ path, declaredExt, detectedKind: cls.kind, size: bytes });
         }
-        return;
       }
-      if (bytes <= MAX_FILE_BYTES && TEXT_EXT.test(path)) {
-        const content = Buffer.concat(chunks).toString("utf8");
-        const prev = baseline?.get(path);
-        files.push({ path, content, size: bytes, changed: baseline ? prev !== content : false });
-        return;
+      // Retention is decided under EACH reading: `assets.v1\setup` is extension-less to a Windows
+      // client but has a dotted basename to POSIX.
+      const retainable = (p: string): boolean => {
+        if (!buf) return false;
+        const textLooking = TEXT_EXT.test(p);
+        // `MZ:` and `BZh:` are valid JS labels: valid UTF-8 without NUL is still source Node will
+        // run, so it must stay visible to the rules. Real binaries are tracked as mismatches above.
+        if (cls.class !== "text" && textLooking) return isUtf8(buf) && !buf.includes(0);
+        // Extension-less text (`setup`, `bin/run`, `Makefile`) can be named by a script hook; retain it.
+        const extensionless = !posix.basename(p).includes(".") && cls.class === "text" && !buf.includes(0);
+        return textLooking || extensionless;
+      };
+      let retained = false;
+      for (const p of new Set([normalizedPath, winPath])) {
+        if (p === null || !retainable(p)) continue;
+        const content = buf!.toString("utf8");
+        files.push({ path: p, content, size: bytes, changed: baseline ? baseline.get(p) !== content : false });
+        retained = true;
       }
+      if (retained) return;
+      if (cls.class !== "text" && TEXT_EXT.test(path)) return; // a real binary behind a text extension: mismatch only
       // Not scanned — record executable-looking content so the blind spot isn't silent (#11).
       const isLargeCode = bytes > MAX_FILE_BYTES && CODE_EXT.test(path);
       const isNative = NATIVE_EXT.test(path);
@@ -179,6 +243,8 @@ export async function extractTarball(
     // regardless of tar semantics. On a cap breach we destroy() the gunzip,
     // which halts decompression promptly and bounds CPU/memory.
     const gunzip = createGunzip();
+    let head = Buffer.alloc(0);
+    let headChecked = false;
     gunzip.on("data", (chunk: Buffer) => {
       if (truncated || failure) return;
       unpackedSize += chunk.length;
@@ -186,6 +252,17 @@ export async function extractTarball(
         truncated = true;
         gunzip.destroy();
         return;
+      }
+      // The tar Parser auto-detects gzip/zstd, so a compressed payload inside the
+      // gzip would be decompressed by it, past our cap. Refuse nested compression.
+      if (!headChecked) {
+        head = Buffer.concat([head, chunk.subarray(0, MAGIC_PREFIX_BYTES)]);
+        if (head.length >= 6) headChecked = true;
+        if (classifyContent(head).class === "compressed") {
+          truncated = true;
+          gunzip.destroy();
+          return;
+        }
       }
       // Feed the decompressed tar bytes onward for file extraction. A parser
       // entry handler may set `truncated` (entry-count cap) or `failure`
@@ -209,6 +286,8 @@ export async function extractTarball(
     // a cap breach halts before feeding the whole payload. npm tarballs are always
     // gzip; this preserves robustness for a raw tar.
     const SLICE = 256 * 1024;
+    // A raw zstd (or other compressed) stream would be decompressed by the Parser, uncounted.
+    if (classifyContent(tgz.subarray(0, MAGIC_PREFIX_BYTES)).class === "compressed") truncated = true;
     for (let off = 0; off < tgz.length && !truncated && !failure; off += SLICE) {
       const chunk = tgz.subarray(off, off + SLICE);
       unpackedSize += chunk.length;
@@ -222,7 +301,12 @@ export async function extractTarball(
     await done;
   }
   if (failure) throw failure;
-  return { files, packageManifestEntryCount, unpackedSize, fileCount, truncated, unscanned, unscannedTotals, contentMismatch, contentMismatchTotals };
+  const manifestConfusion: string[] = [];
+  if (packageManifestEntryCount > 1) manifestConfusion.push(`${packageManifestEntryCount} entries land on the root package.json (npm keeps the last one)`);
+  if (manifestVariant) manifestConfusion.push("the root package.json entry is spelled with different case or path form than package/package.json");
+  if (pathCollision) manifestConfusion.push("a path collision between tar readings: a Windows-reading entry path lands on another retained file");
+  if (manifestOversized) manifestConfusion.push("the root package.json is over 2 MiB and cannot be scanned");
+  return { files, packageManifestEntryCount, manifestConfusion, unpackedSize, fileCount, truncated, unscanned, unscannedTotals, contentMismatch, contentMismatchTotals };
 }
 
 /** Build a `path -> content` baseline map from a previously extracted set. */
@@ -231,7 +315,8 @@ export function baselineFrom(files: PackageFile[]): Map<string, string> {
 }
 
 /** SRI algorithms Sentinel can recompute for a lockfile-integrity cross-check. */
-export type SriAlgorithm = "sha1" | "sha256" | "sha512";
+export const SRI_ALGORITHMS = ["sha1", "sha256", "sha384", "sha512"] as const;
+export type SriAlgorithm = (typeof SRI_ALGORITHMS)[number];
 
 /** Compute the SRI integrity string (`<algo>-<base64>`) for a tarball in `algo`. */
 export function integrityOfAlgo(tgz: Buffer, algo: SriAlgorithm): string {
@@ -244,9 +329,17 @@ export function integrityOf(tgz: Buffer): string {
   return integrityOfAlgo(tgz, "sha512");
 }
 
-function normalize(p: string): string {
-  // npm tarballs prefix everything with `package/`.
-  return p.replace(/^\.\//, "");
+/**
+ * Map a tar entry path to where npm would put it, rooted at `package/`: npm strips the
+ * first path segment WHATEVER it is, then the filesystem collapses `.`, `//` and `..`.
+ * Returns null for an entry npm would not extract (outside the root, or no name).
+ */
+function npmPath(p: string): string | null {
+  // Leading slashes left by `package//x` are stripped (node-tar's stripAbsolutePath).
+  // Trailing separators are dropped by the destination resolution (`package.json/` installs as `package.json`).
+  const rest = posix.normalize(p.split("/").slice(1).join("/").replace(/^\/+/, "")).replace(/\/+$/, "");
+  if (rest === "" || rest === "." || rest === ".." || rest.startsWith("../")) return null;
+  return `package/${rest}`;
 }
 
 function extOf(p: string): string {

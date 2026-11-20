@@ -27,9 +27,9 @@ export interface ProvenanceIdentity {
   workflow: string | null;
   /** OIDC issuer, e.g. "https://token.actions.githubusercontent.com". */
   issuer: string | null;
-  /** Source repository URL from the signed SLSA predicate. */
+  /** Source repository URL from the Fulcio certificate extension (OID 1.3.6.1.4.1.57264.1.12); null when the certificate lacks it. */
   sourceRepository: string | null;
-  /** Git ref the build ran from, e.g. "refs/heads/main". */
+  /** Git ref the build ran from, e.g. "refs/heads/main", from the Fulcio certificate extension (OID 1.3.6.1.4.1.57264.1.14). */
   ref: string | null;
   /** Builder id, e.g. "https://github.com/actions/runner/github-hosted". */
   builder: string | null;
@@ -124,7 +124,7 @@ export interface Audit {
   findings: Finding[];
   capabilities: Capability[];
   capabilityDelta: CapabilityDelta | null;
-  engine: { version: string; rules: string[]; mode: "full" | "diff" };
+  engine: { version: string; revision?: number; rules: string[]; mode: "full" | "diff" };
   auditedAt: string;
   durationMs: number;
 }
@@ -138,7 +138,7 @@ export interface AuditReport {
   findings: ScoredFinding[];
   capabilities: Capability[];
   capabilityDelta: CapabilityDelta | null;
-  engine: { version: string; rules: string[]; llm: string | null; mode: "full" | "diff" };
+  engine: { version: string; revision?: number; rules: string[]; llm: string | null; mode: "full" | "diff" };
   /** Human-readable summary from the LLM adapter, if one ran. */
   llmSummary: string | null;
   auditedAt: string;

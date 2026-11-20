@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
 
+# npm ci runs dependency lifecycle scripts; give them a read-only token.
+permissions:
+  contents: read
+
 jobs:
   build-test:
     runs-on: ubuntu-latest

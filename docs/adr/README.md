@@ -154,6 +154,7 @@ first shipped slice; Phases 31 and 32 complete claiming and retraction.
 | [0053](./0053-per-rule-score-cap.md) | Per-rule score cap | `scoring.perRuleCapMultiplier` (policy data, default 3) bounds a rule's total penalty at that multiple of its own worst-instance weight, so N file-level findings from one rule can't alone drive the score to zero; monotonic, waiver-compatible (ADR-0014), optional for backward compat with already-signed policies |
 | [0054](./0054-obfuscation-execution-correlation.md) | Obfuscation requires an execution sink | Encoded/minified data and readable runtime glue are not obfuscation by themselves; retain high findings for direct `eval`, decoded `Function` source, and computed decoded `require` |
 | [0055](./0055-coordinate-bound-audit-cache.md) | Coordinate-bound audit cache | Bind complete reports to `(name, version, actual integrity)` so byte-identical package coordinates cannot share metadata-dependent findings |
+| [0056](./0056-security-audit-hardening.md) | Security audit hardening | Type-7 and mismatched-text files are scanned, npm-style path and manifest-confusion checks, certificate-bound provenance identity, non-registry lockfile rows, loopback bind defaults, closed open-mode import/retraction, inline Seatbelt profile, IPC masks, `SENTINEL_ROOT` install identity, steward Tier-1 and state-machine fixes; supersedes parts of ADR-0019/0038/0039/0046/0049 |
 
 ## Conventions
 

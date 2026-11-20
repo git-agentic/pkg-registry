@@ -42,7 +42,12 @@ function detectLockfile(cwd: string, explicit?: string): string {
   throw new Error(`no lockfile found in ${cwd} (looked for ${LOCKFILES.join(", ")})`);
 }
 
-const VERDICT_RANK: Record<string, number> = { allow: 0, warn: 1, block: 2 };
+/** Workflow-command data escaping, as @actions/core does: a newline in a finding must not start a new command. */
+export function escapeData(s: string): string {
+  return s.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
+}
+
+const VERDICT_RANK:Record<string, number> = { allow: 0, warn: 1, block: 2 };
 
 function exitFor(agg: TreeAuditResult["aggregate"], failOn: RunCiOptions["failOn"]): number {
   if (failOn === "none") return 0;
@@ -66,7 +71,7 @@ export async function runCi(opts: RunCiOptions): Promise<CiResult> {
     approvalRequests: new ApprovalRequestStore(),
   });
   const server: Server = await new Promise((resolve, reject) => {
-    const s = app.listen(0, () => resolve(s));
+    const s = app.listen(0, "127.0.0.1", () => resolve(s));
     s.once("error", reject);
   });
   try {
@@ -93,8 +98,8 @@ export async function runCi(opts: RunCiOptions): Promise<CiResult> {
     }
     if (opts.env.SENTINEL_COMMENT_BODY) writeFileSync(opts.env.SENTINEL_COMMENT_BODY, markdown);
     for (const p of result.packages) {
-      if (p.status === "block") console.log(`::error::${p.name}@${p.version} — ${p.topFinding ?? p.error ?? "blocked"}`);
-      else if (p.status === "warn") console.log(`::warning::${p.name}@${p.version} — ${p.topFinding ?? "warn"}`);
+      if (p.status === "block") console.log(`::error::${escapeData(`${p.name}@${p.version} — ${p.topFinding ?? p.error ?? "blocked"}`)}`);
+      else if (p.status === "warn") console.log(`::warning::${escapeData(`${p.name}@${p.version} — ${p.topFinding ?? "warn"}`)}`);
     }
 
     return { exitCode, result, sbomPath: opts.sbomPath, markdown };

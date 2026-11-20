@@ -24,15 +24,15 @@ describe("approvedCapsForManifest", () => {
 });
 
 describe("isRootScript", () => {
-  test("cwd equal to INIT_CWD is the root project", () => {
+  test("cwd equal to SENTINEL_ROOT is the root project", () => {
     assert.equal(isRootScript("/proj", "/proj"), true);
   });
   test("cwd under node_modules is a dependency", () => {
     assert.equal(isRootScript("/proj/node_modules/dep", "/proj"), false);
   });
-  test("missing INIT_CWD falls back to the node_modules check", () => {
+  test("missing SENTINEL_ROOT is NOT root (fail closed; was: trust INIT_CWD / assume root)", () => {
     assert.equal(isRootScript("/proj/node_modules/dep", undefined), false);
-    assert.equal(isRootScript("/proj", undefined), true);
+    assert.equal(isRootScript("/proj", undefined), false);
   });
 });
 

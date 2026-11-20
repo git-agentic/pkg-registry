@@ -17,12 +17,16 @@ import type {
   Finding,
   PackageFile,
   PackageMeta,
+  ProvenanceIdentity,
+  ProvenanceStatus,
   ReleaseContext,
 } from "./types.js";
 import type { Advisory } from "./advisory-corpus.js";
 import type { VulnAdvisory } from "./vuln-corpus.js";
 
 export const ENGINE_VERSION = "0.1.0-alpha.2";
+/** Bump whenever rule or extraction semantics change: cached and stored audits from another revision are recomputed. */
+export const AUDIT_REVISION = 2;
 
 /** Run the heuristic rule pipeline over an already-extracted package. */
 export function runRules(input: AuditInput): Finding[] {
@@ -63,7 +67,7 @@ export function buildAudit(
     findings,
     capabilities,
     capabilityDelta,
-    engine: { version: ENGINE_VERSION, rules: RULES.map((r) => r.id), mode: opts.mode },
+    engine: { version: ENGINE_VERSION, revision: AUDIT_REVISION, rules: RULES.map((r) => r.id), mode: opts.mode },
     auditedAt: new Date().toISOString(),
     durationMs: opts.durationMs,
   };
@@ -85,6 +89,11 @@ export interface AuditTarballInput {
   signingKeys?: NpmSigningKey[];
   /** Fetched attestation-endpoint response (acquisition path), or null when unfetchable. */
   attestations?: unknown | null;
+  /**
+   * A provenance result already verified against these same bytes (a stored audit whose attestation bundle was not
+   * retained). Used only when no attestations are supplied; never fetched, never from a publisher-controlled field.
+   */
+  provenanceCarryOver?: { status: ProvenanceStatus; identity: ProvenanceIdentity | null };
   /** Pinned Sigstore trust material. undefined ⇒ bundled default; null ⇒ none (provenance stays unknown when claimed). */
   trustMaterial?: ProvenanceTrustMaterial | null;
   /** Injectable clock (ISO) for trust-root staleness; defaults to now. */
@@ -138,7 +147,9 @@ export async function runAudit(input: AuditTarballInput): Promise<Audit> {
     input.signatures ?? null,
     input.signingKeys ?? NPM_SIGNING_KEYS,
   );
-  const prov = verifyProvenance({
+  const prov = input.provenanceCarryOver && !input.attestations
+    ? { status: input.provenanceCarryOver.status, identity: input.provenanceCarryOver.identity, rootStale: false }
+    : verifyProvenance({
     name: input.meta.name,
     version: input.meta.version,
     integrity: actualIntegrity,
@@ -174,7 +185,15 @@ export async function runAudit(input: AuditTarballInput): Promise<Audit> {
   if (extracted.truncated) {
     audit.findings.push({
       ruleId: "resource-abuse", category: "resource", severity: "critical",
-      message: "tarball exceeded extraction limits (unpacked size or file count) — possible decompression bomb; audit truncated",
+      message: "tarball exceeded extraction limits (unpacked size, file count or nested compression) — possible decompression bomb; audit truncated",
+      onChangedFile: false, evidence: [],
+    });
+  }
+  if (extracted.manifestConfusion.length > 0) {
+    // npm installs the LAST root package.json entry; Sentinel cannot tell which one reaches disk, so fail closed.
+    audit.findings.push({
+      ruleId: "manifest-confusion", category: "metadata", severity: "critical",
+      message: `package.json cannot be trusted to be the scanned one: ${extracted.manifestConfusion.join("; ")}`,
       onChangedFile: false, evidence: [],
     });
   }

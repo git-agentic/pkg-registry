@@ -42,7 +42,7 @@ export const TOOLS: ToolDef[] = [
     inputSchema: { lockfile: z.string() },
     async handler(args, client) {
       const coords = parseLockfile(readFileSync(args.lockfile as string, "utf8"));
-      const result = await client.auditTree(coords.map((c) => ({ name: c.name, version: c.version })));
+      const result = await client.auditTree(coords);
       return {
         text: `tree: ${result.aggregate.verdict.toUpperCase()}${result.aggregate.gated ? " (GATED)" : ""} · ` +
           Object.entries(result.aggregate.counts).map(([k, v]) => `${v} ${k}`).join(" · "),

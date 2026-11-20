@@ -1,9 +1,16 @@
 import { parse as parseYaml } from "yaml";
+import { SRI_ALGORITHMS } from "./extract.js";
 
 export interface Coordinate {
   name: string;
   version: string;
   integrity?: string;
+  /**
+   * The raw `resolved` spec, set ONLY when the lockfile entry does not come from
+   * a registry tarball (git, github shorthand, off-shape tarball URL, ...). The
+   * proxy cannot audit such a source, so `audit-tree` blocks it (F19).
+   */
+  nonRegistry?: string;
 }
 
 interface LockPackageEntry {
@@ -13,6 +20,89 @@ interface LockPackageEntry {
   integrity?: string;
   link?: boolean;
   dev?: boolean;
+}
+
+/** True when `integrity` carries at least one pin in an algorithm the proxy can recompute. */
+function hasKnownPin(integrity: string | undefined): boolean {
+  return typeof integrity === "string" && integrity.split(/\s+/).some((t) => SRI_ALGORITHMS.some((a) => t.startsWith(`${a}-`) && t.length > a.length + 1));
+}
+
+/**
+ * True when `resolved` has the shape of an http(s) registry tarball: the path
+ * contains `/-/` and ends in `.tgz` (npm, yarn, pnpm, GitLab's `/-/@scope/n-1.0.0.tgz`).
+ * Shape alone proves nothing about the host, so a registry coordinate also needs
+ * an integrity pin (see `isRegistrySource`); the proxy then checks the pin against
+ * the bytes it audited. shortcut: the file name is not bound to name-version
+ * (hand-written test lockfiles use `x.tgz`).
+ */
+function isRegistryTarball(resolved: string): boolean {
+  try {
+    const u = new URL(resolved);
+    return (u.protocol === "http:" || u.protocol === "https:") && u.pathname.includes("/-/") && u.pathname.endsWith(".tgz");
+  } catch {
+    return false;
+  }
+}
+
+/** A registry source: registry-shaped URL AND a known-algorithm pin. Otherwise npm fetches unverified bytes. */
+function isRegistrySource(resolved: string, integrity: string | undefined): boolean {
+  return isRegistryTarball(resolved) && hasKnownPin(integrity);
+}
+
+const NAME_RE = /^(?:@[A-Za-z0-9~._-]+\/)?[A-Za-z0-9~._-]+$/;
+const VERSION_RE = /^[^\s/:@?#]+$/;
+
+/**
+ * Lockfile text must not become coordinate text: a name outside the npm grammar becomes
+ * `<unparsed>` and a version that is not a plain version string becomes `0.0.0`, and the entry is
+ * flagged non-registry. (URLs, userinfo and signed query strings then cannot reach audit-tree output.)
+ */
+function sanitize(coord: Coordinate): Coordinate {
+  const goodName = coord.name.length <= 214 && NAME_RE.test(coord.name);
+  const goodVersion = VERSION_RE.test(coord.version);
+  if (goodName && goodVersion) return coord;
+  return {
+    ...coord,
+    name: goodName ? coord.name : "<unparsed>",
+    version: goodVersion ? coord.version : "0.0.0",
+    nonRegistry: coord.nonRegistry ?? "unparsed lockfile entry",
+  };
+}
+
+/**
+ * Dedupe on name@version. `nonRegistry` is sticky so a git row is never hidden by a registry twin, and
+ * so is the integrity pin (a later duplicate without one must not erase it). Two entries with different
+ * pins conflict: npm would install one of them, so the coordinate cannot be verified against one hash.
+ */
+function putCoord(byKey: Map<string, Coordinate>, raw: Coordinate): void {
+  const coord = sanitize(raw);
+  const key = `${coord.name}@${coord.version}`;
+  const prev = byKey.get(key);
+  if (prev?.nonRegistry !== undefined && coord.nonRegistry === undefined) coord.nonRegistry = prev.nonRegistry;
+  if (prev?.integrity && !coord.integrity) coord.integrity = prev.integrity;
+  else if (prev?.integrity && coord.integrity) {
+    const merged = mergePins(prev.integrity, coord.integrity);
+    if (merged === null) {
+      if (coord.nonRegistry === undefined) coord.nonRegistry = "conflicting integrity pins for the same name@version";
+    } else coord.integrity = merged;
+  }
+  byKey.set(key, coord);
+}
+
+/**
+ * Merge two SRI strings: tokens in different algorithms are all kept (space-separated, deduped; the proxy
+ * checks every token against the served bytes). The same algorithm with two different digests is a real
+ * conflict: null.
+ */
+function mergePins(a: string, b: string): string | null {
+  const byAlgo = new Map<string, string>();
+  for (const t of `${a} ${b}`.split(/\s+/).filter(Boolean)) {
+    const algo = t.split("-", 1)[0]!;
+    const seen = byAlgo.get(algo);
+    if (seen !== undefined && seen !== t) return null;
+    byAlgo.set(algo, t);
+  }
+  return [...byAlgo.values()].join(" ");
 }
 
 /**
@@ -40,7 +130,8 @@ export function parseLockfile(raw: string, opts: { omitDev?: boolean } = {}): Co
     if (!name || !entry.version) continue;
     const coord: Coordinate = { name, version: entry.version };
     if (entry.integrity) coord.integrity = entry.integrity;
-    byKey.set(`${name}@${entry.version}`, coord);
+    if (resolved && !isRegistrySource(resolved, entry.integrity)) coord.nonRegistry = resolved;
+    putCoord(byKey, coord);
   }
   return [...byKey.values()].sort((a, b) => {
     const ka = `${a.name}@${a.version}`, kb = `${b.name}@${b.version}`;
@@ -68,13 +159,18 @@ function parseYarnV1(raw: string): Coordinate[] {
   let headerName: string | null = null;
   let version: string | null = null;
   let integrity: string | undefined;
+  let resolved: string | undefined;
   const flush = () => {
     if (headerName && version) {
       const coord: Coordinate = { name: headerName, version };
-      if (integrity) coord.integrity = integrity;
-      byKey.set(`${headerName}@${version}`, coord);
+      // A `#<40-hex>` fragment on `resolved` is yarn v1's sha1 pin; carry it as an SRI so the proxy verifies it.
+      const frag = resolved ? /#([0-9a-f]{40})$/i.exec(resolved)?.[1] : undefined;
+      const pin = integrity ?? (frag ? "sha1-" + Buffer.from(frag, "hex").toString("base64") : undefined);
+      if (pin) coord.integrity = pin;
+      if (resolved && !resolved.startsWith("file:") && !resolved.startsWith("link:") && !isRegistrySource(resolved, pin)) coord.nonRegistry = resolved;
+      putCoord(byKey, coord);
     }
-    headerName = null; version = null; integrity = undefined;
+    headerName = null; version = null; integrity = undefined; resolved = undefined;
   };
   for (const line of lines) {
     if (!line.trim() || line.startsWith("#")) continue;
@@ -90,28 +186,43 @@ function parseYarnV1(raw: string): Coordinate[] {
       if (v) version = v[1]!;
       const i = line.trim().match(/^integrity\s+(\S+)$/);
       if (i) integrity = i[1]!;
+      const r = line.trim().match(/^resolved\s+"?([^"\s]+)"?$/);
+      if (r) resolved = r[1]!;
     }
   }
   flush();
   return sortCoords([...byKey.values()]);
 }
 
-/** `name@npm:range` → name (everything before `@npm:`). */
+/** `name@protocol:range[, …]` → name: the leading (scoped) package name before its own `@`. */
 function yarnBerryName(key: string): string {
   const s = key.replace(/^"|"$/g, "");
-  const idx = s.indexOf("@npm:");
-  return idx > 0 ? s.slice(0, idx) : s.replace(/@[^@]*$/, "");
+  return /^((?:@[^/@]+\/)?[^@/]+)@/.exec(s)?.[1] ?? "";
 }
 
+const BERRY_LOCAL_PROTOCOLS = new Set(["workspace", "patch", "link", "portal", "file", "exec"]);
+
 function parseYarnBerry(raw: string): Coordinate[] {
-  const doc = parseYaml(raw) as Record<string, { version?: string }>;
+  const doc = parseYaml(raw) as Record<string, { version?: string; resolution?: string }>;
   const byKey = new Map<string, Coordinate>();
   for (const [key, entry] of Object.entries(doc)) {
     if (key === "__metadata" || !entry || typeof entry !== "object") continue;
-    const name = yarnBerryName(key);
-    const version = entry.version;
-    if (!name || !version) continue;
-    byKey.set(`${name}@${version}`, { name, version }); // berry checksum is not SRI → no integrity
+    const resolution = typeof entry.resolution === "string" ? entry.resolution : "";
+    // Parse the locator structurally (`<name>@<protocol>:<rest>`); a substring test lets a
+    // tarball URL containing "@npm:" or "@file:" pass as registry or local.
+    const locator = /^((?:@[^/@]+\/)?[^@/]+)@([a-z]+):(.*)$/.exec(resolution);
+    const protocol = locator?.[2];
+    // Local sources and patch overlays (the patched `npm:` base is its own entry) are not registry coordinates.
+    if (protocol && BERRY_LOCAL_PROTOCOLS.has(protocol)) continue;
+    // The resolution names what yarn fetches (an alias key names something else).
+    const name = locator?.[1] ?? (yarnBerryName(key) || key);
+    const version = typeof entry.version === "string" && entry.version ? entry.version : "0.0.0";
+    const coord: Coordinate = { name, version }; // berry checksum is not SRI → no integrity
+    // Registry only when the resolved version is plain and is the version we audit.
+    const registry = protocol === "npm" && /^[^\s#?/:@]+$/.test(locator![3]!) && locator![3] === entry.version;
+    // Anything not provably a registry coordinate gates as non-registry; never skip it.
+    if (!registry) coord.nonRegistry = resolution || key;
+    putCoord(byKey, coord);
   }
   return sortCoords([...byKey.values()]);
 }
@@ -131,17 +242,22 @@ function pnpmStripKey(key: string): string {
 function pnpmNameVersion(key: string, slashStyle: boolean): [string, string] | null {
   const k = pnpmStripKey(key);
   if (slashStyle) {
+    // `/name/1.0.0_peer@2.0.0`: cut the version at the first `_` (the peer suffix, which may itself hold `/`).
+    // A semver token has no `/` or `_`, so match name + `/x.y...` and ignore the rest; URL keys fall through.
+    const m = /^(.+?)\/(\d+\.[^/_]*)(?:_.*)?$/.exec(k);
+    if (m) return [m[1]!, m[2]!];
     const at = k.lastIndexOf("/");
     if (at <= 0) return null;
     return [k.slice(0, at), k.slice(at + 1)];
   }
-  const at = k.lastIndexOf("@");
+  // Split right after the package name (skipping a leading `@scope/`): the remainder may be a URL whose query holds '@'.
+  const at = k.indexOf("@", k.startsWith("@") ? 1 : 0);
   if (at <= 0) return null;
   return [k.slice(0, at), k.slice(at + 1)];
 }
 
 export function parsePnpmLock(raw: string, _opts: { omitDev?: boolean } = {}): Coordinate[] {
-  const doc = parseYaml(raw) as { lockfileVersion?: string | number; packages?: Record<string, { resolution?: { integrity?: string } }> };
+  const doc = parseYaml(raw) as { lockfileVersion?: string | number; packages?: Record<string, { version?: string; resolution?: { integrity?: string; tarball?: string; type?: string; repo?: string; commit?: string; directory?: string } }> };
   const packages = doc.packages;
   if (!packages || typeof packages !== "object") {
     throw new Error("unsupported pnpm lockfile: no 'packages' map");
@@ -153,12 +269,24 @@ export function parsePnpmLock(raw: string, _opts: { omitDev?: boolean } = {}): C
     if (key.startsWith("link:") || key.startsWith("file:")) continue;
     const nv = pnpmNameVersion(key, slashStyle);
     if (!nv) continue;
-    const [name, version] = nv;
+    const [name] = nv;
+    let version = nv[1];
     if (!name || !version) continue;
+    const res = entry?.resolution;
+    if (res?.directory !== undefined || res?.type === "directory") continue;
+    if (typeof res?.tarball === "string" && (res.tarball.startsWith("file:") || res.tarball.startsWith("link:"))) continue;
+    // URL-keyed entries (`name@https://...`, or a v5 key with no leading `/`) are not name/version keys:
+    // the version comes only from the entry's declared `version`, never from the key (its last segment can
+    // be a credential). No declared version falls back to 0.0.0.
+    const urlKeyed = !VERSION_RE.test(version) || (slashStyle && !key.startsWith("/"));
+    if (urlKeyed) version = typeof entry?.version === "string" ? entry.version : "0.0.0";
     const coord: Coordinate = { name, version };
-    const integrity = entry?.resolution?.integrity;
+    const integrity = res?.integrity;
     if (integrity) coord.integrity = integrity;
-    byKey.set(`${name}@${version}`, coord);
+    if (res?.type !== undefined && res.type !== "directory") coord.nonRegistry = `${res.type}:${res.repo ?? ""}#${res.commit ?? ""}`;
+    else if (typeof res?.tarball === "string" && !isRegistrySource(res.tarball, integrity)) coord.nonRegistry = res.tarball;
+    else if (urlKeyed) coord.nonRegistry = key; // a non-plain remainder is never a registry coordinate
+    putCoord(byKey, coord);
   }
   return sortCoords([...byKey.values()]);
 }

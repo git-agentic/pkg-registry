@@ -11,8 +11,13 @@ npm compatibility surface (packuments, dist-tags, unpublish-as-retraction).
 
 ```bash
 npm install -g @git-agentic/sentinel-proxy@alpha
-sentinel-proxy            # starts the proxy on :4873
+sentinel-proxy            # starts the proxy on 127.0.0.1:4873
 ```
+
+The proxy binds loopback by default. Set `SENTINEL_HOST` (for example `0.0.0.0`) and
+`SENTINEL_PUBLIC_BASE_URL` to serve other machines. `SENTINEL_POLICY` must be exactly
+`observe` or `block`. In open mode (no `SENTINEL_AUTH_PUBKEY`), publish, history import
+and retraction require a publish token from `SENTINEL_PUBLISH_TOKENS`.
 
 Point any npm/pnpm/yarn/bun client at it:
 

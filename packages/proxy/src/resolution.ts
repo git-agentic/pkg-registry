@@ -61,6 +61,8 @@ export function claimForPackage(name: string, claimCorpus: ClaimCorpus): Verifie
 export function trustedPublisherAuthorized(claim: VerifiedClaim, identity: ProvenanceIdentity | null | undefined): boolean {
   if (!identity || !claim.trustedPublishers?.length) return false;
   return claim.trustedPublishers.some((publisher) =>
+    // builder is a signer-written predicate claim: an entry must constrain a certificate-bound field too.
+    (publisher.repository !== undefined || publisher.workflowRef !== undefined) &&
     publisher.issuer === identity.issuer &&
     (publisher.repository === undefined || (identity.sourceRepository !== null && matchPackage(publisher.repository, identity.sourceRepository))) &&
     (publisher.workflowRef === undefined || (identity.workflow !== null && matchPackage(publisher.workflowRef, identity.workflow))) &&

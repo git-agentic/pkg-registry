@@ -22,6 +22,7 @@ export {
 } from "./policy.js";
 export {
   ENGINE_VERSION,
+  AUDIT_REVISION,
   auditTarball,
   buildAudit,
   runAudit,
@@ -34,6 +35,7 @@ export {
   integrityOf,
   integrityOfAlgo,
   type SriAlgorithm,
+  SRI_ALGORITHMS,
   type ExtractResult,
 } from "./extract.js";
 export { readPackageManifest, type PackageCoordinate } from "./manifest.js";

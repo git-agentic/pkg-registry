@@ -1,5 +1,6 @@
 import * as acorn from "acorn";
 import * as walk from "acorn-walk";
+import { lineLocator } from "../rules/util.js";
 
 export interface LoaderPrimitive {
   stage: "read" | "decode" | "write" | "launch";
@@ -12,7 +13,9 @@ export interface LoaderPrimitive {
   readTarget?: string;
 }
 export interface LoaderBoosters { tempOrHidden: boolean; chmod: boolean; detached: boolean; unref: boolean; moduleLoad: boolean }
-export interface LoaderAnalysis { primitives: LoaderPrimitive[]; correlated: boolean; boosters: LoaderBoosters; parseFailed: boolean }
+export interface LoaderAnalysis { primitives: LoaderPrimitive[]; correlated: boolean; boosters: LoaderBoosters; parseFailed: boolean;
+  /** Stack overflow while parsing or walking (hostile nesting), not a syntax error: the caller must not downgrade a regex chain hit. */
+  walkOverflow?: boolean }
 
 /** Bounded, deterministic taint tags a variable can carry. */
 type Tag = "read" | "decoded" | "written-path";
@@ -49,9 +52,10 @@ function propName(m: any): string | null {
   if (m.computed) return m.property?.type === "Literal" ? String(m.property.value) : null;
   return m.property?.type === "Identifier" ? m.property.name : null;
 }
-function lineOf(src: string, pos: number): number { return src.slice(0, pos).split("\n").length; }
+/** Snippets keep the first 160 chars; never copy a whole (possibly huge, nested) node to build one. */
+const SNIP_SOURCE_CAP = 4096;
 function snip(src: string, node: any): string {
-  const s = src.slice(node.start, node.end).replace(/\s+/g, " ");
+  const s = src.slice(node.start, Math.min(node.end, node.start + SNIP_SOURCE_CAP)).replace(/\s+/g, " ");
   return s.length > 160 ? s.slice(0, 159) + "…" : s;
 }
 function isScope(n: any): boolean {
@@ -77,8 +81,8 @@ export function analyzeLoaderChain(source: string, opts: { moduleLoadReachable?:
   } catch {
     try {
       ast = acorn.parse(source, { ecmaVersion: "latest", sourceType: "script", allowReturnOutsideFunction: true, allowHashBang: true });
-    } catch {
-      return { primitives: [], correlated: false, boosters: { tempOrHidden: false, chmod: false, detached: false, unref: false, moduleLoad: false }, parseFailed: true };
+    } catch (e) {
+      return { primitives: [], correlated: false, boosters: { tempOrHidden: false, chmod: false, detached: false, unref: false, moduleLoad: false }, parseFailed: true, walkOverflow: e instanceof RangeError };
     }
   }
 
@@ -95,7 +99,7 @@ export function analyzeLoaderChain(source: string, opts: { moduleLoadReachable?:
   // Scopes in which a decode occurred (gate for written-path).
   const decodeScopes = new Set<any>();
   // Structurally-recorded written-path expressions (for inline-repeat launch matching).
-  const writtenPaths: { node: any; scope: any }[] = [];
+  const writtenPaths = new Map<string, Set<any>>();   // structKey → scopes that wrote it
 
   const scopeTaint = (s: any): Map<string, Set<Tag>> => {
     let m = taint.get(s);
@@ -110,15 +114,21 @@ export function analyzeLoaderChain(source: string, opts: { moduleLoadReachable?:
     for (const s of chain) { if (taint.get(s)?.has(name)) return s; }
     return chain[0];
   };
+  const lineAt = lineLocator(source);   // built once; a per-primitive rescan from 0 is quadratic
   const record = (stage: LoaderPrimitive["stage"], node: any, readTarget?: string) =>
-    primitives.push({ stage, line: lineOf(source, node.start), snippet: snip(source, node), ...(readTarget ? { readTarget } : {}) });
+    primitives.push({ stage, line: lineAt(node.start), snippet: snip(source, node), ...(readTarget ? { readTarget } : {}) });
 
   // ---------- module reference resolution ----------
   function stripNode(m: string): string { return m.startsWith("node:") ? m.slice(5) : m; }
   function requireModule(node: any): string | null {
     if (node?.type === "CallExpression" && node.callee?.type === "Identifier" && node.callee.name === "require"
-      && node.arguments?.length === 1 && node.arguments[0].type === "Literal" && typeof node.arguments[0].value === "string") {
-      return stripNode(node.arguments[0].value);
+      && node.arguments?.length === 1) {
+      const a = node.arguments[0];
+      if (a.type === "Literal" && typeof a.value === "string") return stripNode(a.value);
+      // require(`fs`): a template literal with no expressions is a static string.
+      if (a.type === "TemplateLiteral" && a.expressions.length === 0 && typeof a.quasis[0]?.value?.cooked === "string") {
+        return stripNode(a.quasis[0].value.cooked);
+      }
     }
     return null;
   }
@@ -161,7 +171,7 @@ export function analyzeLoaderChain(source: string, opts: { moduleLoadReachable?:
     // Buffer.from(<data>, 'base64') → decode
     if (callee?.type === "MemberExpression" && callee.object?.type === "Identifier" && callee.object.name === "Buffer" && propName(callee) === "from") {
       const enc = call.arguments?.[1];
-      return enc?.type === "Literal" && enc.value === "base64" ? "decode" : null;
+      return enc?.type === "Literal" && typeof enc.value === "string" && /^base64(?:url)?$/i.test(enc.value) ? "decode" : null;
     }
     // atob(<data>) → decode (ambient global)
     if (callee?.type === "Identifier" && callee.name === "atob") return "decode";
@@ -285,38 +295,46 @@ export function analyzeLoaderChain(source: string, opts: { moduleLoadReachable?:
   const carriesPayload = (tags: Set<Tag>): boolean => tags.has("read") || tags.has("decoded");
 
   // ---------- structural expression equality (S3, bounded) ----------
-  function structEq(a: any, b: any, depth = 0): boolean {
-    if (!a || !b || depth > 20) return false;
-    if (a.type !== b.type) return false;
-    switch (a.type) {
-      case "Identifier": return a.name === b.name;
-      case "Literal": return a.value === b.value;
-      case "MemberExpression":
-        return a.computed === b.computed && structEq(a.object, b.object, depth + 1)
-          && (a.computed ? structEq(a.property, b.property, depth + 1) : a.property?.name === b.property?.name);
+  /**
+   * Canonical string of an expression's shape: two expressions have the same key
+   * iff they are structurally equal (node types, names, literal values, member /
+   * call / template shape) within the depth bound. `null` means never equal to
+   * anything (unsupported node, regex literal, deeper than 20). Indexing writes
+   * by this key makes each launch lookup O(1) instead of a scan of every write.
+   */
+  function structKey(n: any, depth = 0): string | null {
+    if (!n || depth > 20) return null;
+    switch (n.type) {
+      case "Identifier": return `I${JSON.stringify(n.name)}`;
+      case "Literal": {
+        const v = n.value;
+        if (v !== null && typeof v === "object") return null;   // RegExp: === never equal
+        return `L${typeof v}${JSON.stringify(String(v))}`;
+      }
+      case "MemberExpression": {
+        const o = structKey(n.object, depth + 1);
+        const p = n.computed ? structKey(n.property, depth + 1) : `N${JSON.stringify(String(n.property?.name))}`;
+        return o === null || p === null ? null : `M${n.computed ? 1 : 0}(${o},${p})`;
+      }
       case "CallExpression": {
-        if (!structEq(a.callee, b.callee, depth + 1)) return false;
-        const aa = a.arguments ?? [], ba = b.arguments ?? [];
-        return aa.length === ba.length && aa.every((x: any, i: number) => structEq(x, ba[i], depth + 1));
+        const parts = [structKey(n.callee, depth + 1), ...(n.arguments ?? []).map((x: any) => structKey(x, depth + 1))];
+        return parts.includes(null) ? null : `C(${parts.join(",")})`;
       }
       case "TemplateLiteral": {
-        const aq = a.quasis ?? [], bq = b.quasis ?? [];
-        if (aq.length !== bq.length || !aq.every((q: any, i: number) => q.value?.cooked === bq[i].value?.cooked)) return false;
-        const ax = a.expressions ?? [], bx = b.expressions ?? [];
-        return ax.length === bx.length && ax.every((x: any, i: number) => structEq(x, bx[i], depth + 1));
+        const q = (n.quasis ?? []).map((x: any) => JSON.stringify(x.value?.cooked ?? null));
+        const e = (n.expressions ?? []).map((x: any) => structKey(x, depth + 1));
+        return e.includes(null) ? null : `T(${q.join(",")};${e.join(",")})`;
       }
-      default: return false;
+      default: return null;
     }
   }
   /** Is `target` a written-path? Identifier via scoped taint, or structural match to a visible recorded path. */
   function targetIsWrittenPath(target: any, chain: any[]): boolean {
     if (!target) return false;
     if (target.type === "Identifier" && lookupTaint(chain, target.name)?.has("written-path")) return true;
-    for (const w of writtenPaths) {
-      if (!chain.includes(w.scope)) continue;   // visibility: the write scope must enclose the launch
-      if (structEq(target, w.node)) return true;
-    }
-    return false;
+    const key = structKey(target);
+    const scopes = key === null ? undefined : writtenPaths.get(key);
+    return !!scopes && chain.some((s) => scopes.has(s));   // visibility: the write scope must enclose the launch
   }
 
   // ---------- temp/hidden booster ----------
@@ -349,6 +367,9 @@ export function analyzeLoaderChain(source: string, opts: { moduleLoadReachable?:
     }
   }
 
+  // A hostile file (50k chained members, absurd nesting) can overflow the walker's
+  // recursion; that must degrade to the parse-failure path, never throw out of the rule.
+  try {
   walk.ancestor(ast, {
     ImportDeclaration(node: any) {
       if (node.source?.type !== "Literal" || typeof node.source.value !== "string") return;
@@ -405,7 +426,8 @@ export function analyzeLoaderChain(source: string, opts: { moduleLoadReachable?:
             const s = declaringScope(chain, pathArg.name);
             (scopeTaint(s).get(pathArg.name) ?? scopeTaint(s).set(pathArg.name, new Set()).get(pathArg.name)!).add("written-path");
           } else {
-            writtenPaths.push({ node: pathArg, scope: chain[0] });
+            const key = structKey(pathArg);
+            if (key !== null) (writtenPaths.get(key) ?? writtenPaths.set(key, new Set()).get(key)!).add(chain[0]);
           }
         }
         if (pathArg && isTempOrHidden(pathArg)) boosters.tempOrHidden = true;
@@ -453,8 +475,10 @@ export function analyzeLoaderChain(source: string, opts: { moduleLoadReachable?:
       if (node.callee?.type === "MemberExpression" && propName(node.callee) === "unref") boosters.unref = true;
     },
   });
-
   boosters.moduleLoad = Boolean(opts.moduleLoadReachable) && topLevelExecution(ast);
+  } catch (e) {
+    return { primitives: [], correlated: false, boosters: { tempOrHidden: false, chmod: false, detached: false, unref: false, moduleLoad: false }, parseFailed: true, walkOverflow: e instanceof RangeError };
+  }
 
   return { primitives, correlated, boosters, parseFailed: false };
 }

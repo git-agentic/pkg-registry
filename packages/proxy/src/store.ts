@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import type { AuditReport } from "@git-agentic/sentinel-core";
+import { AUDIT_REVISION, ENGINE_VERSION, type AuditReport } from "@git-agentic/sentinel-core";
 import type { HistoryDb } from "./history-db.js";
 
 export interface StoredAudit {
@@ -8,6 +8,12 @@ export interface StoredAudit {
   version: string;
   report: AuditReport;
 }
+
+/** Persist coalescing window: the file is a rebuildable cache, so a short delay is safe. */
+const PERSIST_DEBOUNCE_MS = 500;
+
+/** Fixed in-memory cap: the oldest entries are evicted so a long-lived proxy cannot grow without bound. */
+export const MAX_AUDIT_ENTRIES = 20_000;
 
 /**
  * Verdict cache + audit log. Keyed by `(name, version, integrity)` — a published
@@ -29,6 +35,8 @@ export class AuditStore {
         const rows = JSON.parse(readFileSync(file, "utf8")) as StoredAudit[];
         for (const r of rows) {
           if (r.report?.schema !== 3) continue; // re-audit anything older
+          // Scored by another engine version or audit revision (a missing revision is stale): re-audit.
+          if (r.report.engine?.version !== ENGINE_VERSION || r.report.engine.revision !== AUDIT_REVISION) continue;
           if (this.activePolicyHash && r.report.policy?.hash !== this.activePolicyHash) continue; // scored under a different policy
           const integrity = r.report.meta.integrity;
           if (!integrity) continue; // actual integrity is a mandatory cache-key dimension
@@ -105,13 +113,25 @@ export class AuditStore {
   private index(key: string, stored: StoredAudit): void {
     if (!this.byCoordinateIntegrity.has(key)) this.order.push(key);
     this.byCoordinateIntegrity.set(key, stored);
+    while (this.order.length > MAX_AUDIT_ENTRIES) this.byCoordinateIntegrity.delete(this.order.shift()!);
   }
 
   private cacheKey(name: string, version: string, integrity: string): string {
     return `${name}\u0000${version}\u0000${integrity}`;
   }
 
+  private persistTimer: ReturnType<typeof setTimeout> | undefined;
+
+  /** Coalesce writes: one unref'd timer rewrites the file once for any burst of puts. */
   private persist(): void {
+    if (!this.file || this.persistTimer) return;
+    this.persistTimer = setTimeout(() => this.flush(), PERSIST_DEBOUNCE_MS);
+    this.persistTimer.unref();
+  }
+
+  /** Write the file now (tests, shutdown). Cancels any pending debounced write. */
+  flush(): void {
+    if (this.persistTimer) { clearTimeout(this.persistTimer); this.persistTimer = undefined; }
     if (!this.file) return;
     try {
       writeFileSync(this.file, JSON.stringify([...this.byCoordinateIntegrity.values()], null, 2));

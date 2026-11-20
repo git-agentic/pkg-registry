@@ -16,9 +16,15 @@ npm install @git-agentic/sentinel-sandbox@alpha
 ## Platform behavior in this alpha
 
 - **macOS (Seatbelt):** full enforcement, including the exec floor and the
-  sensitive-executable carve-out. No native compilation involved.
+  sensitive-executable carve-out (`curl`, `wget`, `nc`, `launchctl`, `open`, and
+  similar). The profile is passed inline to `sandbox-exec -p`; no profile file is
+  written to the temp dir. LaunchServices mach lookups are not denied. No native
+  compilation involved.
 - **Linux (bubblewrap):** filesystem/network/env containment and the
-  exfil-tool exec carve-out are always enforced. The **exec floor** is
+  exfil-tool exec carve-out are always enforced, along with a private pid
+  namespace, `--new-session`, and masks for local IPC sockets
+  (session bus, docker/containerd/podman/crio, system dbus, X11, ssh agents)
+  whether or not network is approved. The **exec floor** is
   enforced via a Landlock helper that this package ships **as source only**
   (`native/landlock-exec.c`) — no prebuilt binary, and deliberately **no
   install-time compilation** (Sentinel does not run lifecycle scripts, by
@@ -34,7 +40,13 @@ node node_modules/@git-agentic/sentinel-sandbox/scripts/build-native.mjs
 
 The helper is verified with an ABI probe before use; any failure falls back
 to the advisory floor — containment of filesystem, network, and environment
-is unaffected either way. See the
+is unaffected either way.
+
+The node-gyp header caches (`~/.node-gyp`, `~/.cache/node-gyp`) are read-only.
+With a `network` approval, `npm_config_devdir` points at a per-run directory outside
+every write floor; without one, a cold-cache native build fails. A project root of
+`/` never widens read or exec rules, relative `cwd` and project root are resolved
+first, and `npm_config_*` values that carry URL credentials are scrubbed. See the
 [Sentinel repository](https://github.com/git-agentic/pkg-registry) for the
 full documentation and threat model.
 

@@ -50,7 +50,7 @@ describe("renderPrComment", () => {
       ],
     };
     const evilMd = renderPrComment(evilResult, { now: "2026-07-08T00:00:00Z" });
-    assert.match(evilMd, /evil\\\|name@1\.0\.0/);
+    assert.match(evilMd, /evil\\\|name@​1\.0\.0/); // "@" carries a zero-width space so it cannot mention
     assert.equal(evilMd.includes("| evil|name@"), false);
   });
   test("escapes backslashes before pipes so a `\\|` name can't break out of the cell", () => {

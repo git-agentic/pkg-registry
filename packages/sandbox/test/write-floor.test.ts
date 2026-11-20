@@ -3,15 +3,13 @@ import { describe, test } from "node:test";
 import { writeAllowFloor } from "../src/write-floor.js";
 
 describe("writeAllowFloor", () => {
-  test("includes the install dir, temp, /tmp, /dev and the node build caches", () => {
+  test("includes the install dir, temp, /tmp, /dev and the npm logs (node-gyp caches are read-only)", () => {
     const floor = writeAllowFloor({ cwd: "/work/pkg", tmpDir: "/var/folders/x/T" });
     assert.deepEqual(floor, [
       "/work/pkg",
       "/var/folders/x/T",
       "/tmp",
       "/dev",
-      "~/.node-gyp",
-      "~/.cache/node-gyp",
       "~/.npm/_logs",
     ]);
   });

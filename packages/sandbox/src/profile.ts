@@ -1,5 +1,6 @@
 import { sensitivePathsFor, type Capability } from "@git-agentic/sentinel-core";
 import { pathCovers } from "./path-cover.js";
+import { assertCwdNotRoot } from "./run-paths.js";
 import { canonicalizeMacPath, expandHome, isSafeGrantTarget } from "./deny-set.js";
 import { writeAllowFloor } from "./write-floor.js";
 import { readAllowList } from "./read-allow.js";
@@ -21,6 +22,7 @@ export function generateProfile(
   approved: Capability[],
   opts: { homeDir: string; cwd: string; tmpDir: string; nodePrefix: string; projectRoot: string },
 ): string {
+  assertCwdNotRoot(opts.cwd);
   const approvedFs = approved.filter((c) => c.kind === "filesystem").map((c) => c.target);
   const hasNetwork = approved.some((c) => c.kind === "network");
   const canon = (p: string) => canonicalizeMacPath(expandHome(p, opts.homeDir));
@@ -43,7 +45,7 @@ export function generateProfile(
   const readAllow = readAllowList({ nodePrefix: opts.nodePrefix, projectRoot: opts.projectRoot }).map(canon);
   // Guard: never re-allow $HOME itself or an ancestor of $HOME (e.g. a projectRoot
   // that resolved to $HOME) — that would nullify the Slice 2 read-deny wholesale.
-  const readAllowSafe = readAllow.filter((e) => e !== homeCanon && !homeCanon.startsWith(e + "/"));
+  const readAllowSafe = readAllow.filter((e) => e !== "/" && e !== homeCanon &&!homeCanon.startsWith(e + "/"));
   // Approved filesystem Grants confer read+write (a Grant opens exactly that
   // resource), so they belong in the read-allow too — mirrors the write section
   // below, which reuses this same `grants` declaration.

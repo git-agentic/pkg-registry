@@ -1,5 +1,5 @@
 import type { AuditInput, ContentMismatchEntry, Evidence, Finding, Rule } from "../types.js";
-import { codeFiles, mkFinding, truncate } from "./util.js";
+import { codeFiles, headsWithTail, mkFinding, truncate } from "./util.js";
 import { analyzeLoaderChain } from "../detect/loader-chain.js";
 
 /**
@@ -14,13 +14,38 @@ import { analyzeLoaderChain } from "../detect/loader-chain.js";
  */
 const JS_PARSEABLE = /\.(c?js|mjs)$/i;
 
-/** Regex signals for the parse-failure fallback. Detect independently; NEVER claim dataflow. */
-const FALLBACK = {
-  read: /\b(readFileSync|readFile|createReadStream)\s*\(/,
-  decode: /\b(gunzip|inflate|brotliDecompress|unzip)\w*\s*\(|Buffer\.from\([^)]*['"]base64['"]/,
-  write: /\b(writeFileSync|writeFile|createWriteStream)\s*\(/,
-  launch: /\b(spawn|spawnSync|exec|execSync|execFile|execFileSync)\s*\(|process\.dlopen\s*\(/,
+const GUNZIP_LIKE = /\b(gunzip|inflate|brotliDecompress|unzip)\w*\s*\(/;
+const BUFFER_FROM = /Buffer\.from\(/g;
+/** `require(<non-literal>)`, a template literal with `${`, or a literal `*.node` addon: loads a computed path, the launch form for a just-written native addon. */
+/** A write whose target ends in `.node`, and a relative extension-less literal require (Node appends `.node`). */
+const WRITES_NODE = /\b(?:writeFileSync|writeFile|createWriteStream|copyFileSync|copyFile)\s*\([^;\n]{0,200}\.node['"`]/;
+const REQUIRE_EXTLESS = /\brequire\s*\(\s*(['"])\.\.?\/[^'".\n]*\1/;
+const REQUIRE_OF_PATH = /\brequire\s*\(\s*(?:[^'"`\s)]|`[^`]*\$\{|(['"`])[^'"`\n]*\.node\1)/;
+// Node accepts any case and `base64url` as an encoding name.
+const BASE64 = /['"]base64(?:url)?['"]/gi;
+
+/**
+ * Under an overflow the file may use renamed destructured imports (`{readFileSync:r}=require("fs")`),
+ * so a primitive counts when its name merely appears; the pad that defeated the parser must not also
+ * hide a chain that is critical on its own.
+ */
+const LOOSE: Record<"read" | "decode" | "write" | "launch", RegExp> = {
+  read: /\b(?:readFileSync|readFile|createReadStream)\b/,
+  decode: /\b(?:gunzipSync|gunzip|inflateSync|inflate|inflateRaw(?:Sync)?|unzipSync|unzip|brotliDecompress(?:Sync)?)\b/,
+  write: /\b(?:writeFileSync|writeFile|createWriteStream)\b/,
+  launch: /\b(?:spawn|spawnSync|exec|execSync|execFile|execFileSync)\b|process\.dlopen/,
 };
+
+/** Regex signals for the parse-failure fallback. Detect independently; NEVER claim dataflow. */
+const FALLBACK: Record<"read" | "decode" | "write" | "launch", (src: string) => boolean> = {
+  read: (src) => /\b(readFileSync|readFile|createReadStream)\s*\(/.test(src),
+  // `Buffer.from(` + a base64 marker before the next `)`: linear, not `[^)]*` rescanned from every head.
+  decode: (src) => GUNZIP_LIKE.test(src) || !headsWithTail(src, BUFFER_FROM, "\\)", BASE64).next().done,
+  write: (src) => /\b(writeFileSync|writeFile|createWriteStream)\s*\(/.test(src),
+  launch: (src) => /\b(spawn|spawnSync|exec|execSync|execFile|execFileSync)\s*\(|process\.dlopen\s*\(/.test(src),
+};
+
+const MAX_EXPORTS_DEPTH = 32;
 
 /** Resolve entry-reachable file paths from package.json (main/bin/exports strings). No full Node resolution. */
 function entryPaths(pkgJson: any): Set<string> {
@@ -30,11 +55,12 @@ function entryPaths(pkgJson: any): Set<string> {
   if (typeof pkgJson?.bin === "string") add(pkgJson.bin);
   else if (pkgJson?.bin && typeof pkgJson.bin === "object") for (const v of Object.values(pkgJson.bin)) add(v);
   const exp = pkgJson?.exports;
-  const collect = (e: any) => {
+  // Depth-bounded: a hostile 20k-deep `exports` must not overflow the stack and take the rule down.
+  const collect = (e: any, depth: number) => {
     if (typeof e === "string") add(e);
-    else if (e && typeof e === "object") for (const v of Object.values(e)) collect(v);
+    else if (depth < MAX_EXPORTS_DEPTH && e && typeof e === "object") for (const v of Object.values(e)) collect(v, depth + 1);
   };
-  if (exp !== undefined) collect(exp);
+  if (exp !== undefined) collect(exp, 0);
   if (out.size === 0) out.add("index.js"); // node default
   return out;
 }
@@ -63,11 +89,18 @@ export const nativePayloadLoaderRule: Rule = {
         // Only fall back for genuinely-JS files: on TS/JSX/.d.ts a parse failure is
         // expected (acorn is JS-only), so a regex guess is noise, not signal.
         if (!JS_PARSEABLE.test(rel)) continue;
-        // Regex fallback — independent signal only, capped below critical.
-        const hits = (Object.keys(FALLBACK) as (keyof typeof FALLBACK)[]).filter((k) => FALLBACK[k].test(file.content));
+        // Regex fallback — independent signal only, capped below critical. Exception: an
+        // overflow means hostile nesting defeated the parser, so a full read+decode+write+launch
+        // chain is not downgraded (a pad of `x.b.b…` must not turn block into warn).
+        const hits = (Object.keys(FALLBACK) as (keyof typeof FALLBACK)[]).filter((k) => FALLBACK[k](file.content) || (a.walkOverflow === true && LOOSE[k].test(file.content)));
+        // The AST rule counts `require(<written path>)` as a launch; on an overflowed file the
+        // fallback must too, or that launch form downgrades the chain to high.
+        if (a.walkOverflow && !hits.includes("launch")
+          && (REQUIRE_OF_PATH.test(file.content) || (WRITES_NODE.test(file.content) && REQUIRE_EXTLESS.test(file.content)))) hits.push("launch");
         if (hits.length >= 2) {
           findings.push(mkFinding({
-            ruleId: this.id, category: this.category, severity: "high",
+            ruleId: this.id, category: this.category,
+            severity: a.walkOverflow && hits.length === 4 ? "critical" : "high",
             message: `Possible payload loader (unparsed source, regex signal only): ${hits.join(" + ")} in \`${rel}\` — dataflow not verified.`,
             evidence: [{ file: file.path, snippet: truncate(file.content.trim().split("\n")[0] ?? "", 120) }],
             files: input.files,

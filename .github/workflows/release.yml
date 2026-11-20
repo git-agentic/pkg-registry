@@ -132,11 +132,16 @@ jobs:
     needs: build-and-verify
     runs-on: ubuntu-latest
     environment: npm-release
+    # Publishing rights only. The clean-install check and the GitHub release
+    # run in later jobs, so no third-party install code ever runs while this
+    # job can mint an npm OIDC token or push to the repo.
     permissions:
-      contents: write # create the GitHub prerelease
+      contents: read
       id-token: write # npm provenance / trusted publishing (OIDC)
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
       - name: Verify the tag exists and points at the tested commit
         run: |
           set -euo pipefail
@@ -222,6 +227,19 @@ jobs:
             fi
             echo "@git-agentic/sentinel-$p@$VERSION visible, dist-tag alpha OK"
           done
+
+  verify-registry-install:
+    # Installs the just-published packages from the public registry. npm runs
+    # freshly resolved third-party code here (no lockfile), so this job holds
+    # no token at all: no OIDC, no contents write.
+    if: github.event_name == 'workflow_dispatch' && inputs.publish
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
       - name: Install the published packages from the public registry in a clean project
         run: |
           set -euo pipefail
@@ -240,6 +258,21 @@ jobs:
           ./node_modules/.bin/sentinel --version | grep -qx "$VERSION"
           node -e "import('@git-agentic/sentinel-core').then(m=>{if(m.ENGINE_VERSION!=='$VERSION')process.exit(1)})"
           echo "clean-project registry install OK"
+
+  github-release:
+    if: github.event_name == 'workflow_dispatch' && inputs.publish
+    needs: verify-registry-install
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the GitHub prerelease
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-artifacts
+          path: release-artifacts/
       - name: Create the GitHub prerelease (only after npm verification)
         env:
           GH_TOKEN: ${{ github.token }}

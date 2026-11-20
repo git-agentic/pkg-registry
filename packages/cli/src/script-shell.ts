@@ -2,10 +2,11 @@
 import { homedir } from "node:os";
 import { realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import { createSandbox, scrubEnv, resolveProjectRoot } from "@git-agentic/sentinel-sandbox";
+import { createSandbox, scrubEnv, resolveProjectRoot, withPerRunDevdir } from "@git-agentic/sentinel-sandbox";
 import type { SandboxViolation } from "@git-agentic/sentinel-sandbox";
 import type { Capability } from "@git-agentic/sentinel-core";
-import { approvedCapsForManifest, isRootScript, commandFromArgv, EnforceError } from "./enforce.js";
+import { sanitizeTerminal } from "./format.js";
+import { approvedCapsForManifest, assertIntegrityBinding, assertNpmTrustsIntegrity, isRootScript, commandFromArgv, EnforceError } from "./enforce.js";
 import { parseApprovals } from "./index.js";
 import type { Manifest } from "./format.js";
 
@@ -52,26 +53,38 @@ async function main(): Promise<number> {
   const cwd = process.cwd();
   const name = process.env.npm_package_name;
   const version = process.env.npm_package_version;
+  // SENTINEL_ROOT is set by `sentinel install --enforce`; INIT_CWD is package-influenceable (nested npm).
+  const root = process.env.SENTINEL_ROOT;
+  const isRoot = isRootScript(cwd, root);
 
   let approved: Capability[];
-  if (isRootScript(cwd, process.env.INIT_CWD)) {
+  if (isRoot) {
     // The install root's own scripts: operator-supplied approvals only (default: none → strict).
     approved = parseApprovals((process.env.SENTINEL_APPROVE ?? "").split(/\s+/).filter(Boolean));
   } else {
     // A dependency's script: resolve approved capabilities from its proxy manifest (fail closed if unapproved).
+    assertNpmTrustsIntegrity(process.env.npm_config_user_agent);
     const proxy = process.env.SENTINEL_PROXY;
     if (!proxy || !name || !version) {
       throw new EnforceError(`cannot resolve approvals for dependency script (proxy/name/version missing)`);
     }
     const res = await fetch(`${proxy}/-/manifest/${encodeURIComponent(name)}/${encodeURIComponent(version)}`);
     if (!res.ok) throw new EnforceError(`manifest fetch failed for ${name}@${version}: ${res.status}`);
-    approved = approvedCapsForManifest((await res.json()) as Manifest);
+    const manifest = (await res.json()) as Manifest;
+    // name/version are package-declared; only the integrity npm verified ties them to the audited bytes.
+    assertIntegrityBinding(manifest, process.env.npm_package_integrity);
+    approved = approvedCapsForManifest(manifest);
   }
 
-  const env = scrubEnv(process.env, approved);
+  const gyp = withPerRunDevdir(scrubEnv(process.env, approved), approved, homedir());
   const sandbox = createSandbox();   // throws (fail closed) on unsupported platform / missing bwrap
-  const r = sandbox.run(cmd, { cwd, approved, homeDir: homedir(), env, projectRoot: resolveProjectRoot(cwd, process.env.INIT_CWD) });
-  if (r.violation && process.env.SENTINEL_PROXY && name && version && !isRootScript(cwd, process.env.INIT_CWD)) {
+  let r;
+  try {
+    r = sandbox.run(cmd, { cwd, approved: gyp.approved, homeDir: homedir(), env: gyp.env, projectRoot: resolveProjectRoot(cwd, root) });
+  } finally {
+    gyp.cleanup();
+  }
+  if (r.violation && process.env.SENTINEL_PROXY && name && version && !isRoot) {
     await reportViolation(process.env.SENTINEL_PROXY, name, version, r.violation);
   }
   if (r.stdout) process.stdout.write(r.stdout);
@@ -99,7 +112,7 @@ if (isMainModule()) {
     (code) => process.exit(code),
     (err) => {
       const tag = err instanceof EnforceError ? "enforcement" : "error";
-      console.error(`\x1b[31msentinel-script-shell (${tag}): ${(err as Error).message}\x1b[0m`);
+      console.error(`\x1b[31msentinel-script-shell (${tag}): ${sanitizeTerminal(String((err as Error).message))}\x1b[0m`);
       process.exit(70);   // non-zero → npm aborts the install (fail closed)
     },
   );

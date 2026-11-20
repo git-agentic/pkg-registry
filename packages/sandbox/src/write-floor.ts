@@ -5,6 +5,9 @@
  * configurable: widening it silently reopens the persistence class. Per-package
  * needs are met by approved `filesystem:` Grants instead.
  *
+ * The node-gyp header caches are deliberately NOT here (readable only, via the read-allow
+ * list): a shared writable cache is a cross-package poisoning channel. See `withPerRunDevdir`.
+ *
  * `/dev` is here because a blanket `file-write*` deny otherwise blocks
  * `2>/dev/null` and other device writes that ordinary scripts rely on.
  */
@@ -14,8 +17,6 @@ export function writeAllowFloor(opts: { cwd: string; tmpDir: string }): string[]
     opts.tmpDir,         // os.tmpdir() — build tools stage here
     "/tmp",              // firmlink → /private/tmp on macOS (caller canonicalizes)
     "/dev",              // /dev/null, /dev/stdout, ttys
-    "~/.node-gyp",       // node-gyp downloaded headers
-    "~/.cache/node-gyp", // node-gyp cache (XDG)
     "~/.npm/_logs",      // npm lifecycle logs
   ];
 }

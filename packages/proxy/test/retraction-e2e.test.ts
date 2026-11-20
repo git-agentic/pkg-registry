@@ -3,7 +3,7 @@ import { Buffer } from "node:buffer";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, test } from "node:test";
-import { DEFAULT_POLICY, generateKeypair, integrityOf, retractionCorpusHashOfBytes, signToken, type Audit, type EnterprisePolicy, type RetractionCorpus } from "@git-agentic/sentinel-core";
+import { AUDIT_REVISION, DEFAULT_POLICY, ENGINE_VERSION, generateKeypair, integrityOf, retractionCorpusHashOfBytes, signToken, type Audit, type EnterprisePolicy, type RetractionCorpus } from "@git-agentic/sentinel-core";
 import { createServer } from "../src/server.js";
 import { AuditStore } from "../src/store.js";
 import { ApprovalStore } from "../src/approvals.js";
@@ -36,7 +36,7 @@ function audit(name: string, version: string, tarball: Buffer): Audit {
       hasInstallScripts: false, signature: "unsigned", provenance: "absent", unpackedSize: tarball.length, fileCount: 1,
     },
     findings: [], capabilities: [], capabilityDelta: null,
-    engine: { version: "test", rules: [], mode: "full" }, auditedAt: "2026-07-13T00:00:00.000Z", durationMs: 1,
+    engine: { version: ENGINE_VERSION, revision: AUDIT_REVISION, rules: [], mode: "full" }, auditedAt: "2026-07-13T00:00:00.000Z", durationMs: 1,
   };
 }
 
@@ -60,12 +60,13 @@ async function boot(ageHours: number, downloads: number, enterprisePolicy = poli
     authPublicKey,
     history,
     retractionRateLimit,
+    publishTokens: ["publish-token"],
   });
   const server = await new Promise<Server>((resolve) => { const value = app.listen(0, () => resolve(value)); });
   servers.push(server);
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const retract = (reason: "security" | "withdrawn" | "broken" | "legal" = "security", authorization?: string) => fetch(`${base}/-/retractions`, {
-    method: "POST", headers: { "content-type": "application/json", ...(authorization ? { authorization } : {}) },
+    method: "POST", headers: { "content-type": "application/json", ...(authorization ?? (authPublicKey ? undefined : "Bearer publish-token") ? { authorization: authorization ?? "Bearer publish-token" } : {}) },
     body: JSON.stringify({ name: "@acme/widget", version: "2.0.0", reason }),
   });
   return { base, privateStore, store, retract };

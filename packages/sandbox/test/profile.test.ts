@@ -126,14 +126,13 @@ describe("generateProfile — write-deny (Phase 25)", () => {
     assert.ok(denyIdx !== -1, "blanket write-deny present");
     assert.ok(allowIdx > denyIdx, "floor allow comes AFTER the blanket deny (SBPL last-match-wins)");
   });
-  test("the floor re-allows cwd, temp, /private/tmp, /dev and the node caches", () => {
+  test("the floor re-allows cwd, temp, /private/tmp, /dev and npm logs (node-gyp caches are read-only: see security-node-gyp.test.ts)", () => {
     const p = generateProfile([], OPTS);
     for (const frag of [
       `(subpath "/work/pkg")`,
       `(subpath "/private/var/folders/z/T")`, // tmpDir canonicalized
       `(subpath "/private/tmp")`,             // /tmp canonicalized
       `(subpath "/dev")`,
-      `(subpath "/Users/x/.node-gyp")`,
       `(subpath "/Users/x/.npm/_logs")`,
     ]) assert.ok(p.includes(frag), `floor must allow ${frag}`);
   });

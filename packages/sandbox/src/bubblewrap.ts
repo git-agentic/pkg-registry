@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, sep } from "node:path";
 import { generateBwrapArgs } from "./bwrap.js";
@@ -9,6 +9,7 @@ import type { Capability } from "@git-agentic/sentinel-core";
 import { computeDenySet, landlockAllowPaths } from "./deny-set.js";
 import { classifyViolation } from "./violation.js";
 import { nodeInstallPrefix } from "./read-allow.js";
+import { normalizeRunPaths } from "./run-paths.js";
 
 /** bwrap's own errors when the kernel refuses unprivileged user namespaces (Ubuntu 24.04 AppArmor, etc.). */
 const NS_FAILURE = /Creating new namespace failed|No permissions to create new namespace|setting up uid map/i;
@@ -58,6 +59,15 @@ function safeRealpath(p: string): string {
   }
 }
 
+/** Names of the sub-directories of `p`; [] when unreadable. */
+function listDirNames(p: string): string[] {
+  try {
+    return readdirSync(p, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name);
+  } catch {
+    return [];
+  }
+}
+
 /** Enforces a generated bwrap profile via `bwrap`. Fails closed on non-Linux, missing bwrap, or refused namespace. */
 export class BubblewrapSandbox implements Sandbox {
   run(cmd: string, opts: { cwd: string; approved: Capability[]; homeDir: string; env?: NodeJS.ProcessEnv; projectRoot?: string }): SandboxResult {
@@ -71,10 +81,11 @@ export class BubblewrapSandbox implements Sandbox {
   /** Shared by `run` and `runArgv`: build the bwrap mount/deny args, prepend the Landlock
    * helper when active, and invoke `bwrap` with the given argv tail (either `/bin/sh -c cmd`
    * or `file ...args`) as the final command run inside the sandbox. */
-  private execWithTail(tail: string[], opts: { cwd: string; approved: Capability[]; homeDir: string; env?: NodeJS.ProcessEnv; projectRoot?: string }): SandboxResult {
+  private execWithTail(tail: string[], rawOpts: { cwd: string; approved: Capability[]; homeDir: string; env?: NodeJS.ProcessEnv; projectRoot?: string }): SandboxResult {
     if (process.platform !== "linux") {
       throw new Error(`bubblewrap enforcement unavailable on ${process.platform} (Linux required)`);
     }
+    const opts = { ...rawOpts, ...normalizeRunPaths(rawOpts) };
     const useLandlock = landlockActive();
     const nodePrefix = nodeInstallPrefix(process.execPath);
     const projectRoot = opts.projectRoot ?? opts.cwd;
@@ -99,7 +110,7 @@ export class BubblewrapSandbox implements Sandbox {
 
     const args = [
       ...generateBwrapArgs(opts.approved, {
-        homeDir: opts.homeDir, cwd: opts.cwd, tmpDir: tmpdir(), pathExists: existsSync, realpath: safeRealpath,
+        homeDir: opts.homeDir, cwd: opts.cwd, tmpDir: tmpdir(), pathExists: existsSync, realpath: safeRealpath, listDirs: listDirNames,
         nodePrefix, projectRoot,
         // The helper's own directory must stay visible inside the sandbox even when it
         // lands under $HOME (e.g. a CI checkout at ~/work/...) and neither the node

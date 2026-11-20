@@ -3,7 +3,7 @@
 // deliberately a build STEP, not a postinstall hook (adding install-time script
 // execution to a tool that guards against exactly that would be a posture violation).
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -27,11 +27,16 @@ try {
     process.exit(0);
   }
   if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true });
-  const r = spawnSync("cc", ["-O2", "-o", out, src], { stdio: "inherit" });
+  // Compile to a temp name and rename into place: an in-place `cc -o` lets a concurrent exec of
+  // the helper see a half-written or not-yet-executable file (EACCES / ETXTBSY).
+  const tmp = `${out}.${process.pid}.tmp`;
+  const r = spawnSync("cc", ["-O2", "-o", tmp, src], { stdio: "inherit" });
   if (r.status !== 0) {
+    rmSync(tmp, { force: true });
     console.log("[build-native] skip: compile failed — advisory floor will be used");
     process.exit(0);
   }
+  renameSync(tmp, out);
   console.log(`[build-native] built ${out}`);
 } catch (e) {
   console.log(`[build-native] skip: unexpected error (${e?.message ?? e}) — advisory floor will be used`);

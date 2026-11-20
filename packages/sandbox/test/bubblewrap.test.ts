@@ -31,6 +31,14 @@ test("Linux CI must actually run bwrap enforcement (no silent skip)", {
   assert.ok(bwrapWorks, "bwrap cannot create user namespaces in CI — the Linux enforcement tests would silently skip. Check the ci.yml userns mitigation (kernel.apparmor_restrict_unprivileged_userns).");
 });
 
+// Diagnostics for an intermittent CI failure: print bwrap's own error whenever a run exits non-zero.
+const realRun = BubblewrapSandbox.prototype.run;
+BubblewrapSandbox.prototype.run = function (this: BubblewrapSandbox, ...a: Parameters<BubblewrapSandbox["run"]>) {
+  const r = realRun.apply(this, a);
+  if (r.exitCode !== 0 && /bwrap:/.test(r.stderr ?? "")) console.error(`[bwrap-diag] exit ${r.exitCode}: ${r.stderr}`);
+  return r;
+};
+
 describe("BubblewrapSandbox enforcement", { skip }, () => {
   test("a denied credential read leaves the secret unobtained (EFFECT)", () => {
     const home = realpathSync(mkdtempSync(join(tmpdir(), "bw-read-")));
@@ -85,8 +93,8 @@ describe("BubblewrapSandbox enforcement", { skip }, () => {
     assert.ok(existsSync(out), "positive control: node must have written the output file in the first (no-approval) run");
     assert.ok(!(existsSync(out) ? readFileSync(out, "utf8") : "").includes("TOPSECRET-ENV"), "the credential env-var must not have reached the script");
     const approved: Capability[] = [{ kind: "env", target: "SECRET_API_KEY", evidence: [] }];
-    new BubblewrapSandbox().run(cmd, { cwd: work, approved, homeDir: home, env: scrubEnv({ ...process.env, SECRET_API_KEY: "TOPSECRET-ENV" }, approved) });
-    assert.ok(readFileSync(out, "utf8").includes("TOPSECRET-ENV"), "an approved env var is passed through");
+    const r2 = new BubblewrapSandbox().run(cmd, { cwd: work, approved, homeDir: home, env: scrubEnv({ ...process.env, SECRET_API_KEY: "TOPSECRET-ENV" }, approved) });
+    assert.ok(readFileSync(out, "utf8").includes("TOPSECRET-ENV"), `an approved env var is passed through (exit ${r2.exitCode}, stderr: ${r2.stderr})`);
   });
 
   test("a filesystem approval relaxes the credential read deny (EFFECT)", () => {
@@ -96,8 +104,8 @@ describe("BubblewrapSandbox enforcement", { skip }, () => {
     writeFileSync(join(home, ".ssh", "id_rsa"), "APPROVED-SECRET");
     const out = join(work, "out.txt"); // cwd (persists); the approved read of $HOME/.ssh is re-allowed
     const approved: Capability[] = [{ kind: "filesystem", target: ".ssh", evidence: [] }];
-    new BubblewrapSandbox().run(`cat ${join(home, ".ssh", "id_rsa")} > ${out} 2>/dev/null || true`, { cwd: work, approved, homeDir: home });
-    assert.ok(readFileSync(out, "utf8").includes("APPROVED-SECRET"), "an approved filesystem read must succeed");
+    const r = new BubblewrapSandbox().run(`cat ${join(home, ".ssh", "id_rsa")} > ${out} 2>/dev/null || true`, { cwd: work, approved, homeDir: home });
+    assert.ok(existsSync(out) && readFileSync(out, "utf8").includes("APPROVED-SECRET"), `an approved filesystem read must succeed (exit ${r.exitCode}, stderr: ${r.stderr})`);
   });
 
   test("a non-denied path (the Install dir) stays readable and writable inside the sandbox (positive control)", () => {
@@ -116,7 +124,7 @@ describe("BubblewrapSandbox enforcement", { skip }, () => {
     const work = realpathSync(mkdtempSync(join(tmpdir(), "bw-work-")));
     const inside = join(work, "build-output.txt");
     const r = new BubblewrapSandbox().run(`echo OK > "${inside}"`, { cwd: work, approved: [], homeDir: home });
-    assert.equal(r.exitCode, 0);
+    assert.equal(r.exitCode, 0, `bwrap stderr: ${r.stderr}`);
     assert.equal(readFileSync(inside, "utf8").trim(), "OK", "a write inside the floor (cwd) must succeed");
   });
 
