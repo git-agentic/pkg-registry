@@ -86,7 +86,8 @@ describe("round 2 hardening", () => {
     assert.deepEqual(sev("evil", { ...a, ...b }), ["critical"]);
     assert.deepEqual(sev("evil", { ...b, ...a }), ["critical"]);
     assert.deepEqual(sev("evil", { ...a, "package/node_modules/.bin/evil": BENIGN, ...b }), ["critical"]);
-    assert.deepEqual(sev("evil", { ...b, "package/node_modules/.bin/evil": PAYLOAD, ...a }), ["critical"]);
+    // the exact .bin file alone is dangerous
+    assert.deepEqual(sev("evil", { ...a, "package/node_modules/b/package.json": b["package/node_modules/b/package.json"], "package/node_modules/b/y.js": BENIGN, "package/node_modules/.bin/evil": PAYLOAD }), ["critical"]);
   });
   test("a preload flag is parsed only as a flag, with its value unquoted", () => {
     const mod = { "package/node_modules/logger/index.js": PAYLOAD };
@@ -97,7 +98,11 @@ describe("round 2 hardening", () => {
   test("bin targets are exact normalized paths: no .js appended, no `..`", () => {
     const pkg = (bin: string) => ({ "package/node_modules/evil/package.json": JSON.stringify({ bin }) });
     assert.deepEqual(sev("evil", { ...pkg("cli"), "package/node_modules/evil/cli.js": PAYLOAD }), ["low"]);
+    // `..` is clamped at the package root, as npm does
+    assert.deepEqual(sev("evil", { ...pkg("../cli.js"), "package/node_modules/evil/cli.js": PAYLOAD }), ["critical"]);
     assert.deepEqual(sev("evil", { ...pkg("../outside.js"), "package/node_modules/outside.js": PAYLOAD }), ["low"]);
+    assert.deepEqual(sev("evil", { ...pkg("bin\\cli.js"), "package/node_modules/evil/bin/cli.js": PAYLOAD }), ["critical"]);
+    assert.deepEqual(sev("evil", { "package/node_modules/evil/package.json": '{"bin":{"sub/evil":"cli.js"}}', "package/node_modules/evil/cli.js": PAYLOAD }), ["critical"]);
     assert.deepEqual(sev("evil", { ...pkg("./bin/../cli.js"), "package/node_modules/evil/cli.js": PAYLOAD }), ["critical"]);
   });
   test("shell builtins skip the bin lookup unless a wrapper dispatches them", () => {
@@ -106,9 +111,49 @@ describe("round 2 hardening", () => {
     assert.deepEqual(sev("env echo ready", bins), ["critical"]);
     assert.deepEqual(sev("sudo echo ready", bins), ["critical"]);
   });
-  test("a package directory with an over-long name is skipped", () => {
-    const name = "a".repeat(215);
-    assert.deepEqual(sev("evil", { [`package/node_modules/${name}/package.json`]: '{"bin":{"evil":"cli.js"}}', [`package/node_modules/${name}/cli.js`]: PAYLOAD }), ["low"]);
+  test("a package that cannot be enumerated cheaply fails closed: every code file in it counts", () => {
+    const long = "a".repeat(215);
+    const dir = `package/node_modules/${long}`;
+    assert.deepEqual(sev("evil", { [`${dir}/package.json`]: '{"bin":{"evil":"cli.js"}}', [`${dir}/cli.js`]: BENIGN, [`${dir}/lib/other.js`]: PAYLOAD }), ["critical"]);
+    assert.deepEqual(sev(`node -r ${long} setup.js`, { ...setup, [`${dir}/lib/other.js`]: PAYLOAD }), ["critical"]);
+    assert.deepEqual(sev("evil", { [`${dir}/package.json`]: '{"bin":{"evil":"cli.js"}}', [`${dir}/lib/other.js`]: BENIGN }), ["low"]);
+    // an `exports` map over the node bound
+    const exports: Record<string, string> = {};
+    for (let i = 0; i < 1100; i++) exports[`./f${i}`] = `./f${i}.js`;
+    const big = { "package/node_modules/evil/package.json": JSON.stringify({ exports }), "package/node_modules/evil/hidden/run.js": PAYLOAD };
+    assert.deepEqual(sev("node -r evil setup.js", { ...setup, ...big }), ["critical"]);
+    assert.deepEqual(sev("node -r evil setup.js", { ...setup, ...big, "package/node_modules/evil/hidden/run.js": BENIGN }), ["low"]);
+  });
+  test("a quoted assignment resumes prefix parsing after its closing quote", () => {
+    assert.deepEqual(sev("NODE_OPTIONS='-r ./hook' node setup", { "package/hook.js": BENIGN, "package/setup": PAYLOAD }), ["critical"]);
+    assert.deepEqual(sev("NODE_OPTIONS='-r ./hook' node setup", { "package/hook.js": BENIGN, "package/setup": BENIGN }), ["low"]);
+    assert.deepEqual(sev("A='x y' NODE_OPTIONS=--require=./h.js node -v", { "package/h.js": PAYLOAD }), ["critical"]);
+    assert.deepEqual(sev("A='x y' NODE_OPTIONS=--require=./h.js node -v", { "package/h.js": BENIGN }), ["low"]);
+  });
+  test("option text inside a quoted argument is not a preload flag", () => {
+    const mod = { "package/node_modules/evil/index.js": PAYLOAD };
+    assert.deepEqual(sev('NODE_OPTIONS=--title="a --require evil" node -v', mod), ["low"]);
+    assert.deepEqual(sev("NODE_OPTIONS='--title=\"a --require evil\"' node -v", mod), ["low"]);
+  });
+  test("xargs hands its command operand to the bundled-bin lookup", () => {
+    assert.deepEqual(sev("xargs evil-bin", { "package/node_modules/.bin/evil-bin": PAYLOAD }), ["critical"]);
+    assert.deepEqual(sev("xargs evil-bin", { "package/node_modules/.bin/evil-bin": BENIGN }), ["low"]);
+  });
+  test("a dotted relative preload gets .js after a cd too", () => {
+    assert.deepEqual(sev("cd scripts && node -r ./hook.prod setup.js", { ...setup, "package/scripts/hook.prod.js": PAYLOAD }), ["critical"]);
+  });
+  test("a package referenced many times is merged once: stays fast", () => {
+    const exports: Record<string, string> = {};
+    for (let i = 0; i < 900; i++) exports[`./f${i}`] = `./f${i}.js`;
+    const files = { ...setup, "package/node_modules/evil/package.json": JSON.stringify({ exports }) };
+    const t0 = performance.now();
+    assert.deepEqual(sev(`node ${"-r evil ".repeat(20000)}setup.js`, files), ["low"]);
+    const ms = performance.now() - t0;
+    assert.ok(ms < 1000, `took ${ms} ms`);
+  });
+  test("shell builtins outside the portable set still look up bundled bins", () => {
+    assert.deepEqual(sev("let x", { "package/node_modules/.bin/let": PAYLOAD }), ["critical"]);
+    assert.deepEqual(sev("pwd", { "package/node_modules/.bin/pwd": PAYLOAD }), ["low"]);
   });
   row("a dotted relative preload gets .js", "node -r ./hook.prod setup.js", "package/hook.prod.js", setup);
   row("a bundled module reachable only through exports", "node -r evil setup.js", "package/node_modules/evil/lib/cjs.js", {
