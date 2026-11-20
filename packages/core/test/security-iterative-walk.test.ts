@@ -120,6 +120,37 @@ go(o, [], { detached: true });
     assert.deepEqual(loaderSeverities(src), ["critical"]);
   });
 
+  test("a same-named inner local past the scope bound does not kill the enclosing binding's taint", (t) => {
+    const encl = (innerDecl: string) => `
+const { readFileSync: rd, writeFileSync: wr } = require("fs");
+const { spawnSync: go } = require("child_process");
+const { gunzipSync: gz } = require("zlib");
+const p = require("path");
+const blob = rd(p.join(__dirname, "intro.js"));
+const raw = gz(blob);
+const out = p.join(require("os").tmpdir(), ".cache-x");
+wr(out, raw);
+${innerDecl}
+go(out);
+`;
+    const nested = (depth: number, body: string) => `${"function f(){".repeat(depth)}${body}${"}".repeat(depth)}\n`;
+    try { acorn.parse(nested(1004, ""), { ecmaVersion: "latest", sourceType: "script" }); } catch { t.skip("the parser cannot nest this deep on this Node"); return; }
+    // the enclosing function sits just inside, at and past the scope bound; an inner function beyond it redeclares `out`
+    for (let depth = 996; depth <= 1003; depth++) {
+      for (const inner of ['function inner() { const out = "benign"; }', 'function inner() { var out = "benign"; out = "x"; }']) {
+        const src = nested(depth, encl(inner));
+        const a = loaderChain.analyzeLoaderChain(src);
+        assert.equal(a.parseFailed, false, `depth ${depth}`);
+        assert.equal(a.correlated, true, `depth ${depth}: ${inner}`);
+      }
+    }
+    assert.deepEqual(loaderSeverities(nested(999, encl('function inner() { const out = "benign"; }'))), ["critical"]);
+    // within the bound exact semantics are kept: a reassignment in the same scope still kills the taint (kill-on-reassign)
+    const killed = encl("").replace("go(out);", 'out = "benign";\ngo(out);').replace("const out =", "let out =");
+    assert.equal(loaderChain.analyzeLoaderChain(killed).correlated, false);
+    assert.equal(loaderChain.analyzeLoaderChain(nested(50, killed)).correlated, false);
+  });
+
   test("a padded benign file that only mentions the four names is not critical", () => {
     assert.equal(loaderSeverities(PAD(60000) + BENIGN).includes("critical"), false);
     assert.deepEqual(loaderSeverities(PAD(60000) + BENIGN), []);

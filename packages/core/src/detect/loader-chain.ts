@@ -79,7 +79,8 @@ function isStackOverflow(e: unknown): boolean {
   return e instanceof RangeError || (e instanceof SyntaxError && e.message.startsWith("Not enough stack space"));
 }
 
-type Visitor = (node: any, st: any, ancestors: any[], scopeChain: any[]) => void;
+/** `merged`: the node sits inside a function nested past MAX_SCOPE_DEPTH, whose bindings are UNION-ONLY (never replace or kill). */
+type Visitor = (node: any, st: any, ancestors: any[], scopeChain: any[], merged: boolean) => void;
 
 /**
  * acorn-walk's `ancestor` without recursion: the same nodes, in the same order (a node's visitor runs after its
@@ -91,6 +92,7 @@ type Visitor = (node: any, st: any, ancestors: any[], scopeChain: any[]) => void
 export function walkAncestor(root: any, visitors: Record<string, Visitor>): void {
   const ancestors: any[] = [];
   const scopes: any[] = []; // outermost → innermost
+  let merged = 0; // functions currently open beyond the scope bound
   // A frame holds its node's child list and an index into it: only the active path is held, never every child at once.
   type Frame = { node: any; type: string; isNew: boolean; list: any[]; ov: string | (string | undefined)[] | undefined; next: number };
   const stack: Frame[] = [];
@@ -102,7 +104,7 @@ export function walkAncestor(root: any, visitors: Record<string, Visitor>): void
       if (++visited > MAX_WALK_NODES) throw new WalkBoundError("loader-chain: node bound exceeded");
       ancestors.push(node);
       // Past MAX_SCOPE_DEPTH a deeper function joins the deepest tracked scope (over-approximation: taint is never lost).
-      if (isScope(node) && scopes.length < MAX_SCOPE_DEPTH) scopes.push(node);
+      if (isScope(node)) { if (scopes.length < MAX_SCOPE_DEPTH) scopes.push(node); else merged++; }
     }
     const visit = (walkBase as Record<string, any>)[type];
     if (visit == null) throw new Error(`No walker function defined for node type ${type}`);
@@ -118,8 +120,8 @@ export function walkAncestor(root: any, visitors: Record<string, Visitor>): void
   while (stack.length) {
     const f = stack[stack.length - 1]!;
     if (f.next < f.list.length) { const i = f.next++; if (f.list[i]) enter(f.list[i], typeof f.ov === "string" ? f.ov : f.ov?.[i]); continue; } // holes are skipped
-    visitors[f.type]?.(f.node, ancestors, ancestors, scopes.slice().reverse());
-    if (f.isNew) { ancestors.pop(); if (scopes[scopes.length - 1] === f.node) scopes.pop(); }
+    visitors[f.type]?.(f.node, ancestors, ancestors, scopes.slice().reverse(), merged > 0);
+    if (f.isNew) { ancestors.pop(); if (scopes[scopes.length - 1] === f.node) scopes.pop(); else if (isScope(f.node)) merged--; }
     stack.pop();
   }
 }
@@ -164,6 +166,11 @@ export function analyzeLoaderChain(source: string, opts: { moduleLoadReachable?:
     let m = taint.get(s);
     if (!m) { m = new Map(); taint.set(s, m); }
     return m;
+  };
+  /** Exact scopes REPLACE a binding's taint (kill-on-reassign); a merged scope is a "may" scope and only adds to it. */
+  const putTaint = (m: Map<string, Set<Tag>>, name: string, tags: Set<Tag>, merged: boolean): void => {
+    const cur = merged ? m.get(name) : undefined;
+    if (cur) for (const t of tags) cur.add(t); else m.set(name, tags);
   };
   const lookupTaint = (chain: any[], name: string): Set<Tag> | undefined => {
     for (const s of chain) { const t = taint.get(s)?.get(name); if (t) return t; }
@@ -442,21 +449,21 @@ export function analyzeLoaderChain(source: string, opts: { moduleLoadReachable?:
         }
       }
     },
-    VariableDeclarator(node: any, _st: any, _ancestors: any[], chain: any[]) {
+    VariableDeclarator(node: any, _st: any, _ancestors: any[], chain: any[], merged: boolean) {
       if (!node.init) { if (node.id?.type === "Identifier") declInit.delete(node.id.name); return; }
       bindFromInit(node.id, node.init);
       if (node.id?.type !== "Identifier") return;
       const name = node.id.name;
       declInit.set(name, node.init);
       const relevant = new Set<Tag>([...payloadTags(node.init, chain)].filter((t) => t === "read" || t === "decoded"));
-      scopeTaint(chain[0]).set(name, relevant);   // declaration REPLACES
+      putTaint(scopeTaint(chain[0]), name, relevant, merged);   // declaration REPLACES (UNION in a merged scope)
     },
-    AssignmentExpression(node: any, _st: any, _ancestors: any[], chain: any[]) {
+    AssignmentExpression(node: any, _st: any, _ancestors: any[], chain: any[], merged: boolean) {
       if (node.operator !== "=" || node.left.type !== "Identifier") return;
       const name = node.left.name;
       declInit.set(name, node.right);
       const relevant = new Set<Tag>([...payloadTags(node.right, chain)].filter((t) => t === "read" || t === "decoded"));
-      scopeTaint(declaringScope(chain, name)).set(name, relevant);   // reassignment REPLACES (kill-on-reassign, S2)
+      putTaint(scopeTaint(declaringScope(chain, name)), name, relevant, merged);   // reassignment REPLACES (kill-on-reassign, S2; UNION in a merged scope)
     },
     CallExpression(node: any, _st: any, _ancestors: any[], chain: any[]) {
       const cat = classifyCall(node);
