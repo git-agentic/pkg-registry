@@ -1,4 +1,4 @@
-import type { AuditReport, Remediation } from "@git-agentic/sentinel-core";
+import type { AuditReport, Coordinate, Remediation } from "@git-agentic/sentinel-core";
 
 export class ProxyError extends Error {
   constructor(message: string, readonly status?: number) {
@@ -86,7 +86,7 @@ export class ProxyClient {
     return this.getJson<ManifestResponse>(`/-/manifest/${encodeURIComponent(pkg)}/${encodeURIComponent(v)}`);
   }
 
-  async auditTree(packages: { name: string; version: string }[]): Promise<{ aggregate: { verdict: string; gated: boolean; counts: Record<string, number> }; packages: unknown[] }> {
+  async auditTree(packages: Coordinate[]): Promise<{ aggregate: { verdict: string; gated: boolean; counts: Record<string, number> }; packages: unknown[] }> {
     return this.postJson(`/-/audit-tree`, { packages });
   }
 

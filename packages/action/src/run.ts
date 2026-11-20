@@ -43,7 +43,7 @@ function detectLockfile(cwd: string, explicit?: string): string {
 }
 
 /** Workflow-command data escaping, as @actions/core does: a newline in a finding must not start a new command. */
-function escapeData(s: string): string {
+export function escapeData(s: string): string {
   return s.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
 }
 
@@ -71,7 +71,7 @@ export async function runCi(opts: RunCiOptions): Promise<CiResult> {
     approvalRequests: new ApprovalRequestStore(),
   });
   const server: Server = await new Promise((resolve, reject) => {
-    const s = app.listen(0, () => resolve(s));
+    const s = app.listen(0, "127.0.0.1", () => resolve(s));
     s.once("error", reject);
   });
   try {

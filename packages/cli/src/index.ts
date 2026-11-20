@@ -23,7 +23,7 @@ import { createSandbox, runLifecycleScripts, scrubEnv } from "@git-agentic/senti
 import { formatReport, formatManifest, verdictExitCode, formatTree, treeExitCode, formatViolations, formatStats, formatHistory, formatExplain, formatLint, formatPreview, sanitizeTerminal, type Manifest, type ViolationRow, type ExplainResult, type PreviewResult } from "./format.js";
 import { packageCoordinateFromTarball } from "./scan-coordinate.js";
 
-const DEFAULT_PROXY = process.env.SENTINEL_PROXY ?? "http://localhost:4873";
+const DEFAULT_PROXY = process.env.SENTINEL_PROXY ?? "http://127.0.0.1:4873";
 
 const program = new Command();
 program

@@ -47,6 +47,8 @@ interface Application extends ClaimApplicationInput, ClaimChallenge {
   upstreamPackument: unknown | null;
   issuedAt: string;
   verifiedAt?: string;
+  /** Set once the challenge has served as a claim's proof; a proof is never adopted twice. */
+  consumed?: true;
 }
 
 interface PendingGrant {
@@ -191,7 +193,9 @@ export class ClaimSteward {
     this.assertFresh(application);
     const records = await resolveTxt(application.domain);
     const passed = records.some((parts) => parts.join("") === application.txtValue);
-    if (passed) { application.verifiedAt = iso(this.now()); this.persist(); }
+    this.assertFresh(application); // the lookup may have outlived the challenge
+    // verifiedAt is fixed at the first pass: re-verifying never refreshes (and so never revives) an old proof.
+    if (passed && !application.verifiedAt) { application.verifiedAt = iso(this.now()); this.persist(); }
     return passed;
   }
 
@@ -203,6 +207,7 @@ export class ClaimSteward {
     if (evidenceRef !== undefined && (typeof evidenceRef !== "string" || !evidenceRef)) throw new Error("evidenceRef must be a non-empty string");
     // The tier fixed at issuance can be stale (the name may have been taken since): recompute from fresh upstream evidence.
     const evidence = await this.lookupUpstream(application.namespace);
+    this.assertFresh(application);
     // No awaits below, so these checks and the writes are atomic with respect to other requests.
     application.tier = evidenceTier(evidence, application.domain);
     application.upstreamPackument = evidence.kind === "absent" ? null : evidence.packument;
@@ -218,10 +223,12 @@ export class ClaimSteward {
       this.pendingGrants.set(application.namespace, {
         claim, announcedAt, effectiveAt: iso(this.now() + 30 * DAY), evidenceRef,
       });
+      application.consumed = true;
       this.persist();
       return;
     }
     this.claims.set(application.namespace, claim);
+    application.consumed = true;
     this.persist();
   }
 
@@ -230,6 +237,7 @@ export class ClaimSteward {
     if (claim.status !== "active" || claim.pending) throw new Error("transfer requires an active claim with no pending change");
     const target = this.application(targetChallengeId);
     this.assertFresh(target);
+    if (target.consumed) throw new Error("transfer target challenge was already used as a proof");
     if (!target.verifiedAt) throw new Error("transfer target requires a passed challenge");
     if (target.namespace !== namespace) throw new Error("transfer challenge namespace mismatch");
     const request = { namespace, targetDomain: target.domain, targetChallengeId, targetClaimantPublicKey: target.claimantPublicKey,
@@ -244,6 +252,7 @@ export class ClaimSteward {
       kind: "transfer", announcedAt, effectiveAt: iso(this.now() + 30 * DAY), targetDomain: target.domain,
       targetClaimantPublicKey: target.claimantPublicKey, challenge: this.proof(target), authorizedBy: oldClaimantSignature,
     };
+    target.consumed = true;
     this.persist();
   }
 
@@ -256,6 +265,7 @@ export class ClaimSteward {
     const claim = this.claim(namespace);
     const target = this.application(targetChallengeId);
     this.assertFresh(target);
+    if (target.consumed) throw new Error("ruling challenge was already used as a proof");
     if (claim.status !== "disputed") throw new Error("claim is not disputed");
     if (!target.verifiedAt) throw new Error("ruling target requires a passed challenge");
     if (target.namespace !== namespace) throw new Error("ruling challenge namespace mismatch");
@@ -264,6 +274,7 @@ export class ClaimSteward {
     claim.pending = { kind: "dispute-ruling", announcedAt, effectiveAt: iso(this.now() + 30 * DAY),
       targetDomain: target.domain, targetClaimantPublicKey: target.claimantPublicKey,
       challenge: this.proof(target), authorizedBy: evidenceRef };
+    target.consumed = true;
     this.persist();
   }
 
@@ -273,6 +284,7 @@ export class ClaimSteward {
     if (claim.status === "disputed") throw new Error("claim is disputed: renewal cannot clear a dispute");
     if (application.namespace !== namespace) throw new Error("renewal challenge namespace mismatch");
     this.assertFresh(application);
+    if (application.consumed) throw new Error("renewal requires a fresh challenge: this one was already used as a proof");
     if (!application.verifiedAt || application.domain !== claim.domain) throw new Error("renewal requires a passed challenge by the same domain");
     if (Date.parse(application.verifiedAt) <= Date.parse(claim.challenge.verifiedAt)) {
       throw new Error("renewal requires a fresh challenge verified after the claim's current proof");
@@ -280,6 +292,7 @@ export class ClaimSteward {
     claim.challenge = this.proof(application);
     claim.renewalDueAt = renewalDue(application.verifiedAt);
     claim.status = "active";
+    application.consumed = true;
     this.persist();
   }
 
@@ -432,6 +445,11 @@ export class ClaimSteward {
       this.applications.set(application.id, application);
     }
     for (const claim of parsedClaims) this.claims.set(claim.namespace, claim);
+    // State written before `consumed` existed: every proof a claim holds or announced is already spent.
+    for (const claim of parsedClaims) for (const proof of [claim.challenge, claim.pending?.challenge]) {
+      const spent = proof && this.applications.get(proof.id);
+      if (spent) spent.consumed = true;
+    }
     for (const candidate of state.pendingGrants as PendingGrant[]) {
       const pending = candidate as PendingGrant;
       if (!pending?.claim || !isCanonicalInstant(pending.announcedAt) || !isCanonicalInstant(pending.effectiveAt) ||
@@ -446,6 +464,8 @@ export class ClaimSteward {
         throw new Error("invalid steward state: overlapping pending grant");
       }
       this.pendingGrants.set(parsed.namespace, { ...pending, claim: parsed });
+      const spent = this.applications.get(parsed.challenge.id);
+      if (spent) spent.consumed = true;
     }
     const retractions = state.retractions ?? [];
     if (!Array.isArray(retractions)) throw new Error("invalid steward state: retractions must be an array");

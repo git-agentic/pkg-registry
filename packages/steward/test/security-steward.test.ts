@@ -280,6 +280,50 @@ describe("freezes and pending changes (review follow-ups)", () => {
   });
 });
 
+describe("review round 1: proofs are single-use and freshness holds across awaits", () => {
+  test("re-verifying a used challenge does not revive it as a renewal, so an old transfer signature stays dead", async () => {
+    const c = clock();
+    const oldKey = generateKeypair();
+    const newKey = generateKeypair();
+    const steward = new ClaimSteward({ ...c.options, lookupUpstream: absent });
+    const c1 = await verified(steward, { namespace: "pkg", domain: "old.example", claimantPublicKey: oldKey.publicKey });
+    await steward.approve(c1.id);
+    const target = await verified(steward, { namespace: "pkg", domain: "new.example", claimantPublicKey: newKey.publicKey });
+    const sigOnC1 = signTransferRequest({ namespace: "pkg", targetDomain: "new.example", targetChallengeId: target.id,
+      targetClaimantPublicKey: newKey.publicKey, currentChallengeId: c1.id }, oldKey.privateKey);
+    c.state.now += DAY;
+    const c2 = await verified(steward, { namespace: "pkg", domain: "old.example", claimantPublicKey: oldKey.publicKey });
+    steward.renew("pkg", c2.id);
+    c.state.now += DAY;
+    // Re-verify C1 (its TXT record is still published), then try to restore it as the claim's proof.
+    assert.equal(await steward.verifyChallenge(c1.id, async () => [[c1.txtValue]]), true);
+    assert.throws(() => steward.renew("pkg", c1.id), /fresh|already|used/i);
+    assert.throws(() => steward.requestTransfer("pkg", target.id, sigOnC1), /valid old claimant signature/);
+    assert.equal(steward.release("after-replay").corpus.claims[0]?.challenge.id, c2.id);
+  });
+
+  test("verifyChallenge re-checks expiry after the DNS lookup", async () => {
+    const c = clock();
+    const steward = new ClaimSteward({ ...c.options, lookupUpstream: absent });
+    const app = await steward.issueChallenge({ namespace: "pkg", domain: "acme.example", claimantPublicKey: claimant.publicKey });
+    c.state.now += 29 * DAY + 23 * 3600_000;
+    await assert.rejects(steward.verifyChallenge(app.id, async () => { c.state.now += 2 * 3600_000; return [[app.txtValue]]; }), /expired/i);
+    c.state.now -= 2 * 3600_000;
+    await assert.rejects(async () => steward.approve(app.id), /passed challenge/i);
+  });
+
+  test("approve re-checks expiry after the upstream lookup", async () => {
+    const c = clock();
+    let slow = false;
+    const steward = new ClaimSteward({ ...c.options, lookupUpstream: async () => { if (slow) c.state.now += 2 * 3600_000; return { kind: "absent" }; } });
+    const app = await verified(steward, { namespace: "pkg", domain: "acme.example", claimantPublicKey: claimant.publicKey });
+    c.state.now += 29 * DAY + 23 * 3600_000;
+    slow = true;
+    await assert.rejects(async () => steward.approve(app.id), /expired/i);
+    assert.equal(steward.release("none").corpus.claims.length, 0);
+  });
+});
+
 describe("steward bind address", () => {
   const CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "dist", "index.js");
 
