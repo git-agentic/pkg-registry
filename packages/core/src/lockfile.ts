@@ -144,9 +144,6 @@ function parseYarnBerry(raw: string): Coordinate[] {
   const byKey = new Map<string, Coordinate>();
   for (const [key, entry] of Object.entries(doc)) {
     if (key === "__metadata" || !entry || typeof entry !== "object") continue;
-    const name = yarnBerryName(key);
-    const version = entry.version;
-    if (!name || !version) continue;
     const resolution = typeof entry.resolution === "string" ? entry.resolution : "";
     // Parse the locator structurally (`<name>@<protocol>:<rest>`); a substring test lets a
     // tarball URL containing "@npm:" or "@file:" pass as registry or local.
@@ -154,9 +151,13 @@ function parseYarnBerry(raw: string): Coordinate[] {
     const protocol = locator?.[2];
     // Local sources and patch overlays (the patched `npm:` base is its own entry) are not registry coordinates.
     if (protocol && BERRY_LOCAL_PROTOCOLS.has(protocol)) continue;
+    // The resolution names what yarn fetches (an alias key names something else).
+    const name = locator?.[1] ?? (yarnBerryName(key) || key);
+    const version = typeof entry.version === "string" && entry.version ? entry.version : "0.0.0";
     const coord: Coordinate = { name, version }; // berry checksum is not SRI → no integrity
-    const registry = protocol === "npm" && /^[^\s#?/:@]+$/.test(locator![3]!);
-    if (resolution && !registry) coord.nonRegistry = resolution;
+    const registry = protocol === "npm" && /^[^\s#?/:@]+$/.test(locator![3]!) && version === entry.version;
+    // Anything not provably a registry coordinate gates as non-registry; never skip it.
+    if (!registry) coord.nonRegistry = resolution || key;
     putCoord(byKey, coord);
   }
   return sortCoords([...byKey.values()]);

@@ -123,6 +123,30 @@ lodash@^4.17.0:
     assert.equal(by["@scope/ok"]?.nonRegistry, undefined);
   });
 
+  test("yarn berry: an alias audits the resolved name, and an unparseable entry gates instead of vanishing", () => {
+    const raw = `__metadata:
+  version: 6
+
+"pretty@npm:real@^1.0.0":
+  version: 1.0.0
+  resolution: "real@npm:1.0.0"
+  languageName: node
+  linkType: hard
+
+"???weird???":
+  version: 2.0.0
+  resolution: "???weird???"
+  languageName: node
+  linkType: hard
+`;
+    const coords = parseYarnLock(raw);
+    const real = coords.find((c) => c.name === "real");
+    assert.ok(real, "alias entry is audited under the name yarn fetches");
+    assert.equal(real.nonRegistry, undefined);
+    const weird = coords.find((c) => c.nonRegistry === "???weird???");
+    assert.ok(weird, "unparseable entry is emitted as non-registry, not skipped");
+  });
+
   test("pnpm: git and tarball resolutions are flagged, directory entries are skipped, registry stays clean", () => {
     const raw = `lockfileVersion: '9.0'
 
