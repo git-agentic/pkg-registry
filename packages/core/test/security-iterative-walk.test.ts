@@ -80,11 +80,30 @@ describe("a deep expression no longer defeats the dataflow analysis", () => {
     }
   });
 
-  test("deeply nested parens, arrays and binary chains overflow acorn's parser, not the walk", () => {
-    // acorn raises a SyntaxError ("Not enough stack space") for these, so they take the parse-failure path.
+  test("a parser stack overflow takes the overflow path; a genuine syntax error does not", () => {
+    // acorn raises a SyntaxError ("Not enough stack space") for deep parens, arrays and binary chains.
     for (const pad of [`${"(".repeat(60000)}x${")".repeat(60000)};\n`, `${"[".repeat(60000)}${"]".repeat(60000)};\n`, `1${"+1".repeat(60000)};\n`]) {
-      assert.equal(loaderChain.analyzeLoaderChain(pad + CHAIN).parseFailed, true, pad.slice(0, 12));
+      const a = loaderChain.analyzeLoaderChain(pad + CHAIN);
+      assert.equal(a.parseFailed, true, pad.slice(0, 12));
+      assert.equal(a.walkOverflow, true, pad.slice(0, 12));
     }
+    assert.notEqual(loaderChain.analyzeLoaderChain("const x = ;\n" + "(".repeat(5000)).walkOverflow, true);
+  });
+
+  test("a chain padded with 700 nested parens stays critical (loose fallback), also with renamed primitives", () => {
+    const pad = `${"(".repeat(700)}x${")".repeat(700)};\n`;
+    const RENAMED_ZLIB = `
+const { readFileSync: r, writeFileSync: w } = require("fs"), { gunzipSync: g } = require("zlib"), { spawn: go } = require("child_process");
+const path = require("path"), os = require("os");
+const o = path.join(os.tmpdir(), ".x");
+w(o, g(r(path.join(__dirname, "intro.js"))));
+go(o, [], { detached: true });
+`;
+    assert.deepEqual(loaderSeverities(RENAMED_ZLIB), ["critical"]); // control
+    assert.equal(loaderChain.analyzeLoaderChain(pad + RENAMED_ZLIB).walkOverflow, true);
+    assert.deepEqual(loaderSeverities(pad + RENAMED_ZLIB), ["critical"]);
+    // and a benign file that only mentions one name is still not critical
+    assert.deepEqual(loaderSeverities(`${pad}const {readFileSync:r}=require("fs");module.exports=()=>r("a");`), []);
   });
 
   test("a padded benign file that only mentions the four names is not critical", () => {

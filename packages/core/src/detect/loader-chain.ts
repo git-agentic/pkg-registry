@@ -67,6 +67,11 @@ const MAX_WALK_NODES = 2_000_000;
 /** Scope nesting the walk follows (each analysis callback costs O(scope depth)); real code nests far less. */
 const MAX_SCOPE_DEPTH = 1000;
 
+/** Hostile nesting defeated the parser or the walk: a RangeError, or acorn's own "Not enough stack space" SyntaxError. A genuine syntax error is neither. */
+function isStackOverflow(e: unknown): boolean {
+  return e instanceof RangeError || (e instanceof SyntaxError && e.message.startsWith("Not enough stack space"));
+}
+
 type Visitor = (node: any, st: any, ancestors: any[], scopeChain: any[]) => void;
 
 /**
@@ -125,7 +130,7 @@ export function analyzeLoaderChain(source: string, opts: { moduleLoadReachable?:
     try {
       ast = acorn.parse(source, { ecmaVersion: "latest", sourceType: "script", allowReturnOutsideFunction: true, allowHashBang: true });
     } catch (e) {
-      return { primitives: [], correlated: false, boosters: { tempOrHidden: false, chmod: false, detached: false, unref: false, moduleLoad: false }, parseFailed: true, walkOverflow: e instanceof RangeError };
+      return { primitives: [], correlated: false, boosters: { tempOrHidden: false, chmod: false, detached: false, unref: false, moduleLoad: false }, parseFailed: true, walkOverflow: isStackOverflow(e) };
     }
   }
 
@@ -517,7 +522,7 @@ export function analyzeLoaderChain(source: string, opts: { moduleLoadReachable?:
   });
   boosters.moduleLoad = Boolean(opts.moduleLoadReachable) && topLevelExecution(ast);
   } catch (e) {
-    return { primitives: [], correlated: false, boosters: { tempOrHidden: false, chmod: false, detached: false, unref: false, moduleLoad: false }, parseFailed: true, walkOverflow: e instanceof RangeError };
+    return { primitives: [], correlated: false, boosters: { tempOrHidden: false, chmod: false, detached: false, unref: false, moduleLoad: false }, parseFailed: true, walkOverflow: isStackOverflow(e) };
   }
 
   return { primitives, correlated, boosters, parseFailed: false };
