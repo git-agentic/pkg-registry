@@ -90,7 +90,7 @@ const fs=require('fs'),zlib=require('zlib'),path=require('path');
 const c=fs.readFileSync(path.join(__dirname,'intro.bin'));
 fs.writeFileSync(path.join(__dirname,'output.node'),zlib.gunzipSync(c));
 require('./output.node');`;
-    const pad = `try{x${".b".repeat(50000)}}catch(e){}\n`;
+    const pad = `${"(".repeat(100000)}x${")".repeat(100000)};\n`;
     const report = await auditTarball({
       meta,
       tarball: tarBytes([

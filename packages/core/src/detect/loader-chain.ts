@@ -1,5 +1,5 @@
 import * as acorn from "acorn";
-import * as walk from "acorn-walk";
+import { base as walkBase } from "acorn-walk";
 import { lineLocator } from "../rules/util.js";
 
 export interface LoaderPrimitive {
@@ -15,7 +15,10 @@ export interface LoaderPrimitive {
 export interface LoaderBoosters { tempOrHidden: boolean; chmod: boolean; detached: boolean; unref: boolean; moduleLoad: boolean }
 export interface LoaderAnalysis { primitives: LoaderPrimitive[]; correlated: boolean; boosters: LoaderBoosters; parseFailed: boolean;
   /** Stack overflow while parsing or walking (hostile nesting), not a syntax error: the caller must not downgrade a regex chain hit. */
-  walkOverflow?: boolean }
+  walkOverflow?: boolean;
+  /** The walk hit its node or scope bound: unreachable for real input, so it is a safety stop, not a stack overflow. The
+   *  caller uses the STRICT fallback (like a parse failure), never the loose overflow one. */
+  walkTruncated?: boolean }
 
 /** Bounded, deterministic taint tags a variable can carry. */
 type Tag = "read" | "decoded" | "written-path";
@@ -61,9 +64,66 @@ function snip(src: string, node: any): string {
 function isScope(n: any): boolean {
   return n.type === "Program" || n.type === "FunctionDeclaration" || n.type === "FunctionExpression" || n.type === "ArrowFunctionExpression";
 }
-/** Scope chain innermost → outermost (Program) from an acorn-walk ancestor list. */
-function scopeChain(ancestors: any[]): any[] {
-  return ancestors.filter(isScope).reverse();
+
+/**
+ * Safety bounds of the walk. A retained file is at most 2 MiB and yields at most about one node per byte, so the node
+ * bound is unreachable for real input. Each callback costs O(scope depth), so scopes nested deeper than the scope
+ * bound are merged into the deepest tracked one (the walk goes on) rather than tracked.
+ */
+const MAX_WALK_NODES = 4_194_304;
+const MAX_SCOPE_DEPTH = 1000;
+class WalkBoundError extends Error {}
+
+/** Hostile nesting defeated the parser or the walk: a RangeError, or acorn's own "Not enough stack space" SyntaxError. A genuine syntax error is neither. */
+function isStackOverflow(e: unknown): boolean {
+  return e instanceof RangeError || (e instanceof SyntaxError && e.message.startsWith("Not enough stack space"));
+}
+
+/** `merged`: the node sits inside a function nested past MAX_SCOPE_DEPTH, whose bindings are UNION-ONLY (never replace or kill). */
+type Visitor = (node: any, st: any, ancestors: any[], scopeChain: any[], merged: boolean) => void;
+
+/**
+ * acorn-walk's `ancestor` without recursion: the same nodes, in the same order (a node's visitor runs after its
+ * children), with the same ancestor list. acorn-walk's base visitors only call back for children, so each node's
+ * children are collected first and then walked from an explicit stack. The visitor also receives the scope chain
+ * (innermost → outermost), kept incrementally so a deep expression does not make every callback O(depth).
+ * Deterministic bounds: MAX_WALK_NODES throws a WalkBoundError; past MAX_SCOPE_DEPTH scopes merge instead of aborting.
+ */
+export function walkAncestor(root: any, visitors: Record<string, Visitor>): void {
+  const ancestors: any[] = [];
+  const scopes: any[] = []; // outermost → innermost
+  let merged = 0; // functions currently open beyond the scope bound
+  // A frame holds its node's child list and an index into it: only the active path is held, never every child at once.
+  type Frame = { node: any; type: string; isNew: boolean; list: any[]; ov: string | (string | undefined)[] | undefined; next: number };
+  const stack: Frame[] = [];
+  let visited = 0;
+  const enter = (node: any, override?: string): void => {
+    const type = override || node.type;
+    const isNew = node !== ancestors[ancestors.length - 1]; // an override re-enters the same node
+    if (isNew) {
+      if (++visited > MAX_WALK_NODES) throw new WalkBoundError("loader-chain: node bound exceeded");
+      ancestors.push(node);
+      // Past MAX_SCOPE_DEPTH a deeper function joins the deepest tracked scope (over-approximation: taint is never lost).
+      if (isScope(node)) { if (scopes.length < MAX_SCOPE_DEPTH) scopes.push(node); else merged++; }
+    }
+    const visit = (walkBase as Record<string, any>)[type];
+    if (visit == null) throw new Error(`No walker function defined for node type ${type}`);
+    // acorn-walk walks these lists in order: every statement of `body` ("Statement"), every non-hole array element.
+    if (type === "Program" || type === "BlockStatement" || type === "StaticBlock") { stack.push({ node, type, isNew, list: node.body, ov: "Statement", next: 0 }); return; }
+    if (type === "ArrayExpression" || type === "ArrayPattern") { stack.push({ node, type, isNew, list: node.elements, ov: type === "ArrayExpression" ? "Expression" : "Pattern", next: 0 }); return; }
+    const list: any[] = [];
+    const ov: (string | undefined)[] = [];
+    visit(node, undefined, (child: any, _st: any, o?: string) => { list.push(child); ov.push(o); });
+    stack.push({ node, type, isNew, list, ov, next: 0 });
+  };
+  enter(root);
+  while (stack.length) {
+    const f = stack[stack.length - 1]!;
+    if (f.next < f.list.length) { const i = f.next++; if (f.list[i]) enter(f.list[i], typeof f.ov === "string" ? f.ov : f.ov?.[i]); continue; } // holes are skipped
+    visitors[f.type]?.(f.node, ancestors, ancestors, scopes.slice().reverse(), merged > 0);
+    if (f.isNew) { ancestors.pop(); if (scopes[scopes.length - 1] === f.node) scopes.pop(); else if (isScope(f.node)) merged--; }
+    stack.pop();
+  }
 }
 
 /**
@@ -78,11 +138,12 @@ export function analyzeLoaderChain(source: string, opts: { moduleLoadReachable?:
   let ast: any;
   try {
     ast = acorn.parse(source, { ecmaVersion: "latest", sourceType: "module", allowReturnOutsideFunction: true, allowAwaitOutsideFunction: true, allowHashBang: true });
-  } catch {
+  } catch (moduleError) {
     try {
       ast = acorn.parse(source, { ecmaVersion: "latest", sourceType: "script", allowReturnOutsideFunction: true, allowHashBang: true });
     } catch (e) {
-      return { primitives: [], correlated: false, boosters: { tempOrHidden: false, chmod: false, detached: false, unref: false, moduleLoad: false }, parseFailed: true, walkOverflow: e instanceof RangeError };
+      // Either attempt may have exhausted the stack (a module file with deep nesting then also fails the script retry on `export`).
+      return { primitives: [], correlated: false, boosters: { tempOrHidden: false, chmod: false, detached: false, unref: false, moduleLoad: false }, parseFailed: true, walkOverflow: isStackOverflow(moduleError) || isStackOverflow(e) };
     }
   }
 
@@ -106,9 +167,23 @@ export function analyzeLoaderChain(source: string, opts: { moduleLoadReachable?:
     if (!m) { m = new Map(); taint.set(s, m); }
     return m;
   };
+  // Functions nested past the scope bound are "may" scopes: their declarations and assignments never touch the tracked
+  // scopes. They only add to this name → tags overlay, which is never a shadowing entry and may outlive the function.
+  const mergedTaint = new Map<string, Set<Tag>>();
+  const addMerged = (name: string, tags: Iterable<Tag>): void => {
+    const cur = mergedTaint.get(name) ?? mergedTaint.set(name, new Set()).get(name)!;
+    for (const t of tags) cur.add(t);
+  };
+  /** Exact scopes REPLACE a binding's taint (kill-on-reassign); a merged scope only adds to the overlay. */
+  const putTaint = (scope: any, name: string, tags: Set<Tag>, merged: boolean): void => {
+    if (merged) addMerged(name, tags); else scopeTaint(scope).set(name, tags);
+  };
+  /** Lexical resolution unioned with the merged overlay for that name. */
   const lookupTaint = (chain: any[], name: string): Set<Tag> | undefined => {
-    for (const s of chain) { const t = taint.get(s)?.get(name); if (t) return t; }
-    return undefined;
+    let found: Set<Tag> | undefined;
+    for (const s of chain) { const t = taint.get(s)?.get(name); if (t) { found = t; break; } }
+    const o = mergedTaint.get(name);
+    return !o ? found : !found ? o : new Set([...found, ...o]);
   };
   const declaringScope = (chain: any[], name: string): any => {
     for (const s of chain) { if (taint.get(s)?.has(name)) return s; }
@@ -341,7 +416,7 @@ export function analyzeLoaderChain(source: string, opts: { moduleLoadReachable?:
   function isTempOrHidden(node: any): boolean {
     const resolved = node?.type === "Identifier" ? (declInit.get(node.name) ?? node) : node;
     if (!resolved) return false;
-    const txt = source.slice(resolved.start, resolved.end);
+    const txt = source.slice(resolved.start, Math.min(resolved.end, resolved.start + SNIP_SOURCE_CAP));
     return /tmpdir\s*\(\s*\)|['"`]\/tmp\b|['"`]\.[A-Za-z0-9_]/.test(txt) || /\.tmpdir/.test(txt);
   }
 
@@ -367,10 +442,10 @@ export function analyzeLoaderChain(source: string, opts: { moduleLoadReachable?:
     }
   }
 
-  // A hostile file (50k chained members, absurd nesting) can overflow the walker's
-  // recursion; that must degrade to the parse-failure path, never throw out of the rule.
+  // The walk is iterative, so a deep expression costs time, not a stack overflow. Exceeding the node or scope bound
+  // (a RangeError) degrades to the parse-failure path, never throws out of the rule.
   try {
-  walk.ancestor(ast, {
+  walkAncestor(ast, {
     ImportDeclaration(node: any) {
       if (node.source?.type !== "Literal" || typeof node.source.value !== "string") return;
       const mod = stripNode(node.source.value);
@@ -383,26 +458,23 @@ export function analyzeLoaderChain(source: string, opts: { moduleLoadReachable?:
         }
       }
     },
-    VariableDeclarator(node: any, _st: any, ancestors: any[]) {
+    VariableDeclarator(node: any, _st: any, _ancestors: any[], chain: any[], merged: boolean) {
       if (!node.init) { if (node.id?.type === "Identifier") declInit.delete(node.id.name); return; }
       bindFromInit(node.id, node.init);
       if (node.id?.type !== "Identifier") return;
       const name = node.id.name;
       declInit.set(name, node.init);
-      const chain = scopeChain(ancestors);
       const relevant = new Set<Tag>([...payloadTags(node.init, chain)].filter((t) => t === "read" || t === "decoded"));
-      scopeTaint(chain[0]).set(name, relevant);   // declaration REPLACES
+      putTaint(chain[0], name, relevant, merged);   // declaration REPLACES (UNION in a merged scope)
     },
-    AssignmentExpression(node: any, _st: any, ancestors: any[]) {
+    AssignmentExpression(node: any, _st: any, _ancestors: any[], chain: any[], merged: boolean) {
       if (node.operator !== "=" || node.left.type !== "Identifier") return;
       const name = node.left.name;
       declInit.set(name, node.right);
-      const chain = scopeChain(ancestors);
       const relevant = new Set<Tag>([...payloadTags(node.right, chain)].filter((t) => t === "read" || t === "decoded"));
-      scopeTaint(declaringScope(chain, name)).set(name, relevant);   // reassignment REPLACES (kill-on-reassign, S2)
+      putTaint(declaringScope(chain, name), name, relevant, merged);   // reassignment REPLACES (kill-on-reassign, S2; UNION in a merged scope)
     },
-    CallExpression(node: any, _st: any, ancestors: any[]) {
-      const chain = scopeChain(ancestors);
+    CallExpression(node: any, _st: any, _ancestors: any[], chain: any[], merged: boolean) {
       const cat = classifyCall(node);
       const args = node.arguments ?? [];
 
@@ -424,7 +496,8 @@ export function analyzeLoaderChain(source: string, opts: { moduleLoadReachable?:
         if (pathArg && decodeInScope && carriesPayload(payloadTags(dataArg, chain))) {
           if (pathArg.type === "Identifier") {
             const s = declaringScope(chain, pathArg.name);
-            (scopeTaint(s).get(pathArg.name) ?? scopeTaint(s).set(pathArg.name, new Set()).get(pathArg.name)!).add("written-path");
+            if (merged) addMerged(pathArg.name, ["written-path"]);
+            else (scopeTaint(s).get(pathArg.name) ?? scopeTaint(s).set(pathArg.name, new Set()).get(pathArg.name)!).add("written-path");
           } else {
             const key = structKey(pathArg);
             if (key !== null) (writtenPaths.get(key) ?? writtenPaths.set(key, new Set()).get(key)!).add(chain[0]);
@@ -477,7 +550,9 @@ export function analyzeLoaderChain(source: string, opts: { moduleLoadReachable?:
   });
   boosters.moduleLoad = Boolean(opts.moduleLoadReachable) && topLevelExecution(ast);
   } catch (e) {
-    return { primitives: [], correlated: false, boosters: { tempOrHidden: false, chmod: false, detached: false, unref: false, moduleLoad: false }, parseFailed: true, walkOverflow: e instanceof RangeError };
+    const truncated = e instanceof WalkBoundError;
+    return { primitives: [], correlated: false, boosters: { tempOrHidden: false, chmod: false, detached: false, unref: false, moduleLoad: false }, parseFailed: true,
+      walkOverflow: !truncated && isStackOverflow(e), ...(truncated ? { walkTruncated: true } : {}) };
   }
 
   return { primitives, correlated, boosters, parseFailed: false };
