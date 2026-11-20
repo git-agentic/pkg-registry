@@ -145,6 +145,22 @@ go(o, [], { detached: true });
     // a benign flat file that crosses the cap is not critical, even though it mentions all four names
     assert.equal(loaderSeverities(flat + BENIGN).includes("critical"), false);
     assert.equal(loaderSeverities(flat + CHAIN).includes("critical"), false);
+    // the strict fallback still runs: strict read and write signals give exactly "high" (an empty result would mean it was skipped)
+    const strict = `const fs = require("fs");\nfs.writeFileSync("o", fs.readFileSync("i"));\n`;
+    assert.deepEqual(loaderSeverities(flat + strict), ["high"]);
+  });
+
+  test("the scope bound never aborts the walk: a chain inside or after 1,001 nested functions stays critical", (t) => {
+    const deep = (inner: string) => `${"function f(){".repeat(1001)}${inner}${"}".repeat(1001)}\n`;
+    // 1,001 nested scopes need a parser stack that can hold them (acorn's own limit is near 1,250 on a default Node stack)
+    try { acorn.parse(deep(""), { ecmaVersion: "latest", sourceType: "script" }); } catch { t.skip("the parser cannot nest 1,001 functions on this Node"); return; }
+    for (const src of [deep(CHAIN), deep("") + CHAIN, deep(CHAIN) + CHAIN]) {
+      const a = loaderChain.analyzeLoaderChain(src);
+      assert.equal(a.parseFailed, false);
+      assert.equal(a.walkTruncated, undefined);
+      assert.equal(a.correlated, true);
+    }
+    assert.deepEqual(loaderSeverities(deep(CHAIN)), ["critical"]);
   });
 
   test("genuine parse failures still use the parse-failure path", () => {
@@ -164,12 +180,13 @@ describe("the iterative walk visits what acorn-walk's ancestor visits", () => {
     switch (x) { case 1: y(); default: z(); } do { w() } while (v); if (a) b; else c;
     for (var i in o) ; for (const k of o) ; with_ = (a, b) => a ?? b; x ||= 1; delete a.b; void 0; typeof a;
     (function () { "use strict"; return this })(); a = b ? c : d; throw new Error(\`e\`);
+    const arr = [1, , 2, ...r, [3, , 4]]; const [p2, , [q2, , ...s2]] = arr;
   `;
   const trace = (run: (visitors: Record<string, any>) => void) => {
     const out: string[] = [];
     const types = ["Program", "Identifier", "Literal", "CallExpression", "MemberExpression", "VariableDeclarator", "AssignmentExpression",
       "FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression", "ClassBody", "PropertyDefinition", "TemplateLiteral", "ImportDeclaration",
-      "ForOfStatement", "TryStatement", "SwitchStatement", "ObjectExpression", "ArrayPattern", "ObjectPattern", "BinaryExpression", "ChainExpression",
+      "ArrayExpression", "ForOfStatement", "TryStatement", "SwitchStatement", "ObjectExpression", "ArrayPattern", "ObjectPattern", "BinaryExpression", "ChainExpression",
       "ExpressionStatement", "ReturnStatement", "StaticBlock", "MetaProperty", "NewExpression", "Property", "SpreadElement", "RestElement", "AssignmentPattern"];
     const v: Record<string, any> = {};
     for (const ty of types) v[ty] = (n: any, _st: any, anc: any[]) => out.push(`${ty}@${n.start}-${n.end}/${anc.map((a) => a.type).join(">")}`);

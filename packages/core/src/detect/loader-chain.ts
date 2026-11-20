@@ -67,7 +67,8 @@ function isScope(n: any): boolean {
 
 /**
  * Safety bounds of the walk. A retained file is at most 2 MiB and yields at most about one node per byte, so the node
- * bound is unreachable for real input; scope nesting costs O(depth) per callback and real code nests far less.
+ * bound is unreachable for real input. Each callback costs O(scope depth), so scopes nested deeper than the scope
+ * bound are merged into the deepest tracked one (the walk goes on) rather than tracked.
  */
 const MAX_WALK_NODES = 4_194_304;
 const MAX_SCOPE_DEPTH = 1000;
@@ -85,7 +86,7 @@ type Visitor = (node: any, st: any, ancestors: any[], scopeChain: any[]) => void
  * children), with the same ancestor list. acorn-walk's base visitors only call back for children, so each node's
  * children are collected first and then walked from an explicit stack. The visitor also receives the scope chain
  * (innermost → outermost), kept incrementally so a deep expression does not make every callback O(depth).
- * Deterministic bounds: MAX_WALK_NODES and MAX_SCOPE_DEPTH (a RangeError).
+ * Deterministic bounds: MAX_WALK_NODES throws a WalkBoundError; past MAX_SCOPE_DEPTH scopes merge instead of aborting.
  */
 export function walkAncestor(root: any, visitors: Record<string, Visitor>): void {
   const ancestors: any[] = [];
@@ -100,17 +101,14 @@ export function walkAncestor(root: any, visitors: Record<string, Visitor>): void
     if (isNew) {
       if (++visited > MAX_WALK_NODES) throw new WalkBoundError("loader-chain: node bound exceeded");
       ancestors.push(node);
-      if (isScope(node)) {
-        if (scopes.length >= MAX_SCOPE_DEPTH) throw new WalkBoundError("loader-chain: scope depth bound exceeded");
-        scopes.push(node);
-      }
+      // Past MAX_SCOPE_DEPTH a deeper function joins the deepest tracked scope (over-approximation: taint is never lost).
+      if (isScope(node) && scopes.length < MAX_SCOPE_DEPTH) scopes.push(node);
     }
     const visit = (walkBase as Record<string, any>)[type];
     if (visit == null) throw new Error(`No walker function defined for node type ${type}`);
-    if (type === "Program" || type === "BlockStatement" || type === "StaticBlock") { // acorn-walk: every statement of `body`, as "Statement"
-      stack.push({ node, type, isNew, list: node.body, ov: "Statement", next: 0 });
-      return;
-    }
+    // acorn-walk walks these lists in order: every statement of `body` ("Statement"), every non-hole array element.
+    if (type === "Program" || type === "BlockStatement" || type === "StaticBlock") { stack.push({ node, type, isNew, list: node.body, ov: "Statement", next: 0 }); return; }
+    if (type === "ArrayExpression" || type === "ArrayPattern") { stack.push({ node, type, isNew, list: node.elements, ov: type === "ArrayExpression" ? "Expression" : "Pattern", next: 0 }); return; }
     const list: any[] = [];
     const ov: (string | undefined)[] = [];
     visit(node, undefined, (child: any, _st: any, o?: string) => { list.push(child); ov.push(o); });
@@ -119,7 +117,7 @@ export function walkAncestor(root: any, visitors: Record<string, Visitor>): void
   enter(root);
   while (stack.length) {
     const f = stack[stack.length - 1]!;
-    if (f.next < f.list.length) { const i = f.next++; enter(f.list[i], typeof f.ov === "string" ? f.ov : f.ov?.[i]); continue; }
+    if (f.next < f.list.length) { const i = f.next++; if (f.list[i]) enter(f.list[i], typeof f.ov === "string" ? f.ov : f.ov?.[i]); continue; } // holes are skipped
     visitors[f.type]?.(f.node, ancestors, ancestors, scopes.slice().reverse());
     if (f.isNew) { ancestors.pop(); if (scopes[scopes.length - 1] === f.node) scopes.pop(); }
     stack.pop();
