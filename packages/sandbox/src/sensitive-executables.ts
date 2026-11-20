@@ -10,6 +10,9 @@ export const SENSITIVE_EXECUTABLES: readonly string[] = [
   "nc", "ncat", "socat",      // raw sockets / reverse shells
   "osascript",                // AppleScript automation (keychain prompts, UI scripting)
   "scp", "sftp",              // file exfil over ssh
+  // launchd / LaunchServices escapes: each hands work to a process OUTSIDE the sandbox
+  // (a launchd job, an app launch, a Shortcuts/Automator workflow) that runs unconfined.
+  "launchctl", "open", "shortcuts", "automator",
 ];
 
 /** Bin dirs (all inside the exec floor) where a sensitive executable may reside. */
