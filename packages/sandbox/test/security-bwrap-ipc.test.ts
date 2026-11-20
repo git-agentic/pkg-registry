@@ -93,3 +93,33 @@ describe("systemd/dbus clients are exec-denied", () => {
     for (const p of present) assert.ok(j.includes(`--ro-bind /dev/null ${p}`), p);
   });
 });
+
+// On a host where /var/run -> /run, a grant on the real path must not be undone by its alias
+// (and vice versa): grants and candidates are compared in RESOLVED space.
+describe("grants and IPC mask candidates are compared in resolved space", () => {
+  const realpath = (p: string) => p.replace(/^\/var\/run(\/|$)/, "/run$1");
+  const nulls = (a: string[]) => a.flatMap((x, i) => (x === "--ro-bind" && a[i + 1] === "/dev/null" ? [a[i + 2]] : []));
+  const gen = (caps: Capability[], extra: Record<string, unknown> = {}) =>
+    generateBwrapArgs(caps, { ...OPTS, realpath, pathExists: exists([...SOCKETS, "/run/user/1000", "/var/run/user/1000", X11]), ...extra });
+
+  test("no grant: the socket is still masked, once, at its real path", () => {
+    assert.deepEqual(nulls(gen([])).filter((p) => p.endsWith("docker.sock")), ["/run/docker.sock"]);
+  });
+  test("a grant on the REAL socket produces no /dev/null mask on it (the /var/run alias must not re-mask it)", () => {
+    const m = nulls(gen([fsCap("/run/docker.sock")]));
+    assert.ok(!m.some((p) => p.endsWith("docker.sock")), m.join(","));
+    assert.ok(m.includes("/run/podman/podman.sock"), "other sockets stay masked");
+  });
+  test("a grant on the ALIAS path lifts it too", () => {
+    const m = nulls(gen([fsCap("/var/run/docker.sock")]));
+    assert.ok(!m.some((p) => p.endsWith("docker.sock")), m.join(","));
+  });
+  test("the same applies to /run/user/<uid> via its alias", () => {
+    assert.ok(!joined(gen([fsCap("/run/user/1000")])).includes("--tmpfs /run/user/1000"));
+    assert.ok(!joined(gen([fsCap("/var/run/user/1000")])).includes("--tmpfs /run/user/1000"));
+    assert.ok(joined(gen([])).includes("--tmpfs /run/user/1000"));
+  });
+  test("an unrelated grant lifts nothing", () => {
+    assert.ok(nulls(gen([fsCap("/work/data")])).includes("/run/docker.sock"));
+  });
+});

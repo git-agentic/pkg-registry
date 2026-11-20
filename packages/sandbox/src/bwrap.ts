@@ -156,7 +156,11 @@ export function generateBwrapArgs(
   // a full escape. So these apply with or without network; only an explicit filesystem grant
   // covering the path lifts one. Each only when present (bwrap cannot create a mount point
   // under a ro parent), and when it would hide the cwd / project root / $HOME the run is refused.
-  const liftedByGrant = (p: string) => approvedFs.some((t) => pathCovers(t, p));
+  // Compared lexically AND in resolved space (as the exec masks are): where /var/run -> /run, a
+  // grant on /run/docker.sock must not be undone by the /var/run/docker.sock alias, or vice versa.
+  const resolvedGrants = approvedFs.map((t) => resolve(expandHome(t, home)));
+  const liftedByGrant = (p: string) =>
+    approvedFs.some((t) => pathCovers(t, p)) || resolvedGrants.some((g) => pathCovers(g, resolve(p)));
   const hidesWorkdir = (p: string) => [opts.cwd, opts.projectRoot, home].some((d) => pathCovers(p, d));
   // Fail CLOSED: skipping a mask because the work dir sits under it would silently leave the IPC
   // directory open, so refuse to run instead (same error family as an unsupported setup).
