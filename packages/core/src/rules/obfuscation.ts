@@ -1,5 +1,5 @@
 import type { AuditInput, Evidence, Finding, PackageFile, Rule } from "../types.js";
-import { codeFiles, mkFinding, scanLines } from "./util.js";
+import { codeFiles, headsWithTail, lineLocator, mkFinding, scanLines, truncate } from "./util.js";
 
 const PATTERNS = [
   // A property called `eval` is an ordinary method, not JavaScript's direct
@@ -11,31 +11,53 @@ const PATTERNS = [
     sev: "high" as const,
     why: "uses JavaScript eval()",
   },
-  { re: /require\s*\(\s*(atob|Buffer\.from|_0x|[a-z]\([^)]*\))/i, sev: "high" as const, why: "dynamic require of a computed string" },
+  // `[a-z]\(` has no unbounded tail: a `[^)]*\)` here rescanned the line from every `require(a(`.
+  { re: /require\s*\(\s*(atob|Buffer\.from|_0x|[a-z]\()/i, sev: "high" as const, why: "dynamic require of a computed string" },
 ];
 
-const DECODED_ASSIGNMENT = /\b(?:const|let|var)\s+([$A-Z_a-z][$\w]*)\s*=\s*(?:atob\s*\(|Buffer\.from\s*\([^;\n]*?['"]base64['"])/g;
+// A base64 decode is `atob(...)`, or `Buffer.from(...)` with a base64 marker
+// before the statement ends. The Buffer form is matched with `headsWithTail`
+// (linear); a `[^;\n]*?` gap rescanned the statement from every head.
+const DECODED_ASSIGNMENT_ATOB = /\b(?:const|let|var)\s+([$A-Z_a-z][$\w]*)\s*=\s*atob\s*\(/g;
+const DECODED_ASSIGNMENT_BUFFER = /\b(?:const|let|var)\s+([$A-Z_a-z][$\w]*)\s*=\s*Buffer\.from\s*\(/g;
+const FUNCTION_ATOB = /new\s+Function\s*\(\s*atob\s*\(/gi;
+const FUNCTION_BUFFER = /new\s+Function\s*\(\s*Buffer\.from\s*\(/gi;
+const FUNCTION_ON_NAME = /new\s+Function\s*\(\s*([$\w]+)/g;
+const BASE64 = /['"]base64['"]/g;
+const STATEMENT_END = "[;\\n]";
+const MAX_EVIDENCE = 2;
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function decodeMatches(content: string, atob: RegExp, buffer: RegExp): RegExpMatchArray[] {
+  const out = [...content.matchAll(atob), ...headsWithTail(content, buffer, STATEMENT_END, BASE64)];
+  return out.sort((a, b) => a.index! - b.index!);
 }
 
 /** Find decoded source that is subsequently executed by the Function constructor. */
 function decodedFunctionEvidence(file: PackageFile): Evidence[] {
-  const evidence = scanLines(
-    file,
-    /new\s+Function\s*\(\s*(?:atob\s*\(|Buffer\.from\s*\([^;\n]*?['"]base64['"])/i,
-    2,
-  );
-  if (evidence.length >= 2) return evidence;
+  const { content } = file;
+  const evidence: Evidence[] = [];
+  let lines: string[] | undefined;
+  let lineAt: ((pos: number) => number) | undefined;
+  const add = (pos: number) => {
+    lines ??= content.split(/\r?\n/);
+    lineAt ??= lineLocator(content);
+    const line = lineAt(pos);
+    if (evidence.some((e) => e.line === line)) return;
+    evidence.push({ file: file.path, line, snippet: truncate((lines[line - 1] ?? "").trim(), 160) });
+  };
 
-  DECODED_ASSIGNMENT.lastIndex = 0;
-  for (const match of file.content.matchAll(DECODED_ASSIGNMENT)) {
-    const variable = match[1];
-    if (!variable) continue;
-    const usesDecodedSource = new RegExp(`new\\s+Function\\s*\\(\\s*${escapeRegExp(variable)}\\b`);
-    evidence.push(...scanLines(file, usesDecodedSource, 2 - evidence.length));
-    if (evidence.length >= 2) break;
+  for (const m of decodeMatches(content, FUNCTION_ATOB, FUNCTION_BUFFER)) {
+    if (evidence.length >= MAX_EVIDENCE) return evidence;
+    add(m.index!);
+  }
+  if (evidence.length >= MAX_EVIDENCE) return evidence;
+
+  // One pass over the collected names, not one full-file scan per assignment.
+  const names = new Set(decodeMatches(content, DECODED_ASSIGNMENT_ATOB, DECODED_ASSIGNMENT_BUFFER).map((m) => m[1]!));
+  if (names.size === 0) return evidence;
+  for (const m of content.matchAll(FUNCTION_ON_NAME)) {
+    if (evidence.length >= MAX_EVIDENCE) break;
+    if (names.has(m[1]!)) add(m.index!);
   }
   return evidence;
 }

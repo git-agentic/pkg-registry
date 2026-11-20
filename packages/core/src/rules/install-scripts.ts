@@ -33,16 +33,17 @@ export const installScriptsRule: Rule = {
 
     const findings: Finding[] = [];
     const code = codeFiles(input);
+    const byPath = new Map(input.files.map((f) => [f.path, f] as const));
 
     for (const hook of LIFECYCLE) {
       const cmd = scripts[hook];
-      if (!cmd) continue;
+      if (typeof cmd !== "string" || !cmd) continue; // npm ignores non-string hooks; one must not throw the rule away
 
       // What does the lifecycle command itself do?
       const inlineDangers = DANGER_IN_SCRIPT.filter((d) => d.re.test(cmd));
 
       // If it runs a local script file, inspect that file's contents too.
-      const referenced = referencedFiles(cmd, code);
+      const referenced = referencedFiles(cmd, code, byPath);
       const fileDangers = referenced.flatMap((f) =>
         DANGER_IN_SCRIPT.flatMap((d) =>
           scanLines(f, d.re, 2).map((ev) => ({ why: d.why, ev })),
@@ -86,14 +87,28 @@ export const installScriptsRule: Rule = {
   },
 };
 
-/** Resolve local script files referenced by a lifecycle command (e.g. `node scripts/x.js`). */
-function referencedFiles(cmd: string, code: PackageFile[]): PackageFile[] {
-  const out: PackageFile[] = [];
-  const re = /([\w./-]+\.(?:c?js|mjs|cjs|ts))/g;
-  for (const m of cmd.matchAll(re)) {
-    const ref = (m[1] ?? "").replace(/^\.\//, "");
-    const hit = code.find((f) => f.path === `package/${ref}` || f.path.endsWith(`/${ref}`));
-    if (hit) out.push(hit);
+const MAX_TOKENS = 64;
+const MAX_TOKEN_LEN = 256;
+// Docs/data named as an argument (`cat README`, `node -p package.json`) are not executed; scanning them is noise.
+const NOT_SCRIPT = /(?:\.(?:md|markdown|json|txt|ya?ml|lock|map)|(?:^|\/)(?:readme|licen[cs]e|changelog|notice))$/i;
+const JS_REF = /\.(?:c?js|mjs|cjs|ts)$/;
+
+/**
+ * Resolve local script files referenced by a lifecycle command. Every
+ * whitespace/shell-separated token that names a retained package file counts
+ * (`node setup`, `sh build.sh`, `node scripts/x.js`); JS names also match by
+ * path suffix. Tokens are bounded so a huge command stays linear.
+ */
+function referencedFiles(cmd: string, code: PackageFile[], byPath: Map<string, PackageFile>): PackageFile[] {
+  const out = new Set<PackageFile>();
+  const tokens = new Set<string>();
+  for (const t of cmd.split(/[\s;&|<>()"'`=,]+/)) {
+    if (t && t.length <= MAX_TOKEN_LEN) tokens.add(t.replace(/^\.\//, ""));
+    if (tokens.size >= MAX_TOKENS) break;
   }
-  return out;
+  for (const ref of tokens) {
+    const hit = byPath.get(`package/${ref}`) ?? (JS_REF.test(ref) ? code.find((f) => f.path.endsWith(`/${ref}`)) : undefined);
+    if (hit && !NOT_SCRIPT.test(hit.path)) out.add(hit);
+  }
+  return [...out];
 }
