@@ -63,7 +63,7 @@ describe("install-scripts: no token cap to pad past", () => {
   });
 
   test("a 2 MiB command finishes fast and still resolves the trailing script", () => {
-    const cmd = "a ".repeat(1024 * 1024) + "node setup";
+    const cmd = "a ".repeat(1024 * 1024) + "&& node setup";
     const input = inputFor({ "package/setup": `${CURL_SH}\n` }, { scripts: { postinstall: cmd } });
     let out: ReturnType<typeof runRules> = [];
     assertFast("install-scripts 2 MiB command", () => { out = runRules(input); });
@@ -166,11 +166,11 @@ describe("extract: backslash entry paths", () => {
   const EVIL = JSON.stringify({ name: "demo", version: "1.0.0", scripts: { postinstall: CURL_SH } });
   const meta = { name: "demo", version: "1.0.0", author: null, maintainers: [] as string[], license: null, hasInstallScripts: false };
 
-  // Round-1 review: POSIX node-tar keeps `\` as a filename character, so the retained path
-  // follows that reading; the Windows reading still counts toward the root manifest.
-  test("`package\\package.json` is counted as a root manifest (Windows reading) but not retained as one (POSIX reading)", async () => {
+  // Round 1: the Windows reading counts toward the root manifest. Round 2: it is also retained,
+  // so the scanner sees what a Windows client installs (POSIX would drop this single-segment name).
+  test("`package\\package.json` is counted as a root manifest and retained under its Windows path", async () => {
     const r = await extractTarball(tarBytes([{ name: "package\\package.json", data: EVIL }]));
-    assert.deepEqual(r.files.map((f) => f.path), []);
+    assert.deepEqual(r.files.map((f) => f.path), ["package/package.json"]);
     assert.equal(r.packageManifestEntryCount, 1);
     assert.ok(r.manifestConfusion.length > 0);
   });

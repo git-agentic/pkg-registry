@@ -16,6 +16,8 @@ const JS_PARSEABLE = /\.(c?js|mjs)$/i;
 
 const GUNZIP_LIKE = /\b(gunzip|inflate|brotliDecompress|unzip)\w*\s*\(/;
 const BUFFER_FROM = /Buffer\.from\(/g;
+/** `require(<non-literal>)`: loads a computed path, the launch form for a just-written native addon. */
+const REQUIRE_OF_PATH = /\brequire\s*\(\s*[^'"`\s)]/;
 // Node accepts any case and `base64url` as an encoding name.
 const BASE64 = /['"]base64(?:url)?['"]/gi;
 
@@ -76,6 +78,9 @@ export const nativePayloadLoaderRule: Rule = {
         // overflow means hostile nesting defeated the parser, so a full read+decode+write+launch
         // chain is not downgraded (a pad of `x.b.b…` must not turn block into warn).
         const hits = (Object.keys(FALLBACK) as (keyof typeof FALLBACK)[]).filter((k) => FALLBACK[k](file.content));
+        // The AST rule counts `require(<written path>)` as a launch; on an overflowed file the
+        // fallback must too, or that launch form downgrades the chain to high.
+        if (a.walkOverflow && !hits.includes("launch") && REQUIRE_OF_PATH.test(file.content)) hits.push("launch");
         if (hits.length >= 2) {
           findings.push(mkFinding({
             ruleId: this.id, category: this.category,
