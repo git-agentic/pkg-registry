@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { Buffer } from "node:buffer";
+import { Buffer, isUtf8 } from "node:buffer";
+import { posix } from "node:path";
 import { createGunzip } from "node:zlib";
 import * as tar from "tar";
 import type { PackageFile, ContentMismatchEntry } from "./types.js";
@@ -26,8 +27,17 @@ export interface UnscannedEntry {
 
 export interface ExtractResult {
   files: PackageFile[];
-  /** Number of tar entries targeting the npm package manifest path, regardless of entry type. */
+  /**
+   * Number of tar entries that land on the root package.json after npm-style path
+   * normalization (any first segment, `.`/`//` collapsed, case-insensitive), regardless of entry type.
+   */
   packageManifestEntryCount: number;
+  /**
+   * Reasons the root manifest npm would install cannot be trusted to be the one scanned:
+   * several entries land on it (npm keeps the last), it is case-variant, or it is too large to scan.
+   * Empty for a normal tarball (and for one with no manifest at all).
+   */
+  manifestConfusion: string[];
   unpackedSize: number;
   fileCount: number;
   /** True when a cap was hit and extraction was aborted early (ADR-0039). */
@@ -79,6 +89,8 @@ export async function extractTarball(
   const maxFiles = opts.maxFileCount ?? DEFAULT_MAX_FILE_COUNT;
   const files: PackageFile[] = [];
   let packageManifestEntryCount = 0;
+  let manifestVariant = false;
+  let manifestOversized = false;
   const unscanned: UnscannedEntry[] = [];
   const unscannedTotals = { count: 0, native: 0, bytes: 0 };
   const contentMismatch: ContentMismatchEntry[] = [];
@@ -106,9 +118,15 @@ export async function extractTarball(
       entry.resume();
       return;
     }
-    const normalizedPath = normalize(entry.path);
-    if (normalizedPath === "package/package.json") packageManifestEntryCount += 1;
-    const isFile = entry.type === "File";
+    // `null` ⇒ npm would not extract it (escapes the root / no name): never retained.
+    const normalizedPath = npmPath(entry.path);
+    const isManifest = normalizedPath?.toLowerCase() === "package/package.json";
+    if (isManifest) {
+      packageManifestEntryCount += 1;
+      if (normalizedPath !== "package/package.json") manifestVariant = true;
+    }
+    // node-tar reports typeflag 7 as "ContiguousFile" and 0/NUL as "File"/"OldFile"; npm installs all as files.
+    const isFile = /File$/.test(entry.type);
     if (isFile) fileCount += 1;
     const chunks: Buffer[] = [];
     let bytes = 0;
@@ -128,21 +146,28 @@ export async function extractTarball(
     entry.on("end", () => {
       if (truncated || !isFile) return;
       const path = normalizedPath;
+      if (path === null) return;
+      if (isManifest && bytes > MAX_FILE_BYTES) manifestOversized = true;
       const cls = classifyContent(Buffer.concat(prefixChunks));
       const declaredExt = extOf(path);
       const textLooking = TEXT_EXT.test(path);
+      const buf = bytes <= MAX_FILE_BYTES ? Buffer.concat(chunks) : null;
       if (cls.class !== "text" && textLooking) {
-        // Binary/compressed/archive/ambiguous signature hiding behind a text-looking
-        // extension → mismatch. Never retained as text; tracked only here.
+        // Binary/compressed/archive/ambiguous signature behind a text-looking
+        // extension → mismatch, always reported.
         contentMismatchTotals.count += 1;
         contentMismatchTotals.byKind[cls.kind] = (contentMismatchTotals.byKind[cls.kind] ?? 0) + 1;
         if (contentMismatch.length < MAX_UNSCANNED) {
           contentMismatch.push({ path, declaredExt, detectedKind: cls.kind, size: bytes });
         }
-        return;
+        // `MZ:` and `BZh:` are valid JS labels: valid UTF-8 without NUL is still source
+        // Node will run, so it must stay visible to the rules. Real binaries are tracked only above.
+        if (!buf || !isUtf8(buf) || buf.includes(0)) return;
       }
-      if (bytes <= MAX_FILE_BYTES && TEXT_EXT.test(path)) {
-        const content = Buffer.concat(chunks).toString("utf8");
+      // Extension-less text (`setup`, `bin/run`, `Makefile`) can be named by a script hook; retain it.
+      const extensionless = !posix.basename(path).includes(".") && cls.class === "text" && buf !== null && !buf.includes(0);
+      if (buf && (textLooking || extensionless)) {
+        const content = buf.toString("utf8");
         const prev = baseline?.get(path);
         files.push({ path, content, size: bytes, changed: baseline ? prev !== content : false });
         return;
@@ -179,6 +204,8 @@ export async function extractTarball(
     // regardless of tar semantics. On a cap breach we destroy() the gunzip,
     // which halts decompression promptly and bounds CPU/memory.
     const gunzip = createGunzip();
+    let head = Buffer.alloc(0);
+    let headChecked = false;
     gunzip.on("data", (chunk: Buffer) => {
       if (truncated || failure) return;
       unpackedSize += chunk.length;
@@ -186,6 +213,17 @@ export async function extractTarball(
         truncated = true;
         gunzip.destroy();
         return;
+      }
+      // The tar Parser auto-detects gzip/zstd, so a compressed payload inside the
+      // gzip would be decompressed by it, past our cap. Refuse nested compression.
+      if (!headChecked) {
+        head = Buffer.concat([head, chunk.subarray(0, MAGIC_PREFIX_BYTES)]);
+        if (head.length >= 6) headChecked = true;
+        if (classifyContent(head).class === "compressed") {
+          truncated = true;
+          gunzip.destroy();
+          return;
+        }
       }
       // Feed the decompressed tar bytes onward for file extraction. A parser
       // entry handler may set `truncated` (entry-count cap) or `failure`
@@ -209,6 +247,8 @@ export async function extractTarball(
     // a cap breach halts before feeding the whole payload. npm tarballs are always
     // gzip; this preserves robustness for a raw tar.
     const SLICE = 256 * 1024;
+    // A raw zstd (or other compressed) stream would be decompressed by the Parser, uncounted.
+    if (classifyContent(tgz.subarray(0, MAGIC_PREFIX_BYTES)).class === "compressed") truncated = true;
     for (let off = 0; off < tgz.length && !truncated && !failure; off += SLICE) {
       const chunk = tgz.subarray(off, off + SLICE);
       unpackedSize += chunk.length;
@@ -222,7 +262,11 @@ export async function extractTarball(
     await done;
   }
   if (failure) throw failure;
-  return { files, packageManifestEntryCount, unpackedSize, fileCount, truncated, unscanned, unscannedTotals, contentMismatch, contentMismatchTotals };
+  const manifestConfusion: string[] = [];
+  if (packageManifestEntryCount > 1) manifestConfusion.push(`${packageManifestEntryCount} entries land on the root package.json (npm keeps the last one)`);
+  if (manifestVariant) manifestConfusion.push("the root package.json entry is spelled with different case or path form than package/package.json");
+  if (manifestOversized) manifestConfusion.push("the root package.json is over 2 MiB and cannot be scanned");
+  return { files, packageManifestEntryCount, manifestConfusion, unpackedSize, fileCount, truncated, unscanned, unscannedTotals, contentMismatch, contentMismatchTotals };
 }
 
 /** Build a `path -> content` baseline map from a previously extracted set. */
@@ -244,9 +288,16 @@ export function integrityOf(tgz: Buffer): string {
   return integrityOfAlgo(tgz, "sha512");
 }
 
-function normalize(p: string): string {
-  // npm tarballs prefix everything with `package/`.
-  return p.replace(/^\.\//, "");
+/**
+ * Map a tar entry path to where npm would put it, rooted at `package/`: npm strips the
+ * first path segment WHATEVER it is, then the filesystem collapses `.`, `//` and `..`.
+ * Returns null for an entry npm would not extract (outside the root, or no name).
+ */
+function npmPath(p: string): string | null {
+  // Leading slashes left by `package//x` are stripped (node-tar's stripAbsolutePath).
+  const rest = posix.normalize(p.split("/").slice(1).join("/").replace(/^\/+/, ""));
+  if (rest === "." || rest === ".." || rest.startsWith("../")) return null;
+  return `package/${rest}`;
 }
 
 function extOf(p: string): string {

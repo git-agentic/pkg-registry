@@ -28,7 +28,7 @@ describe("verifyRegistrySignature", () => {
     assert.equal(verifyRegistrySignature(payload, null, KEYS), "unsigned");
     assert.equal(verifyRegistrySignature(payload, [], KEYS), "unsigned");
   });
-  test("unknown: signature keyid matches no configured key", () => {
-    assert.equal(verifyRegistrySignature(payload, [signFor(payload, "SHA256:nope")], KEYS), "unknown");
+  test("unsigned: signature keyid matches no configured key (no better than unsigned)", () => {
+    assert.equal(verifyRegistrySignature(payload, [signFor(payload, "SHA256:nope")], KEYS), "unsigned");
   });
 });

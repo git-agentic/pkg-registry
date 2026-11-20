@@ -56,8 +56,8 @@ describe("registry signature verification (local fixtures, test keys)", () => {
   test("an unsigned fixture is unsigned", async () => {
     assert.equal((await sig(base, "sig-unsigned", "1.0.0")).split("/")[0], "unsigned");
   });
-  test("an unknown-keyid signature is unknown", async () => {
-    assert.equal((await sig(base, "sig-unknown", "1.0.0")).split("/")[0], "unknown");
+  test("an unknown-keyid signature is no better than unsigned", async () => {
+    assert.equal((await sig(base, "sig-unknown", "1.0.0")).split("/")[0], "unsigned");
   });
   test("a fixture without attestations has provenance absent", async () => {
     assert.equal((await sig(base, "prov-absent", "1.0.0")).split("/")[1], "absent");
