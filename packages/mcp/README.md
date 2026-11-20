@@ -9,7 +9,7 @@ only write tool *requests* approval; it can never grant one.
 > without notice. Not production-ready.
 
 ```bash
-npm install -g @git-agentic/sentinel-mcp@alpha
+npm install -g @git-agentic/sentinel-mcp
 ```
 
 MCP client configuration:

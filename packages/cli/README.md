@@ -10,7 +10,7 @@ authoring/signing, and signed audit attestations.
 > without notice. Not production-ready.
 
 ```bash
-npm install -g @git-agentic/sentinel-cli@alpha
+npm install -g @git-agentic/sentinel-cli
 
 sentinel --version
 sentinel audit is-odd 3.0.1        # requires a running @git-agentic/sentinel-proxy

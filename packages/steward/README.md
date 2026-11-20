@@ -10,7 +10,7 @@ retraction-corpus releases that Sentinel proxies consume offline.
 > without notice. Not production-ready.
 
 ```bash
-npm install -g @git-agentic/sentinel-steward@alpha
+npm install -g @git-agentic/sentinel-steward
 ```
 
 All four variables are required:

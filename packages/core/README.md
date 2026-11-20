@@ -9,7 +9,7 @@ that can only ever *enrich* — never set — a score.
 > without notice. Not production-ready.
 
 ```bash
-npm install @git-agentic/sentinel-core@alpha
+npm install @git-agentic/sentinel-core
 ```
 
 ```ts
