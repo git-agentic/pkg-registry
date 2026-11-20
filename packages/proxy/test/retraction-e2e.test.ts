@@ -60,12 +60,13 @@ async function boot(ageHours: number, downloads: number, enterprisePolicy = poli
     authPublicKey,
     history,
     retractionRateLimit,
+    publishTokens: ["publish-token"],
   });
   const server = await new Promise<Server>((resolve) => { const value = app.listen(0, () => resolve(value)); });
   servers.push(server);
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const retract = (reason: "security" | "withdrawn" | "broken" | "legal" = "security", authorization?: string) => fetch(`${base}/-/retractions`, {
-    method: "POST", headers: { "content-type": "application/json", ...(authorization ? { authorization } : {}) },
+    method: "POST", headers: { "content-type": "application/json", ...(authorization ?? (authPublicKey ? undefined : "Bearer publish-token") ? { authorization: authorization ?? "Bearer publish-token" } : {}) },
     body: JSON.stringify({ name: "@acme/widget", version: "2.0.0", reason }),
   });
   return { base, privateStore, store, retract };

@@ -224,6 +224,16 @@ export function createServer(opts: ServerOptions) {
   const app = express();
   app.disable("x-powered-by");
 
+  const rateLimiter = opts.rateLimiter;
+  const rateGate: express.RequestHandler = rateLimiter
+    ? (req, res, next) => {
+        const key = req.socket.remoteAddress ?? "unknown";
+        const { allowed, retryAfterSec } = rateLimiter.check(key);
+        if (allowed) return next();
+        res.setHeader("Retry-After", String(retryAfterSec));
+        return res.status(429).json({ error: "rate limit exceeded — retry later or raise SENTINEL_RATE_LIMIT_RPM" });
+      }
+    : (_req, _res, next) => next();
   // npm-compatible endpoints are a byte-preserving tunnel to the configured
   // upstream. Register them before JSON parsing so whitespace, encodings, and
   // non-JSON request bodies are not rewritten by Sentinel.
@@ -231,14 +241,20 @@ export function createServer(opts: ServerOptions) {
     "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer",
     "transfer-encoding", "upgrade", "host",
   ]);
+  const clientCredentialHeaders = new Set(["authorization", "cookie", "npm-otp"]);
+  // npm posts the whole dependency tree to advisories/bulk, so this is generous but bounded.
+  const maxCompatibilityBodyBytes = 8 * 1024 * 1024;
   async function proxyCompatibility(req: Request, res: Response): Promise<void> {
     if (!upstream.proxyRegistryRequest) {
       res.status(501).json({ error: "upstream does not support compatibility-route proxying" });
       return;
     }
     const headers: Record<string, string> = {};
+    // Client credentials are for this proxy, not the upstream: only npm's own web login needs them.
+    const forwardsCredentials = req.method === "POST" && req.path === "/-/v1/login";
     for (const [name, value] of Object.entries(req.headers)) {
       if (hopByHopHeaders.has(name) || value === undefined) continue;
+      if (!forwardsCredentials && clientCredentialHeaders.has(name)) continue;
       headers[name] = Array.isArray(value) ? value.join(", ") : value;
     }
     try {
@@ -249,7 +265,7 @@ export function createServer(opts: ServerOptions) {
         for await (const chunk of req) {
           const bytes = Buffer.from(chunk as Uint8Array);
           size += bytes.length;
-          if (size > 128 * 1024 * 1024) throw new HttpError(413, "compatibility request exceeds 128 MiB");
+          if (size > maxCompatibilityBodyBytes) throw new HttpError(413, "compatibility request exceeds 8 MiB");
           chunks.push(bytes);
         }
         if (size) body = Buffer.concat(chunks);
@@ -263,11 +279,11 @@ export function createServer(opts: ServerOptions) {
       res.status(response.status).send(response.body);
     } catch (error) { sendError(res, error); }
   }
-  app.get("/-/v1/search", proxyCompatibility);
-  app.post("/-/npm/v1/security/advisories/bulk", proxyCompatibility);
-  app.get("/-/npm/v1/keys", proxyCompatibility);
-  app.get(/^\/-\/npm\/v1\/attestations\/.+$/, proxyCompatibility);
-  app.post("/-/v1/login", proxyCompatibility);
+  app.get("/-/v1/search", rateGate, proxyCompatibility);
+  app.post("/-/npm/v1/security/advisories/bulk", rateGate, proxyCompatibility);
+  app.get("/-/npm/v1/keys", rateGate, proxyCompatibility);
+  app.get(/^\/-\/npm\/v1\/attestations\/.+$/, rateGate, proxyCompatibility);
+  app.post("/-/v1/login", rateGate, proxyCompatibility);
 
   const jsonSmall = express.json({ limit: "1mb" });
   app.use((req, res, next) => (req.method === "PUT" ? next() : jsonSmall(req, res, next)));
@@ -303,16 +319,6 @@ export function createServer(opts: ServerOptions) {
   const scoreAudit = (audit: Audit, activePolicy = enterprisePolicy, activePolicyHash = policyHash): AuditReport =>
     withClaimCorpus(score(audit, activePolicy, activePolicyHash));
 
-  const rateLimiter = opts.rateLimiter;
-  const rateGate: express.RequestHandler = rateLimiter
-    ? (req, res, next) => {
-        const key = req.socket.remoteAddress ?? "unknown";
-        const { allowed, retryAfterSec } = rateLimiter.check(key);
-        if (allowed) return next();
-        res.setHeader("Retry-After", String(retryAfterSec));
-        return res.status(429).json({ error: "rate limit exceeded — retry later or raise SENTINEL_RATE_LIMIT_RPM" });
-      }
-    : (_req, _res, next) => next();
   const publishRateGate = rateLimit({
     windowMs: opts.publishRateLimit?.windowMs ?? 60_000,
     limit: opts.publishRateLimit?.limit ?? 60,
@@ -680,21 +686,27 @@ export function createServer(opts: ServerOptions) {
     if (!body || !Array.isArray(body.packages)) {
       return res.status(400).json({ error: "expected { packages: [{ name, version, integrity? }] }" });
     }
-    const coords = body.packages as { name?: unknown; version?: unknown; integrity?: unknown }[];
+    const coords = body.packages as { name?: unknown; version?: unknown; integrity?: unknown; nonRegistry?: unknown }[];
     for (const cc of coords) {
       if (!cc || typeof cc.name !== "string" || typeof cc.version !== "string") {
         return res.status(400).json({ error: "each package needs a string name and version" });
+      }
+      if (cc.nonRegistry !== undefined && typeof cc.nonRegistry !== "string") {
+        return res.status(400).json({ error: "nonRegistry must be a string when present" });
       }
     }
     const failOnError = body.failOnError === true;
     // Dedupe by name@version before fanning out — auditVersion is deterministic,
     // so auditing a distinct coordinate once and re-expanding to per-request rows
-    // is behavior-neutral (ADR-0037).
-    const validCoords = coords as { name: string; version: string; integrity?: string }[];
+    // is behavior-neutral (ADR-0037). A non-registry source never shares a key
+    // (or a verdict) with a registry coordinate: the audited bytes are not its bytes.
+    type TreeCoord = { name: string; version: string; integrity?: string; nonRegistry?: string };
+    const validCoords = coords as TreeCoord[];
+    const keyOf = (co: TreeCoord) => co.nonRegistry === undefined ? `${co.name}@${co.version}` : `${co.name}@${co.version}\u0000non-registry:${co.nonRegistry}`;
     const distinctKeys: string[] = [];
-    const distinctByKey = new Map<string, { name: string; version: string; integrity?: string }>();
+    const distinctByKey = new Map<string, TreeCoord>();
     for (const co of validCoords) {
-      const key = `${co.name}@${co.version}`;
+      const key = keyOf(co);
       if (!distinctByKey.has(key)) { distinctByKey.set(key, co); distinctKeys.push(key); }
     }
     if (distinctKeys.length > maxTreePackages) {
@@ -706,6 +718,14 @@ export function createServer(opts: ServerOptions) {
       distinctKeys.map((k) => distinctByKey.get(k)!),
       8,
       async (co) => {
+        if (co.nonRegistry !== undefined) {
+          const spec = co.nonRegistry.replace(/[\u0000-\u001f\u007f-\u009f]/g, "?").slice(0, 200);
+          return {
+            name: co.name, version: co.version, status: "block" as const, score: null,
+            topFinding: `non-registry-source: ${co.name}@${co.version} resolves to ${spec}, which cannot be audited through the proxy`,
+            topFindingRuleId: null, error: null, provenance: null, integrityMismatch: false, vulnerabilities: 0,
+          };
+        }
         try {
           const { report: audited, tarball } = await auditVersion(co.name, co.version);
           const quarantined = applyQuarantine(applyRetraction(audited).report);
@@ -742,8 +762,8 @@ export function createServer(opts: ServerOptions) {
       },
     );
     const rowByKey = new Map<string, TreePackageRow>();
-    for (const row of distinctRows) rowByKey.set(`${row.name}@${row.version}`, row);
-    const rows: TreePackageRow[] = validCoords.map((co) => rowByKey.get(`${co.name}@${co.version}`)!);
+    distinctKeys.forEach((key, i) => rowByKey.set(key, distinctRows[i]!));
+    const rows: TreePackageRow[] = validCoords.map((co) => rowByKey.get(keyOf(co))!);
     const aggregate = aggregateTree(rows, treeGateOf(enterprisePolicy), { failOnError });
     const result: TreeAuditResult = {
       aggregate, packages: rows, policyHash,
@@ -884,6 +904,9 @@ export function createServer(opts: ServerOptions) {
     next();
   }
   const publishAuth = authz.enabled ? authz.requireRole(["publisher"]) : requirePublishAuth;
+  // Operator routes that mutate the native registry. In open mode (no SENTINEL_AUTH_PUBKEY)
+  // a publish token is required instead of nothing; with no tokens configured they are closed.
+  const registryOperatorAuth = authz.enabled ? authz.requireRole(["operator"]) : requirePublishAuth;
   const registryMutationEnabled: express.RequestHandler = (_req, res, next) => {
     if (registryMode === "off") return res.status(503).json({ error: "registry mode is disabled", code: "registry-mode-disabled" });
     next();
@@ -958,7 +981,7 @@ export function createServer(opts: ServerOptions) {
     });
   });
 
-  app.post("/-/registry/import", registryMutationEnabled, publishRateGate, authz.requireRole(["operator"]), async (req, res) => {
+  app.post("/-/registry/import", registryMutationEnabled, publishRateGate, registryOperatorAuth, async (req, res) => {
     let name: string;
     try { name = normalizePackageName(String((req.body as { name?: unknown })?.name ?? "")); }
     catch (error) { return res.status(400).json({ error: (error as Error).message }); }
@@ -1089,7 +1112,7 @@ export function createServer(opts: ServerOptions) {
     }
   }
 
-  app.post("/-/retractions", registryMutationEnabled, retractionRateGate, authz.requireRole(["operator"]), (req, res) => {
+  app.post("/-/retractions", registryMutationEnabled, retractionRateGate, registryOperatorAuth, (req, res) => {
     const body = req.body as { name?: unknown; version?: unknown; reason?: unknown };
     let name: string;
     try { name = normalizePackageName(String(body?.name ?? "")); }

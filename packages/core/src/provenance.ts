@@ -115,7 +115,7 @@ export function verifyProvenance(input: {
       const bindErr = checkSubjectBinding(stmt, input.integrity);
       if (bindErr) return { status: "invalid", identity: null, reason: bindErr, rootStale };
       if (stmt.predicateType === SLSA_V1) {
-        identity = extractIdentity(result, stmt);
+        identity = extractIdentity(result, stmt, leafCertDer(bundle));
         sawSlsa = true;
       }
     }
@@ -153,7 +153,7 @@ function buildVerifier(trust: ProvenanceTrustMaterial): Verifier {
   return new Verifier(toTrustMaterial(root, keyFinder), { ctlogThreshold: 1, tlogThreshold: 1, tsaThreshold: 0 });
 }
 
-interface InTotoStatement {
+export interface InTotoStatement {
   predicateType?: string;
   subject?: { name?: string; digest?: Record<string, string> }[];
   predicate?: {
@@ -190,16 +190,90 @@ function checkSubjectBinding(stmt: InTotoStatement, integrity: string): string |
   return null;
 }
 
-function extractIdentity(result: unknown, stmt: InTotoStatement): ProvenanceIdentity {
+/** Leaf certificate DER from the bundle (the one the verifier checked), or empty. */
+function leafCertDer(bundle: ReturnType<typeof bundleFromJSON>): Uint8Array {
+  const c = (bundle as { verificationMaterial?: { content?: { $case?: string; certificate?: { rawBytes?: Uint8Array }; x509CertificateChain?: { certificates?: { rawBytes?: Uint8Array }[] } } } }).verificationMaterial?.content;
+  const raw = c?.$case === "certificate" ? c.certificate?.rawBytes : c?.$case === "x509CertificateChain" ? c.x509CertificateChain?.certificates?.[0]?.rawBytes : undefined;
+  return raw ?? new Uint8Array(0);
+}
+
+// DER OID bytes for Fulcio 1.3.6.1.4.1.57264.1.{12,14}: Source Repository URI, Source Repository Ref.
+const OID_SOURCE_REPO = [0x2b, 0x06, 0x01, 0x04, 0x01, 0x83, 0xbf, 0x30, 0x01, 0x0c];
+const OID_SOURCE_REF = [0x2b, 0x06, 0x01, 0x04, 0x01, 0x83, 0xbf, 0x30, 0x01, 0x0e];
+
+interface Tlv { tag: number; start: number; end: number }
+
+/** Read one DER TLV at `i`; throws on truncation or an unsupported length form. */
+function readTlv(b: Uint8Array, i: number): Tlv {
+  if (i + 2 > b.length) throw new Error("truncated DER");
+  let len = b[i + 1]!;
+  let hdr = 2;
+  if (len & 0x80) {
+    const n = len & 0x7f;
+    if (n < 1 || n > 4 || i + 2 + n > b.length) throw new Error("bad DER length");
+    len = 0;
+    for (let k = 0; k < n; k++) len = len * 256 + b[i + 2 + k]!;
+    hdr += n;
+  }
+  const start = i + hdr;
+  if (start + len > b.length) throw new Error("truncated DER");
+  return { tag: b[i]!, start, end: start + len };
+}
+
+function* children(b: Uint8Array, parent: Tlv): Generator<Tlv> {
+  for (let i = parent.start; i < parent.end;) {
+    const t = readTlv(b, i);
+    yield t;
+    i = t.end;
+  }
+}
+
+/**
+ * Source repository URI and ref from the Fulcio certificate extensions. These
+ * are issued by Fulcio from the verified OIDC token, unlike the SLSA predicate,
+ * which any Sigstore signer writes. Total: malformed DER or a missing
+ * extension yields null for that field.
+ */
+export function fulcioSourceExtensions(der: Uint8Array): { sourceRepository: string | null; ref: string | null } {
+  const out = { sourceRepository: null as string | null, ref: null as string | null };
+  try {
+    const cert = readTlv(der, 0);
+    const tbs = readTlv(der, cert.start);
+    for (const field of children(der, tbs)) {
+      if (field.tag !== 0xa3) continue; // [3] EXPLICIT extensions
+      for (const ext of children(der, readTlv(der, field.start))) {
+        const parts = [...children(der, ext)];
+        const oid = parts[0];
+        const value = parts.find((p, i) => i > 0 && p.tag === 0x04);
+        if (!oid || oid.tag !== 0x06 || !value) continue;
+        const key = sameBytes(der, oid, OID_SOURCE_REPO) ? "sourceRepository" : sameBytes(der, oid, OID_SOURCE_REF) ? "ref" : null;
+        if (!key || out[key] !== null) continue;
+        const str = readTlv(der, value.start);
+        if (str.tag === 0x0c) out[key] = Buffer.from(der.subarray(str.start, str.end)).toString("utf8");
+      }
+    }
+  } catch {
+    // fall through with whatever was read
+  }
+  return out;
+}
+
+function sameBytes(b: Uint8Array, t: Tlv, want: number[]): boolean {
+  return t.end - t.start === want.length && want.every((v, k) => b[t.start + k] === v);
+}
+
+export function extractIdentity(result: unknown, stmt: InTotoStatement, leafDer: Uint8Array): ProvenanceIdentity {
   const id = (result as { identity?: { subjectAlternativeName?: string; extensions?: { issuer?: string } } }).identity;
   const pred = stmt.predicate ?? {};
-  const wf = pred.buildDefinition?.externalParameters?.workflow ?? {};
   const commit = pred.buildDefinition?.resolvedDependencies?.find((d) => typeof d?.digest?.["gitCommit"] === "string")?.digest?.["gitCommit"];
+  const cert = fulcioSourceExtensions(leafDer);
   return {
     workflow: id?.subjectAlternativeName ?? null,
     issuer: id?.extensions?.issuer ?? null,
-    sourceRepository: typeof wf.repository === "string" ? wf.repository : null,
-    ref: typeof wf.ref === "string" ? wf.ref : null,
+    // Certificate-bound (Fulcio), never the signer-written predicate. No predicate fallback (F14).
+    sourceRepository: cert.sourceRepository,
+    ref: cert.ref,
+    // builder and commit remain signer-written predicate claims; never authorize on them alone.
     builder: typeof pred.runDetails?.builder?.id === "string" ? pred.runDetails.builder.id : null,
     commit: typeof commit === "string" ? commit : null,
   };

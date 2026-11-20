@@ -9,6 +9,9 @@ export interface StoredAudit {
   report: AuditReport;
 }
 
+/** Fixed in-memory cap: the oldest entries are evicted so a long-lived proxy cannot grow without bound. */
+export const MAX_AUDIT_ENTRIES = 20_000;
+
 /**
  * Verdict cache + audit log. Keyed by `(name, version, integrity)` — a published
  * tarball is immutable, so a cached audit is always valid. The in-memory map is
@@ -105,6 +108,7 @@ export class AuditStore {
   private index(key: string, stored: StoredAudit): void {
     if (!this.byCoordinateIntegrity.has(key)) this.order.push(key);
     this.byCoordinateIntegrity.set(key, stored);
+    while (this.order.length > MAX_AUDIT_ENTRIES) this.byCoordinateIntegrity.delete(this.order.shift()!);
   }
 
   private cacheKey(name: string, version: string, integrity: string): string {
