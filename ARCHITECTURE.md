@@ -1401,7 +1401,10 @@ are collected here.
 
 - **Proxy memory.** `AuditStore` keeps at most 20,000 entries (`MAX_AUDIT_ENTRIES`),
   evicting the oldest by insertion order. Approvals and violations for an evicted
-  coordinate answer "audit first". There is no env var.
+  coordinate answer "audit first". There is no env var. Reports carry `engine.revision`
+  (`AUDIT_REVISION`); persisted reports from another engine version or revision are skipped
+  on load, and a native publication with a stale audit is re-audited from its stored bytes.
+  Store writes are debounced (about 500 ms) and flushed on exit, `SIGTERM` and `SIGINT`.
 - **bwrap isolation.** Every run adds `--unshare-pid --die-with-parent --new-session`, so
   the sandbox sees only its own processes, no orphan outlives the run, and a script cannot
   inject keystrokes into the controlling tty. Local IPC masks apply whether or not network
@@ -1409,8 +1412,9 @@ are collected here.
   under `/run/user/<uid>`, the docker, containerd, podman and crio sockets, the system dbus
   socket, and `/tmp/.X11-unix` and `/tmp/ssh-*` when present. Each mask is existence-guarded
   and lifted only by an explicit `filesystem:` grant.
-- **Sandbox inputs.** A project root of `/` never widens read or exec rules. Relative `cwd`
-  and project root are resolved first. `npm_config_*` values that carry URL credentials are
+- **Sandbox inputs.** A project root of `/` never widens read or exec rules. `cwd` and
+  project root are resolved to real paths first, and a cwd that resolves to `/` (also via a
+  symlink) is refused. `npm_config_*` values that carry URL credentials are
   scrubbed. Violation `target`, `deniedResource` and `stderrExcerpt` lose control
   characters before they are reported. macOS has no process-group kill, so a sandboxed
   process can outlive its script. The `SENSITIVE_EXECUTABLES` carve-out matches paths; the
@@ -1425,6 +1429,8 @@ are collected here.
   needs an active claim with no pending change and materializes only while the claim is
   active. Disputes survive expiry and domain-change freezes; only a ruling clears them.
   Renewal refuses a disputed claim and needs a challenge verified after the current proof.
+  Proofs are single use (a consumed challenge is refused by approve, transfer, ruling and
+  renewal), and state from before proof tracking spends every verified challenge on load.
   Transfer signatures bind the claim's current challenge id. Request bodies are
   type-validated, `evidenceRef` is a non-empty string, and application fields are copied
   explicitly so a body-supplied `verifiedAt` cannot skip DNS. `ClaimSteward.approve` is

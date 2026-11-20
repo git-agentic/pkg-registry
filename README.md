@@ -316,7 +316,7 @@ sentinel attest [lockfile] --key --out [--sbom]    audit the tree, write an SBOM
 sentinel verify-attestation <att> --key [--sbom --policy-hash --require]   offline-verify an attestation (deploy gate)
 sentinel-registry import --proxy --package [--token]  audit-gated claimed-history import
 sentinel-registry export --store --out                 lossless native package export
-  -p, --proxy <url>   proxy base URL (default http://localhost:4873)
+  -p, --proxy <url>   proxy base URL (default http://127.0.0.1:4873)
   --json              raw JSON report
 ```
 

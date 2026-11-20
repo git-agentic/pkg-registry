@@ -141,7 +141,9 @@ decisions. Findings that stayed as documented trade-offs are listed at the end.
     (`AUDIT_REVISION`, bumped whenever rule semantics change). The store skips
     persisted reports whose engine version or revision differs, and the native
     serve path re-audits a stored publication with a stale audit from the stored
-    bytes and retained signatures, without rewriting the publication record.
+    bytes, without rewriting the publication record. Only imported versions
+    reuse the registry signatures kept in their manifest; a publisher's
+    version is re-audited with none, as at publish time.
     History import now stores the verified provenance bundles. An imported
     version stored before that carries its import-time provenance result into
     the re-audit (`runAudit` input `provenanceCarryOver`, set only by the proxy
@@ -177,7 +179,9 @@ decisions. Findings that stayed as documented trade-offs are listed at the end.
     approval, `npm_config_devdir` points at a per-run directory outside every
     write floor; without one, a cold-cache native build fails.
 20. **Path edge cases.** A project root of `/` never widens read or exec rules.
-    Relative `cwd` and project root are resolved before use. `npm_config_*`
+    `cwd` and project root are resolved to their real paths before use, and a
+    working directory that resolves to `/` (including through a symlink) is
+    refused on both backends. `npm_config_*`
     values that contain URL credentials are scrubbed. Violation `target`,
     `deniedResource` and `stderrExcerpt` are stripped of control characters.
 21. **Enforced installs bind to a trusted root and to the audited bytes.**
@@ -210,7 +214,12 @@ decisions. Findings that stayed as documented trade-offs are listed at the end.
     dispute ruling clears it. Renewal refuses a disputed claim and needs a
     challenge verified after the current proof.
 25. **Transfer signatures bind the claim's current challenge id,** so an old
-    signature cannot replay after a renewal or transfer.
+    signature cannot replay after a renewal or transfer. Every proof is single
+    use: `verifiedAt` never changes once set, and a challenge adopted by an
+    approval, transfer, ruling or renewal is consumed and refused afterwards.
+    State written before proof tracking spends every verified challenge on
+    load, so in-flight transfers, renewals and rulings need a fresh challenge
+    after the upgrade.
 26. **Request bodies are validated.** `evidenceRef` must be a non-empty string.
     Application fields are copied explicitly, so a body-supplied `verifiedAt`
     can no longer skip DNS.
@@ -257,6 +266,18 @@ and `transferRequestBytes` take `currentChallengeId`.
   cache.
 - The `Coordinate` shape, `ClaimSteward.approve` and the transfer-signing
   helpers changed. Callers must update.
+- A lockfile without integrity pins gates `audit-tree`, including yarn v1
+  files from private registries that record neither `integrity` nor a
+  `#sha1` fragment.
+- A version imported before this change keeps its verified provenance but
+  loses the predicate-sourced `sourceRepository` and `ref`. Under a signed
+  policy whose `provenanceIdentities` constrain `repository`, it now gets a
+  critical finding, and re-import is refused once native history exists. The
+  operator's remedy is a policy exception for that name (or relaxing the
+  repository constraint) until a new release is published with provenance.
+- Detection gaps left for follow-up: `npm run <name>` is not followed into
+  `scripts[<name>]`, `.`/`source` are not treated as interpreters, and the
+  overflow fallback stays regex-based.
 
 ## Not changed
 
