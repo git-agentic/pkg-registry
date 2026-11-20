@@ -131,12 +131,13 @@ function parseYarnV1(raw: string): Coordinate[] {
   return sortCoords([...byKey.values()]);
 }
 
-/** `name@npm:range` → name (everything before `@npm:`). */
+/** `name@protocol:range[, …]` → name: the leading (scoped) package name before its own `@`. */
 function yarnBerryName(key: string): string {
   const s = key.replace(/^"|"$/g, "");
-  const idx = s.indexOf("@npm:");
-  return idx > 0 ? s.slice(0, idx) : s.replace(/@[^@]*$/, "");
+  return /^((?:@[^/@]+\/)?[^@/]+)@/.exec(s)?.[1] ?? "";
 }
+
+const BERRY_LOCAL_PROTOCOLS = new Set(["workspace", "patch", "link", "portal", "file", "exec"]);
 
 function parseYarnBerry(raw: string): Coordinate[] {
   const doc = parseYaml(raw) as Record<string, { version?: string; resolution?: string }>;
@@ -147,10 +148,15 @@ function parseYarnBerry(raw: string): Coordinate[] {
     const version = entry.version;
     if (!name || !version) continue;
     const resolution = typeof entry.resolution === "string" ? entry.resolution : "";
-    // Local sources and patch overlays (the patched `@npm:` base is its own entry) are not registry coordinates.
-    if (/@(?:workspace|patch|link|portal|file|exec):/.test(resolution)) continue;
+    // Parse the locator structurally (`<name>@<protocol>:<rest>`); a substring test lets a
+    // tarball URL containing "@npm:" or "@file:" pass as registry or local.
+    const locator = /^((?:@[^/@]+\/)?[^@/]+)@([a-z]+):(.*)$/.exec(resolution);
+    const protocol = locator?.[2];
+    // Local sources and patch overlays (the patched `npm:` base is its own entry) are not registry coordinates.
+    if (protocol && BERRY_LOCAL_PROTOCOLS.has(protocol)) continue;
     const coord: Coordinate = { name, version }; // berry checksum is not SRI → no integrity
-    if (resolution && !resolution.includes("@npm:")) coord.nonRegistry = resolution;
+    const registry = protocol === "npm" && /^[^\s#?/:@]+$/.test(locator![3]!);
+    if (resolution && !registry) coord.nonRegistry = resolution;
     putCoord(byKey, coord);
   }
   return sortCoords([...byKey.values()]);

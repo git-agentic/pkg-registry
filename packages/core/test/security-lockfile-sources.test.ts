@@ -95,6 +95,34 @@ lodash@^4.17.0:
     assert.equal(coords[1]!.nonRegistry, undefined);
   });
 
+  test("yarn berry: a URL that merely contains @npm: or @file: is still non-registry", () => {
+    const raw = `__metadata:
+  version: 6
+
+"evil@https://203.0.113.5/@npm:/evil.tgz":
+  version: 1.0.0
+  resolution: "evil@https://203.0.113.5/@npm:/evil.tgz"
+  languageName: node
+  linkType: hard
+
+"sneaky@https://203.0.113.5/@file:/sneaky.tgz":
+  version: 1.0.0
+  resolution: "sneaky@https://203.0.113.5/@file:/sneaky.tgz"
+  languageName: node
+  linkType: hard
+
+"@scope/ok@npm:^1.0.0":
+  version: 1.2.3
+  resolution: "@scope/ok@npm:1.2.3"
+  languageName: node
+  linkType: hard
+`;
+    const by = Object.fromEntries(parseYarnLock(raw).map((c) => [c.name, c]));
+    assert.equal(by["evil"]?.nonRegistry, "evil@https://203.0.113.5/@npm:/evil.tgz");
+    assert.equal(by["sneaky"]?.nonRegistry, "sneaky@https://203.0.113.5/@file:/sneaky.tgz");
+    assert.equal(by["@scope/ok"]?.nonRegistry, undefined);
+  });
+
   test("pnpm: git and tarball resolutions are flagged, directory entries are skipped, registry stays clean", () => {
     const raw = `lockfileVersion: '9.0'
 
