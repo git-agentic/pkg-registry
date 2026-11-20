@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, realpathSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, test } from "node:test";
@@ -35,5 +35,61 @@ describe("a working directory that resolves to / is refused (fail closed)", () =
   });
   test("a normal cwd is unaffected", () => {
     assert.equal(normalizeRunPaths({ cwd: "/work/pkg" }).cwd, "/work/pkg");
+  });
+});
+
+// path.resolve() is lexical: a cwd that is a SYMLINK to / used to pass the guard. The runtime
+// entry points follow symlinks (realpath); the pure generators stay lexical.
+describe("a symlink to / or to a project dir is followed at the entry points", () => {
+  const mk = () => realpathSync(mkdtempSync(join(tmpdir(), "sb-symcwd-")));
+  const linkTo = (target: string) => {
+    const base = mk();
+    const link = join(base, "link");
+    symlinkSync(target, link);
+    return { base, link };
+  };
+
+  test("normalizeRunPaths refuses a symlinked cwd that resolves to /", () => {
+    const { link } = linkTo("/");
+    assert.throws(() => normalizeRunPaths({ cwd: link }), UNSUPPORTED);
+    assert.throws(() => normalizeRunPaths({ cwd: join(link, "tmp", "..") }), UNSUPPORTED);
+  });
+  test("a symlinked cwd / projectRoot is replaced by its realpath", () => {
+    const base = mk();
+    const real = join(base, "real"); mkdirSync(real);
+    const link = join(base, "link"); symlinkSync(real, link);
+    assert.deepEqual(normalizeRunPaths({ cwd: link, projectRoot: link }), { cwd: real, projectRoot: real });
+  });
+  test("a projectRoot symlink to / falls back to the cwd", () => {
+    const { base, link } = linkTo("/");
+    assert.equal(normalizeRunPaths({ cwd: base, projectRoot: link }).projectRoot, base);
+  });
+  test("a cwd that does not exist is left lexical (fails later exactly as before)", () => {
+    assert.equal(normalizeRunPaths({ cwd: "/definitely/not/here/./x" }).cwd, "/definitely/not/here/x");
+  });
+  test("a real Seatbelt run from a symlink to / throws and writes nothing (effect test)", { skip: process.platform === "darwin" ? false : "requires macOS sandbox-exec" }, () => {
+    const { base, link } = linkTo("/");
+    const marker = join(base, "marker");
+    assert.throws(() => new SeatbeltSandbox().run(`echo x > "${marker}"`, { cwd: link, approved: [], homeDir: tmpdir() }), UNSUPPORTED);
+    assert.throws(() => new SeatbeltSandbox().runArgv("/usr/bin/touch", [marker], { cwd: link, approved: [], homeDir: tmpdir() }), UNSUPPORTED);
+    assert.ok(!existsSync(marker));
+  });
+  test("a real Seatbelt run from a symlinked project dir still works (effect test)", { skip: process.platform === "darwin" ? false : "requires macOS sandbox-exec" }, () => {
+    const base = mk();
+    const real = join(base, "real"); mkdirSync(real);
+    const link = join(base, "link"); symlinkSync(real, link);
+    const r = new SeatbeltSandbox().run("echo ok > out.txt", { cwd: link, approved: [], homeDir: join(base, "nohome") });
+    assert.equal(r.exitCode, 0, r.stderr);
+    assert.ok(existsSync(join(real, "out.txt")));
+  });
+  test("the profile built from the normalized cwd carries the realpath; the pure generator stays lexical", () => {
+    const base = mk();
+    const real = join(base, "real"); mkdirSync(real);
+    const link = join(base, "link"); symlinkSync(real, link);
+    const o = { homeDir: "/Users/x", tmpDir: "/var/folders/z/T", nodePrefix: "/usr/local" };
+    const n = normalizeRunPaths({ cwd: link });
+    const p = generateProfile([], { ...o, cwd: n.cwd, projectRoot: n.projectRoot });
+    assert.ok(p.includes(`(subpath "${real}")`) && !p.includes(`(subpath "${link}")`));
+    assert.ok(generateProfile([], { ...o, cwd: link, projectRoot: link }).includes(`(subpath "${link}")`));
   });
 });
