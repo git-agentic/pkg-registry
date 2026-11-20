@@ -91,7 +91,14 @@ decisions. Findings that stayed as documented trade-offs are listed at the end.
     registry row's verdict. Yarn berry `workspace`, `patch`, `link`, `portal`,
     `file` and `exec` entries and pnpm directory entries are skipped, not
     flagged. A patch overlay's registry base is its own entry and is audited;
-    the patch itself is not.
+    the patch itself is not. A registry coordinate also needs an integrity pin
+    with a known algorithm (yarn v1 `#<sha1>` fragments count): without one, npm
+    would install unverified bytes from whatever host the lockfile names, so the
+    entry is flagged. Conflicting pins for one `name@version` are flagged.
+    `audit-tree` checks each distinct pin against the served bytes, and a claim
+    with no known-algorithm token blocks instead of being skipped. The block row
+    names only the source kind (git, url, other), never the raw resolution,
+    which can carry credentials.
 
 ### Proxy
 
@@ -101,10 +108,12 @@ decisions. Findings that stayed as documented trade-offs are listed at the end.
     and an empty value is FATAL. Network deployments must set it. This breaks
     deployments that relied on all interfaces; the project is pre-1.0.
 13. **Compatibility routes do not forward client credentials.** `authorization`,
-    `cookie` and `npm-otp` are dropped before the upstream request, except on
-    `POST /-/v1/login`, which is npm's own web login. Bodies are capped at 8 MiB
+    `cookie` and `npm-otp` are dropped before the upstream request on every
+    compatibility route, web login included: npm attaches the token it has for
+    this registry URL, which is a Sentinel token. Bodies are capped at 8 MiB
     (npm posts the full tree to `advisories/bulk`) and the routes sit behind the
-    opt-in rate gate.
+    opt-in rate gate. An oversized upload is drained (bounded) before the 413 is
+    sent, so the client receives it.
 14. **Open mode no longer exposes import and retraction.** With
     `SENTINEL_AUTH_PUBKEY` unset, `POST /-/registry/import` and
     `POST /-/retractions` require a publish token, as publish does. With no
@@ -113,7 +122,11 @@ decisions. Findings that stayed as documented trade-offs are listed at the end.
 15. **`AuditStore` is bounded.** It keeps at most 20,000 entries in memory and
     evicts the oldest first. Approvals and violations for an evicted coordinate
     answer "audit first", which is the existing behavior for an unknown
-    coordinate. There is no env var.
+    coordinate. There is no env var. The store skips persisted reports from
+    another engine version, and the native serve path re-audits a stored
+    publication whose audit predates the running engine, from the stored
+    bytes, without rewriting the publication record. Writes to the store file
+    are debounced (about 500 ms) and flushed on exit.
 
 ### Sandbox and enforced installs
 

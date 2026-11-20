@@ -606,8 +606,7 @@ as before this phase.
 In open mode, import and retraction use the same publish-token check as publish,
 so with no `SENTINEL_PUBLISH_TOKENS` they always answer `401` (ADR-0056). The
 compatibility routes (search, advisories/bulk, keys, attestations, web login) drop
-`authorization`, `cookie` and `npm-otp` before forwarding upstream, except
-`POST /-/v1/login`; their bodies are capped at 8 MiB and they sit behind the
+`authorization`, `cookie` and `npm-otp` before forwarding upstream; their bodies are capped at 8 MiB and they sit behind the
 opt-in rate gate.
 
 **Reads stay open in every mode**: every `GET`, the tarball serve, packument

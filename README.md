@@ -254,8 +254,7 @@ same time/download-window retraction above; it never raw-deletes bytes.
 
 The selected read-only npm routes (search, advisories/bulk, keys, attestations,
 web login) are forwarded byte-for-byte, but without the client's `authorization`,
-`cookie` or `npm-otp` headers; only `POST /-/v1/login`, npm's own web login,
-keeps them. Request bodies are capped at 8 MiB and the routes honour the opt-in
+`cookie` or `npm-otp` headers, web login included. Request bodies are capped at 8 MiB and the routes honour the opt-in
 rate limit.
 The compatibility harness drives real npm, pnpm, Yarn Berry, and bun binaries.
 Mutation coverage follows the commands each client exposes (Berry has no
@@ -331,10 +330,13 @@ pass and exits non-zero if the aggregate verdict trips the policy's `treeGate`
 `npm-shrinkwrap.json` (npm v2/v3), `yarn.lock` (v1 text or berry YAML), and
 `pnpm-lock.yaml` (v5/v6/v9) — by filename first, falling back to a content sniff.
 An entry that does not resolve to a registry tarball (a git or `github:` spec, an
-arbitrary tarball URL) cannot be audited through the proxy: it is sent with
+arbitrary tarball URL, or a registry-shaped URL with no integrity pin) cannot be
+audited through the proxy: it is sent with
 `nonRegistry` set and comes back as a `block` row without any fetch. Yarn berry
 `workspace`/`patch`/`link`/`portal`/`file`/`exec` entries and pnpm directory
-entries are local sources and are skipped.
+entries are local sources and are skipped. A lockfile without integrity pins
+(an old yarn v1 file with neither `integrity` lines nor `#<sha1>` fragments)
+therefore gates.
 
 - `--sbom <file>` writes the audited tree as a CycloneDX 1.6 JSON BOM: one
   `library` component per package (`purl: pkg:npm/<name>@<version>`) carrying
