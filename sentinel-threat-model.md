@@ -289,8 +289,8 @@ resolved first, `npm_config_*` values with URL credentials are scrubbed, and
 violation text loses control characters before it is reported or printed.
 
 Enforced installs no longer trust package-declared identity. A dependency
-script runs only when `npm_package_integrity` matches the audited integrity,
-so a git, URL or file dependency cannot borrow another package's approvals by
+script runs only when `npm_package_integrity` matches the audited integrity
+and npm is 7 or newer (npm 6 lets package.json set that variable), so a git, URL or file dependency cannot borrow another package's approvals by
 declaring its name and version. Root detection uses `SENTINEL_ROOT`, which
 `sentinel install --enforce` sets to the realpath of the install cwd and which
 fails closed when missing; `INIT_CWD` is not trusted because a nested npm (a git

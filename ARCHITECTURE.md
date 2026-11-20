@@ -1419,8 +1419,8 @@ are collected here.
 - **Enforced-install identity.** `sentinel install --enforce` sets `SENTINEL_ROOT` (realpath
   of the cwd, not user-configurable) in the enforced env. `isRootScript` compares against it
   and fails closed when it is missing. A dependency script runs only when
-  `npm_package_integrity` equals the audited integrity (compared per algorithm), so npm 7 or
-  newer is required. A package npm records only as sha1 fails closed.
+  `npm_package_integrity` equals the audited integrity (compared per algorithm) and
+  `npm_config_user_agent` names npm 7 or newer (npm 6 lets package.json set that variable). A package npm records only as sha1 fails closed.
 - **Steward.** Challenges expire 30 days after issue (verify, approve, transfer, renew,
   rule-dispute), and approval recomputes the tier from a fresh upstream lookup. A transfer
   needs an active claim with no pending change and materializes only while the claim is

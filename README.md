@@ -522,8 +522,9 @@ directory (it is not user-configurable). A lifecycle script is the root's own
 only when its directory equals `SENTINEL_ROOT`; with the variable missing, no
 script is root. `INIT_CWD` is not trusted, because a nested npm resets it. A
 dependency script runs only when `npm_package_integrity` matches the integrity
-the proxy audited, compared per algorithm, so npm 7 or newer is required (older
-npm does not set it). A package npm records only as sha1 fails closed. On macOS a
+the proxy audited, compared per algorithm, and the script refuses to run unless
+`npm_config_user_agent` names npm 7 or newer (npm 6 exports every package.json
+field as `npm_package_*`, so the package could set its own integrity). A package npm records only as sha1 fails closed. On macOS a
 sandboxed process can outlive its script, because there is no process-group kill.
 
 ### Runtime violation telemetry (Phase 10)

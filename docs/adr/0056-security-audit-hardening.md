@@ -35,7 +35,9 @@ decisions. Findings that stayed as documented trade-offs are listed at the end.
    check alone hid real code. Real binaries are still not retained. This
    replaces the "never retained" rule in ADR-0049.
 3. **Entry paths are normalized like npm.** The first path segment is replaced
-   by `package`, the rest is normalized as a posix path, and `..` is rejected. Root manifests are counted
+   by `package`, a backslash counts as a path separator (Windows clients extract
+   `package\\package.json` as the manifest), the rest is normalized as a posix
+   path, and `..` is rejected. Root manifests are counted
    case-insensitively after normalization. A new synthesized finding,
    `manifest-confusion` (critical, category `metadata`), fires when there is
    more than one root manifest, a case-variant manifest, or a root manifest too
@@ -61,7 +63,11 @@ decisions. Findings that stayed as documented trade-offs are listed at the end.
 8. **Rules fail soft on hostile input.** Non-string lifecycle hooks are
    skipped. The `native-payload-loader` `exports` walk stops at depth 32. A
    stack overflow in the loader-chain AST walk maps to `parseFailed`. Quadratic
-   regexes are bounded or replaced by linear scans. A template literal without expressions,
+   regexes are bounded or replaced by linear scans, and `install-scripts`
+   resolves every command token with no token-count cap (a cap let padding
+   hide `node evil`). Base64 markers match any case and `base64url`, since Node
+   accepts both, in the obfuscation rule, the loader fallback and the
+   loader-chain decode step. A template literal without expressions,
    ``require(`fs`)``, is a static binding.
 
 ### Provenance and lockfiles
@@ -141,8 +147,10 @@ decisions. Findings that stayed as documented trade-offs are listed at the end.
     and fails closed when it is missing. `INIT_CWD` is no longer trusted,
     because a nested npm (a git dependency's `prepare`) resets it. A dependency
     script runs only when `npm_package_integrity` matches the audited integrity,
-    compared per algorithm, and npm is 7 or newer, the first version that sets
-    that variable. Residual: a package npm records only as sha1 fails closed.
+    compared per algorithm, and `npm_config_user_agent` names npm 7 or newer.
+    npm 7 and later set that variable from the lockfile node and export only
+    name, version, config, engines and bin from package.json (npm RFC 183);
+    npm 6 exports every field, so the package could set its own integrity. Residual: a package npm records only as sha1 fails closed.
     Residual: on macOS a sandboxed process can outlive its script, because there
     is no process-group kill.
 
@@ -188,6 +196,14 @@ and `transferRequestBytes` take `currentChallengeId`.
     release moved to a `github-release` job with `contents: write`. `ci.yml`
     has a read-only token. Third-party install code no longer runs with a
     token that can publish or write.
+
+### Dependencies
+
+32. **Production advisories are fixed.** `npm audit fix` updated the transitive
+    packages, and `@git-agentic/sentinel-mcp` moves from zod 3 to zod 4.6.7
+    (GHSA-mrhx-c7xc-m3w5). The installed `@modelcontextprotocol/sdk` accepts
+    `zod ^3.25 || ^4.0`, and the MCP source only uses `z.string()` and
+    `.optional()`. `npm audit --omit=dev` reports no vulnerabilities.
 
 ## Consequences
 
