@@ -91,6 +91,11 @@ export async function extractTarball(
   let packageManifestEntryCount = 0;
   let manifestVariant = false;
   let manifestOversized = false;
+  // Paths retained under the POSIX reading vs the Windows reading of an entry name: a Windows copy
+  // landing on any other retained path means one client installs a different file than the other.
+  const posixPaths = new Set<string>();
+  const winPaths = new Set<string>();
+  let pathCollision = false;
   const unscanned: UnscannedEntry[] = [];
   const unscannedTotals = { count: 0, native: 0, bytes: 0 };
   const contentMismatch: ContentMismatchEntry[] = [];
@@ -175,8 +180,17 @@ export async function extractTarball(
         const content = buf.toString("utf8");
         const prev = baseline?.get(path);
         files.push({ path, content, size: bytes, changed: baseline ? prev !== content : false });
-        if (winPath !== null && winPath !== path) {
+        if (normalizedPath === null) {
+          if (posixPaths.has(path) || winPaths.has(path)) pathCollision = true;
+          winPaths.add(path);
+        } else {
+          if (winPaths.has(path)) pathCollision = true;
+          posixPaths.add(path);
+        }
+        if (normalizedPath !== null && winPath !== null && winPath !== path) {
           files.push({ path: winPath, content, size: bytes, changed: baseline ? baseline.get(winPath) !== content : false });
+          if (posixPaths.has(winPath) || winPaths.has(winPath)) pathCollision = true;
+          winPaths.add(winPath);
         }
         return;
       }
@@ -273,6 +287,7 @@ export async function extractTarball(
   const manifestConfusion: string[] = [];
   if (packageManifestEntryCount > 1) manifestConfusion.push(`${packageManifestEntryCount} entries land on the root package.json (npm keeps the last one)`);
   if (manifestVariant) manifestConfusion.push("the root package.json entry is spelled with different case or path form than package/package.json");
+  if (pathCollision) manifestConfusion.push("a path collision between tar readings: a Windows-reading entry path lands on another retained file");
   if (manifestOversized) manifestConfusion.push("the root package.json is over 2 MiB and cannot be scanned");
   return { files, packageManifestEntryCount, manifestConfusion, unpackedSize, fileCount, truncated, unscanned, unscannedTotals, contentMismatch, contentMismatchTotals };
 }

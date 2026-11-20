@@ -91,12 +91,17 @@ const JS_REF = /\.(?:c?js|mjs|cjs|ts)$/;
 const WORD_PIECES = /[${}\\=,]+/;
 const SIMPLE_COMMAND_SPLIT = /&&|\|\||[;|&\n]/;
 const WRAPPERS = new Set(["env", "exec", "nohup", "time", "command", "npx"]);
-const INTERPRETERS = new Set([
-  "sh", "bash", "zsh", "dash", "ksh", "node", "nodejs", "deno", "bun",
-  "python", "python3", "perl", "ruby", "php", "pwsh", "powershell",
-]);
-// `-c`, `-e`, `-p`, `-pe`, `--eval`, `--print`: inline code, already covered by DANGER_IN_SCRIPT.
-const INLINE_FLAG = /^-(?:[a-z]*[cep]|-eval|-print)$/i;
+// Inline-code flags differ per interpreter (`sh -e` is errexit, not inline code).
+const SHELL_INLINE = /^-[a-z]*c[a-z]*$/i; // `-c`, `-ec`, `-lc`
+const NODE_INLINE = /^(?:-[ep]|-pe|--eval(?:=.*)?|--print(?:=.*)?)$/;
+const INLINE_FLAG: Record<string, RegExp> = {
+  sh: SHELL_INLINE, bash: SHELL_INLINE, zsh: SHELL_INLINE, dash: SHELL_INLINE, ksh: SHELL_INLINE,
+  node: NODE_INLINE, nodejs: NODE_INLINE, bun: NODE_INLINE, deno: NODE_INLINE,
+  python: /^-c$/, python3: /^-c$/, perl: /^-e$/, ruby: /^-e$/, php: /^-r$/,
+  pwsh: /^-(?:c|command)$/i, powershell: /^-(?:c|command)$/i,
+};
+// Operands with these extensions are code wherever they appear (`sudo node x.js`, `timeout 5 sh x.sh`).
+const CODE_WORD = /\.(?:c?js|mjs|ts|sh|py|pl|rb)\b/i;
 // Flags whose value is also executed code (`node -r ./hook main.js`).
 const CODE_VALUE_FLAG = /^--?(?:r|require|import|loader|experimental-loader)(?:=(.*))?$/;
 const MAX_SUFFIX_DEPTH = 64;
@@ -174,29 +179,37 @@ function makeResolver(files: PackageFile[]): (cmd: string) => PackageFile[] {
       const command = words[i];
       if (!command) continue;
       const name = command.replace(/^[("'`]+/, "");
-      if (!INTERPRETERS.has(name.slice(name.lastIndexOf("/") + 1))) {
+      const interpreter = name.slice(name.lastIndexOf("/") + 1);
+      const inline = Object.hasOwn(INLINE_FLAG, interpreter) ? INLINE_FLAG[interpreter] : undefined;
+      // The command word itself may be a package script (`./setup`).
+      if (!inline) {
         const hit = resolveWord(command);
         if (hit) out.add(hit);
-        continue;
       }
-      // Interpreter: the first operand naming a package file is the executed script
-      // (earlier operands may be flag values like `4096`); later ones are data.
+      // Operands: anything with a code extension is scanned wherever it sits (unknown wrappers like
+      // `sudo`/`timeout`/`xargs` must not hide it). For an interpreter, the first other operand that
+      // names a package file is also the executed script (earlier operands may be flag values).
       let found = false;
       for (let j = i + 1; j < words.length; j++) {
         const w = words[j]!;
-        if (w.startsWith("-")) {
-          if (INLINE_FLAG.test(w)) break;
+        if (inline && w.startsWith("-")) {
+          if (inline.test(w)) {
+            if (!w.includes("=")) j++; // skip the inline code word; code-extension operands still count
+            found = true; // later extension-less operands are arguments to that inline code, not scripts
+            continue;
+          }
           const m = CODE_VALUE_FLAG.exec(w);
           const value = m ? (m[1] ?? words[++j]) : undefined;
           const hit = value ? resolveWord(value) : undefined;
           if (hit) out.add(hit);
           continue;
         }
-        if (found) continue;
+        const isCode = CODE_WORD.test(w);
+        if (!isCode && (!inline || found)) continue;
         const hit = resolveWord(w);
         if (hit) {
           out.add(hit);
-          found = true;
+          if (inline) found = true;
         }
       }
     }
