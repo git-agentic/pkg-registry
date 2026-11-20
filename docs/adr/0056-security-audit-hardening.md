@@ -159,7 +159,9 @@ decisions. Findings that stayed as documented trade-offs are listed at the end.
 17. **bwrap isolates pid, session and local IPC.** Every run adds
     `--unshare-pid --new-session`. `--die-with-parent` is not used: its
     `PR_SET_PDEATHSIG` is tied to the forking thread and intermittently killed
-    runs at start, and the pid namespace already ends orphans with the command. Local IPC masks apply
+    runs at start, and the pid namespace already ends orphans with the command.
+    Residual, unchanged from before: if Sentinel is killed mid-run, the
+    sandboxed command still runs to completion inside the sandbox. Local IPC masks apply
     whether or not network is approved, because `--unshare-net` does not cover
     pathname unix sockets: the user session bus under `/run/user/<uid>`, the
     docker, containerd, podman and crio sockets, the system dbus socket, and

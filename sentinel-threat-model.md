@@ -373,7 +373,10 @@ Stated plainly. Each is a deliberate, recorded trade-off, not an oversight.
   a copied `launchctl`.
 - **A sandboxed process can outlive its script on macOS (ADR-0056).** There is
   no process-group kill. Containment still holds while it runs, but it is no
-  longer tied to the install's lifetime. On Linux the pid namespace ends with the command, so orphans die with it.
+  longer tied to the install's lifetime. On Linux the pid namespace ends with the command, so its orphans die with it;
+  but if Sentinel itself is killed mid-run, the sandboxed command runs to
+  completion, still contained (bwrap is not given `--die-with-parent`, as before
+  ADR-0056).
 - **Enforced installs reject sha1-only packages (ADR-0056).** The integrity
   binding compares per algorithm. A package npm records only as sha1 cannot run
   an enforced script, and npm older than 7, which does not set
