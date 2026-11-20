@@ -17,6 +17,9 @@ const JS_PARSEABLE = /\.(c?js|mjs)$/i;
 const GUNZIP_LIKE = /\b(gunzip|inflate|brotliDecompress|unzip)\w*\s*\(/;
 const BUFFER_FROM = /Buffer\.from\(/g;
 /** `require(<non-literal>)`, a template literal with `${`, or a literal `*.node` addon: loads a computed path, the launch form for a just-written native addon. */
+/** A write whose target ends in `.node`, and a relative extension-less literal require (Node appends `.node`). */
+const WRITES_NODE = /\b(?:writeFileSync|writeFile|createWriteStream|copyFileSync|copyFile)\s*\([^;\n]{0,200}\.node['"`]/;
+const REQUIRE_EXTLESS = /\brequire\s*\(\s*(['"])\.\.?\/[^'".\n]*\1/;
 const REQUIRE_OF_PATH = /\brequire\s*\(\s*(?:[^'"`\s)]|`[^`]*\$\{|(['"`])[^'"`\n]*\.node\1)/;
 // Node accepts any case and `base64url` as an encoding name.
 const BASE64 = /['"]base64(?:url)?['"]/gi;
@@ -80,7 +83,8 @@ export const nativePayloadLoaderRule: Rule = {
         const hits = (Object.keys(FALLBACK) as (keyof typeof FALLBACK)[]).filter((k) => FALLBACK[k](file.content));
         // The AST rule counts `require(<written path>)` as a launch; on an overflowed file the
         // fallback must too, or that launch form downgrades the chain to high.
-        if (a.walkOverflow && !hits.includes("launch") && REQUIRE_OF_PATH.test(file.content)) hits.push("launch");
+        if (a.walkOverflow && !hits.includes("launch")
+          && (REQUIRE_OF_PATH.test(file.content) || (WRITES_NODE.test(file.content) && REQUIRE_EXTLESS.test(file.content)))) hits.push("launch");
         if (hits.length >= 2) {
           findings.push(mkFinding({
             ruleId: this.id, category: this.category,
