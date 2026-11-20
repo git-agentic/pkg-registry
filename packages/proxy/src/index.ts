@@ -257,10 +257,31 @@ function resolveTrustMaterial(): ProvenanceTrustMaterial | null | undefined {
   }
 }
 
+// A typo like `Block` must not silently fall back to serving blocked packages.
+function resolveProxyPolicy(): ProxyPolicy {
+  const raw = env("SENTINEL_POLICY", "observe");
+  if (raw !== "observe" && raw !== "block") {
+    console.error(`FATAL: SENTINEL_POLICY must be exactly "observe" or "block" (got ${JSON.stringify(raw)})`);
+    process.exit(1);
+  }
+  return raw;
+}
+
+/** Bind address. Loopback by default so a bare `sentinel-proxy` is not reachable from the network. */
+function resolveHost(): string {
+  const raw = env("SENTINEL_HOST", "127.0.0.1");
+  if (raw.trim() === "") {
+    console.error("FATAL: SENTINEL_HOST must be a non-empty host or IP address");
+    process.exit(1);
+  }
+  return raw;
+}
+
 function main(): void {
   const here = dirname(fileURLToPath(import.meta.url));
   const port = Number(env("SENTINEL_PORT", "4873"));
-  const policy = env("SENTINEL_POLICY", "observe") as ProxyPolicy;
+  const policy = resolveProxyPolicy();
+  const host = resolveHost();
   const tarballOrigins = resolveTarballOrigins();
   const publicBaseUrl = resolvePublicBaseUrl();
   const maxTarballBytes = resolvePositiveInt("SENTINEL_MAX_TARBALL_BYTES");
@@ -309,8 +330,10 @@ function main(): void {
   const autoQuarantine = resolveAutoQuarantine(Boolean(authPublicKey));
 
   const app = createServer({ upstream, store, approvals, enterprisePolicy, policyHash, policy, publicDir, privateStore, claimCorpus, claimCorpusHash, retractionCorpus, retractionCorpusHash, publishTokens, trustMaterial, violations, approvalRequests, authPublicKey, history, advisories, vulnerabilities, publicBaseUrl, maxTreePackages, rateLimiter, extractLimits, autoQuarantine, registryMode });
-  app.listen(port, () => {
-    console.log(`Sentinel proxy listening on http://localhost:${port}`);
+  app.listen(port, host, () => {
+    const shown = host === "0.0.0.0" || host === "::" ? "localhost" : host.includes(":") ? `[${host}]` : host;
+    console.log(`Sentinel proxy listening on http://${shown}:${port}`);
+    console.log(`  host     : ${host}${process.env.SENTINEL_HOST === undefined ? "  (default; set SENTINEL_HOST to bind elsewhere)" : ""}`);
     console.log(`  upstream : ${upstream.name}`);
     console.log(`  tarball-origins: registry origin${tarballOrigins.length ? " + " + tarballOrigins.join(", ") : " only"}`);
     console.log(`  public-url: ${publicBaseUrl ?? "loopback-derived (set SENTINEL_PUBLIC_BASE_URL for network deployments)"}`);
@@ -325,10 +348,10 @@ function main(): void {
     console.log(`  auto-quarantine: ${autoQuarantine ? "on (confirmed violations quarantine; auth-gated)" : "off (violations record-only)"}`);
     console.log(`  approval-requests: ${process.env.SENTINEL_APPROVAL_REQUESTS ? "persisted" : "in-memory"}`);
     console.log(`  history  : ${history ? `enabled (${process.env.SENTINEL_HISTORY_DB})` : "disabled"}`);
-    console.log(`  dashboard: http://localhost:${port}/`);
+    console.log(`  dashboard: http://${shown}:${port}/`);
     const claims = enterprisePolicy.privateNamespaces ?? [];
     console.log(`  private  : ${claims.length ? claims.join(", ") : "none"}  (publish ${publishTokens.length ? "enabled" : "disabled"})`);
-    console.log(`\nPoint npm at it:  npm install --registry http://localhost:${port}`);
+    console.log(`\nPoint npm at it:  npm install --registry http://${shown}:${port}`);
     if (process.env.SENTINEL_BOOT_EXIT) process.exit(0);
   });
 }
