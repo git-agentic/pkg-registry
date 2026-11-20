@@ -96,7 +96,7 @@ export const installScriptsRule: Rule = {
 // Pieces of a shell word that may hide a path (`${VAR}setup`, `--require=./x.js`, `a\b`).
 const WORD_PIECES = /[${}\\=,'"`()<>]+/; // `<>`: `node <setup.js` reads setup.js
 const SIMPLE_COMMAND_SPLIT = /&&|\|\||[;|&\n]/;
-const PIPELINE_SPLIT = /&&|\|\||[;&\n]/; // like SIMPLE_COMMAND_SPLIT, but a single `|` stays inside the pipeline
+const PIPELINE_SPLIT = /&&|\|\||[;\n]|(?<!\|)&/; // like SIMPLE_COMMAND_SPLIT, but a single `|` or `|&` stays inside the pipeline
 
 /**
  * Split on `&&`, `||`, `;`, `|`, `&`, newline outside quotes (`keepPipes`: a single `|` does not split, giving
@@ -111,7 +111,12 @@ function splitSimpleCommands(cmd: string, keepPipes = false): string[] {
     if (c === "\\" && quote !== "'") { i++; continue; }
     if (quote) { if (c === quote) quote = ""; continue; }
     if (c === "'" || c === '"') { quote = c; continue; }
-    if (c === "|" && keepPipes && cmd[i + 1] !== "|") continue;
+    if (c === "|" && keepPipes && cmd[i + 1] !== "|") { if (cmd[i + 1] === "&") i++; continue; }
+    if (c === "\n" && keepPipes) { // a newline right after `|` continues the pipeline
+      let j = i - 1;
+      while (j >= start && (cmd[j] === " " || cmd[j] === "\t")) j--;
+      if (j > start && cmd[j] === "|" && cmd[j - 1] !== "|") continue;
+    }
     if (c === ";" || c === "|" || c === "&" || c === "\n") {
       out.push(cmd.slice(start, i));
       while (cmd[i + 1] === c && c !== ";" && c !== "\n") i++; // `&&`, `||`
@@ -145,7 +150,7 @@ function substitutionBodies(cmd: string): string[] {
   }
   return bodies;
 }
-const WRAPPERS = new Set(["env", "exec", "nohup", "time", "command", "npx"]);
+const WRAPPERS = new Set(["env", "exec", "nohup", "time", "command", "npx", "sudo"]);
 // Inline-code flags differ per interpreter (`sh -e` is errexit, not inline code).
 const SHELL_INLINE = /^-[a-z]*c[a-z]*$/i; // `-c`, `-ec`, `-lc`
 const NODE_INLINE = /^(?:-[ep]|-pe|--eval(?:=.*)?|--print(?:=.*)?)$/;
@@ -211,16 +216,18 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
    * A shell never appends `.js` to a command word, so only `script` retries.
    */
   type Mode = "exact" | "path" | "script";
-  // `node <dir>`: the `main` file of <dir>/package.json, then <dir>/index.js. Mains are parsed once per directory.
-  const mains = new Map<string, unknown>();
+  // `node <dir>`: the `main` file of <dir>/package.json, then <dir>/index.js. Resolved (or missed) once per directory.
+  const entries = new Map<string, PackageFile | null>();
   const entry = (dir: string): PackageFile | undefined => {
-    if (!mains.has(dir)) {
+    let hit = entries.get(dir);
+    if (hit === undefined) {
       let main: unknown;
       try { main = JSON.parse(exact(`${dir}/package.json`)?.content ?? "null")?.main; } catch { /* no usable main */ }
-      mains.set(dir, typeof main === "string" ? main.replace(/^\.\//, "") : undefined);
+      const m = typeof main === "string" ? main.replace(/^\.\//, "") : "";
+      hit = (m ? exact(`${dir}/${m}`) ?? exact(`${dir}/${m}.js`) ?? exact(`${dir}/${m}/index.js`) : undefined) ?? exact(`${dir}/index.js`) ?? null;
+      entries.set(dir, hit);
     }
-    const main = mains.get(dir) as string | undefined;
-    return (main ? exact(`${dir}/${main}`) ?? exact(`${dir}/${main}.js`) ?? exact(`${dir}/${main}/index.js`) : undefined) ?? exact(`${dir}/index.js`);
+    return hit ?? undefined;
   };
   const resolveRef = (raw: string, mode: Mode): PackageFile | undefined => {
     const ref = raw.replace(/^\.\//, "").replace(/\/$/, "") || (raw === "./" ? "." : "");
@@ -231,7 +238,9 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
     if (mode === "path") return suffix(ref);
     const dotted = ref.slice(ref.lastIndexOf("/") + 1).includes(".");
     // Node resolves `node setup` / `node scripts` as setup.js / scripts/<main or index.js>; TS runners also try setup.ts.
-    if (!dotted) hit = exact(`package/${ref}.js`) ?? entry(`package/${ref}`) ?? exact(`package/${ref}.ts`);
+    if (!dotted) hit = exact(`package/${ref}.js`);
+    hit ??= entry(`package/${ref}`); // a directory may have a dot in its name (`tools.v2`)
+    if (!dotted) hit ??= exact(`package/${ref}.ts`);
     // After a `cd scripts &&` the file sits deeper than `package/<ref>`.
     return hit ?? suffix(ref) ?? (dotted ? undefined : suffix(`${ref}.js`) ?? suffix(`${ref}.ts`));
   };
@@ -245,14 +254,19 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
     }
     return undefined;
   };
-  // A path-qualified wrapper counts by its basename (`/usr/bin/env`).
+  // A command word is judged by its basename (`/usr/bin/env` is `env`), except a relative path that names a
+  // package file (`./bin/env`): that is the file itself, scanned as a command, not the wrapper it is named after.
+  const cmdBase = (w: string): string => {
+    const t = trimPunct(w);
+    return t.includes("/") && !t.startsWith("/") && resolveWord(t, "path") ? t : base(t);
+  };
   const isPrefix = (words: string[], i: number) =>
-    /^[A-Za-z_]\w*=/.test(words[i]!) || WRAPPERS.has(base(words[i]!)) || (i > 0 && WRAPPERS.has(base(words[i - 1]!)) && words[i]!.startsWith("-"));
+    /^[A-Za-z_]\w*=/.test(words[i]!) || WRAPPERS.has(cmdBase(words[i]!)) || (i > 0 && WRAPPERS.has(cmdBase(words[i - 1]!)) && words[i]!.startsWith("-"));
   const isInterpreterCommand = (simple: string): boolean => {
     const ws = simple.split(/\s+/).filter(Boolean).map(unquote);
     let k = 0;
     while (k < ws.length && isPrefix(ws, k)) k++;
-    return ws[k] !== undefined && Object.hasOwn(INLINE_FLAG, base(trimPunct(ws[k]!)));
+    return ws[k] !== undefined && Object.hasOwn(INLINE_FLAG, cmdBase(ws[k]!));
   };
 
   // Package scripts reached from a command line, scanned from a worklist (not recursion): each name once, so
@@ -297,8 +311,8 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
     for (const pipeline of new Set([...splitSimpleCommands(cmd, true), ...cmd.split(PIPELINE_SPLIT)])) {
     const quoted = splitSimpleCommands(pipeline); // quote-aware, so `php -r 'a;b' README` is one stage
     const stages = new Set([...quoted, ...pipeline.split(SIMPLE_COMMAND_SPLIT)]);
-    // Over-follow: when any stage of a real pipeline is an interpreter, the other stages' operands (`cat x | sh`) are scripts.
-    const piped = quoted.length > 1 && quoted.some(isInterpreterCommand);
+    // Over-follow: the operands of every stage upstream of an interpreter stage (`cat x | sh`) are scripts.
+    const upstream = new Set(quoted.slice(0, Math.max(0, quoted.map(isInterpreterCommand).lastIndexOf(true))));
     for (const simple of stages) {
       const rawWords = simple.split(/\s+/).filter(Boolean);
       const words = rawWords.map(unquote);
@@ -324,7 +338,7 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
       const command = words[i];
       if (!command) continue;
       const name = trimPunct(command);
-      const interpreter = base(name);
+      const interpreter = cmdBase(name);
       if (PACKAGE_MANAGERS.has(interpreter)) followScriptWords(words, i + 1, out);
       const inline = Object.hasOwn(INLINE_FLAG, interpreter) ? INLINE_FLAG[interpreter] : undefined;
       // The command word itself may be a package script (`./setup`).
@@ -386,7 +400,7 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
           continue;
         }
         const isCode = CODE_WORD.test(w);
-        if (!isCode && !(piped && !inline) && (!inline || found)) continue;
+        if (!isCode && !(upstream.has(simple) && !inline) && (!inline || found)) continue;
         const hit = resolveWord(w, "script");
         if (hit) {
           out.add(hit);

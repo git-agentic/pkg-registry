@@ -55,6 +55,34 @@ describe("install hooks follow the files these forms execute", () => {
   row("node <dir> uses its package.json main", "node tool", "package/tool/entry.js", { "package/tool/package.json": '{"main":"entry.js"}' });
   row("node <dir> falls back to index.js", "node tool", "package/tool/index.js");
 
+  row("pipe into sudo sh", "cat setup | sudo sh", "package/setup");
+  row("pipe-and into sh", "cat setup |& sh", "package/setup");
+  row("newline continues a pipeline", "cat setup |\nsh", "package/setup");
+  row("dotted directory name", "node tools.v2", "package/tools.v2/index.js");
+
+  test("a package-local command word is a package file, not env/node", () => {
+    assert.deepEqual(sev("./bin/env setup", { "package/bin/env": PAYLOAD, "package/setup.js": BENIGN }), ["critical"]);
+    assert.deepEqual(sev("bin/node setup", { "package/bin/node": PAYLOAD, "package/setup.js": BENIGN }), ["critical"]);
+    assert.deepEqual(sev("./env setup", { "package/env": PAYLOAD, "package/setup.js": BENIGN }), ["critical"]);
+    assert.deepEqual(sev("./bin/env setup", { "package/bin/env": BENIGN, "package/setup.js": BENIGN }), ["low"]);
+    // an unresolved or absolute path is still a wrapper, so the operand is scanned
+    assert.deepEqual(sev("/usr/bin/env node setup", { "package/setup.js": PAYLOAD }), ["critical"]);
+    assert.deepEqual(sev("./bin/env node setup", { "package/setup.js": PAYLOAD }), ["critical"]);
+  });
+
+  test("only stages upstream of an interpreter are followed", () => {
+    const report = { "package/build.js": BENIGN, "package/build-report.md": `${CURL_SH}\n` };
+    assert.deepEqual(sev("node build.js | tee build-report.md", report), ["low"]);
+    assert.deepEqual(sev("cat setup | sh | tee build-report.md", { "package/setup": BENIGN, ...report }), ["low"]);
+  });
+
+  test("many directory references stay cheap even with a huge `main`", () => {
+    const pkg = { main: `${"a".repeat(200000)}.js` };
+    const t0 = Date.now();
+    assert.deepEqual(sev(`cat ${". ".repeat(50000)}| sh`, { "package/index.js": BENIGN }, pkg), ["low"]);
+    assert.ok(Date.now() - t0 < 1000, `took ${Date.now() - t0} ms`);
+  });
+
   test("a pipeline with no interpreter does not execute its operands", () => {
     assert.deepEqual(sev("cat setup | wc -l", { "package/setup": PAYLOAD }), ["low"]);
   });
