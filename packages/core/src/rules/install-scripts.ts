@@ -88,8 +88,29 @@ export const installScriptsRule: Rule = {
 
 const JS_REF = /\.(?:c?js|mjs|cjs|ts)$/;
 // Pieces of a shell word that may hide a path (`${VAR}setup`, `--require=./x.js`, `a\b`).
-const WORD_PIECES = /[${}\\=,]+/;
+const WORD_PIECES = /[${}\\=,'"`()]+/;
 const SIMPLE_COMMAND_SPLIT = /&&|\|\||[;|&\n]/;
+
+/** Split on `&&`, `||`, `;`, `|`, `&`, newline outside quotes. An unterminated quote falls back to the plain split. */
+function splitSimpleCommands(cmd: string): string[] {
+  const out: string[] = [];
+  let start = 0;
+  let quote = "";
+  for (let i = 0; i < cmd.length; i++) {
+    const c = cmd[i]!;
+    if (c === "\\" && quote !== "'") { i++; continue; }
+    if (quote) { if (c === quote) quote = ""; continue; }
+    if (c === "'" || c === '"') { quote = c; continue; }
+    if (c === ";" || c === "|" || c === "&" || c === "\n") {
+      out.push(cmd.slice(start, i));
+      while (cmd[i + 1] === c && c !== ";" && c !== "\n") i++; // `&&`, `||`
+      start = i + 1;
+    }
+  }
+  if (quote) return cmd.split(SIMPLE_COMMAND_SPLIT);
+  out.push(cmd.slice(start));
+  return out;
+}
 const WRAPPERS = new Set(["env", "exec", "nohup", "time", "command", "npx"]);
 // Inline-code flags differ per interpreter (`sh -e` is errexit, not inline code).
 const SHELL_INLINE = /^-[a-z]*c[a-z]*$/i; // `-c`, `-ec`, `-lc`
@@ -172,8 +193,9 @@ function makeResolver(files: PackageFile[]): (cmd: string) => PackageFile[] {
 
   /** Scan one command line; `sh -c "<code>"` code is scanned again as a command line (depth-bounded, so linear). */
   const scan = (cmd: string, out: Set<PackageFile>, depth: number): void => {
-    for (const simple of cmd.split(SIMPLE_COMMAND_SPLIT)) {
-      const words = simple.split(/\s+/).filter(Boolean).map(unquote);
+    for (const simple of splitSimpleCommands(cmd)) {
+      const rawWords = simple.split(/\s+/).filter(Boolean);
+      const words = rawWords.map(unquote);
       let i = 0;
       while (i < words.length && isPrefix(words, i)) i++;
       const command = words[i];
@@ -197,17 +219,28 @@ function makeResolver(files: PackageFile[]): (cmd: string) => PackageFile[] {
             found = true; // later extension-less operands are arguments to that inline code, not scripts
             let code = w.includes("=") ? w.slice(w.indexOf("=") + 1) : "";
             if (!w.includes("=")) {
-              // The code word may span several whitespace-split words when quoted.
-              const first = words[j + 1] ?? "";
+              // Quoted code may span several whitespace-split words: find the span on the RAW words
+              // (unquoting first would hide the opening quote). No closing quote ⇒ only one word.
+              const first = rawWords[j + 1] ?? "";
               const q = first[0] === "'" || first[0] === '"' ? first[0] : "";
-              const parts = [first];
-              j++;
+              let end = j + 1;
               if (q && !(first.length > 1 && first.endsWith(q))) {
-                while (j + 1 < words.length && !words[j]!.endsWith(q)) parts.push(words[++j]!);
+                for (let k = j + 2; k < rawWords.length; k++) {
+                  if (rawWords[k]!.endsWith(q)) { end = k; break; }
+                }
               }
-              code = parts.join(" ");
+              code = rawWords.slice(j + 1, end + 1).join(" ");
+              j = end;
             }
-            if (inline === SHELL_INLINE && depth < MAX_INLINE_DEPTH) scan(unquote(code), out, depth + 1);
+            code = unquote(code);
+            if (inline === SHELL_INLINE && depth < MAX_INLINE_DEPTH) scan(code, out, depth + 1);
+            else {
+              // Non-shell inline code (`node -e "require('./x.js')"`): code-extension names inside still count.
+              for (const cw of code.split(/\s+/)) {
+                const hit = CODE_WORD.test(cw) ? resolveWord(cw) : undefined;
+                if (hit) out.add(hit);
+              }
+            }
             continue;
           }
           const m = CODE_VALUE_FLAG.exec(w);

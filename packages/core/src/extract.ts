@@ -126,9 +126,12 @@ export async function extractTarball(
     }
     // `null` ⇒ npm would not extract it (escapes the root / no name): never retained.
     // The POSIX reading (`\` is a filename character, as node-tar does on Linux/macOS) is the retained path.
-    const normalizedPath = npmPath(entry.path);
+    // node-tar on a win32 audit host already turned `\` into `/` in `entry.path`; the header path (which
+    // includes a PAX `path`) is still raw, so both readings are derived from it on every host.
+    const rawPath = entry.header?.path ?? entry.path;
+    const normalizedPath = npmPath(rawPath);
     // Windows clients read `\` as a separator: an entry lands on the root manifest under EITHER reading.
-    const winPath = npmPath(entry.path.replace(/\\/g, "/"));
+    const winPath = npmPath(rawPath.replace(/\\/g, "/"));
     const isManifest = [normalizedPath, winPath].some((x) => x?.toLowerCase() === "package/package.json");
     if (isManifest) {
       packageManifestEntryCount += 1;
