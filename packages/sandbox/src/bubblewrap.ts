@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, sep } from "node:path";
 import { generateBwrapArgs } from "./bwrap.js";
@@ -59,6 +59,15 @@ function safeRealpath(p: string): string {
   }
 }
 
+/** Names of the sub-directories of `p`; [] when unreadable. */
+function listDirNames(p: string): string[] {
+  try {
+    return readdirSync(p, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name);
+  } catch {
+    return [];
+  }
+}
+
 /** Enforces a generated bwrap profile via `bwrap`. Fails closed on non-Linux, missing bwrap, or refused namespace. */
 export class BubblewrapSandbox implements Sandbox {
   run(cmd: string, opts: { cwd: string; approved: Capability[]; homeDir: string; env?: NodeJS.ProcessEnv; projectRoot?: string }): SandboxResult {
@@ -101,7 +110,7 @@ export class BubblewrapSandbox implements Sandbox {
 
     const args = [
       ...generateBwrapArgs(opts.approved, {
-        homeDir: opts.homeDir, cwd: opts.cwd, tmpDir: tmpdir(), pathExists: existsSync, realpath: safeRealpath,
+        homeDir: opts.homeDir, cwd: opts.cwd, tmpDir: tmpdir(), pathExists: existsSync, realpath: safeRealpath, listDirs: listDirNames,
         nodePrefix, projectRoot,
         // The helper's own directory must stay visible inside the sandbox even when it
         // lands under $HOME (e.g. a CI checkout at ~/work/...) and neither the node

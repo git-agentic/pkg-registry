@@ -5,6 +5,12 @@ import { writeAllowFloor } from "./write-floor.js";
 import { readAllowList } from "./read-allow.js";
 import { SENSITIVE_EXECUTABLES, execCarveOutPaths, classifyProcessTarget } from "./sensitive-executables.js";
 
+/** Pathname unix sockets that hand out host control (container runtimes, the system bus). */
+const IPC_SOCKETS = [
+  "/var/run/docker.sock", "/run/docker.sock", "/run/containerd/containerd.sock",
+  "/run/podman/podman.sock", "/run/crio/crio.sock", "/run/dbus/system_bus_socket",
+];
+
 /**
  * Generate `bwrap` argv from a package's APPROVED capabilities (Phase 25).
  * Slice 1: root read-only (`--ro-bind / /`) → writes denied by default, floor +
@@ -30,8 +36,10 @@ export function generateBwrapArgs(
      * checkout and would otherwise be hidden by the `--tmpfs $HOME` deny even though
      * it's neither the node prefix nor the project root. */
     extraReadAllow?: string[];
-    /** uid whose `/run/user/<uid>` is emptied when there is no network approval; defaults to `process.getuid()`. */
+    /** uid whose `/run/user/<uid>` is emptied; defaults to `process.getuid()`. */
     uid?: number;
+    /** Names of the directories under `dir` (for the `/tmp/ssh-*` masks); defaults to none (kept pure for tests). */
+    listDirs?: (dir: string) => string[];
   },
 ): string[] {
   const approvedFs = approved.filter((c) => c.kind === "filesystem").map((c) => c.target);
@@ -140,21 +148,33 @@ export function generateBwrapArgs(
     }
   }
 
-  if (!hasNetwork) {
-    // --unshare-net isolates abstract and network sockets, NOT pathname unix sockets reachable
-    // through the ro root bind: the container runtime socket (host root via a privileged
-    // container) and the user session bus / agent sockets under /run/user/<uid>. Mask them,
-    // each only when present (bwrap cannot create a mount point under a ro parent).
-    const sockets = new Set<string>();
-    for (const sock of ["/var/run/docker.sock", "/run/docker.sock"]) {
-      if (approvedFs.some((t) => pathCovers(t, sock)) || !exists(sock)) continue;
-      sockets.add(resolve(sock)); // /var/run is usually a symlink to /run: mask the real node once
-    }
-    for (const real of sockets) args.push("--ro-bind", "/dev/null", real);
-    const uid = opts.uid ?? process.getuid?.();
-    const runUser = uid === undefined ? undefined : `/run/user/${uid}`;
-    if (runUser && exists(runUser) && !approvedFs.some((t) => pathCovers(t, runUser))) args.push("--tmpfs", runUser);
-    args.push("--unshare-net");
+  // Local IPC masks. A `network` approval means the network, NOT local IPC: pathname unix
+  // sockets stay reachable through the ro root bind (and --unshare-net would not hide them
+  // anyway), and the container runtime socket or the user session bus (`systemd-run --user`) is
+  // a full escape. So these apply with or without network; only an explicit filesystem grant
+  // covering the path lifts one. Each only when present (bwrap cannot create a mount point
+  // under a ro parent), and never when it would hide the cwd / project root / $HOME.
+  const liftedByGrant = (p: string) => approvedFs.some((t) => pathCovers(t, p));
+  const hidesWorkdir = (p: string) => [opts.cwd, opts.projectRoot, home].some((d) => pathCovers(p, d));
+  const sockets = new Set<string>();
+  for (const sock of IPC_SOCKETS) {
+    if (liftedByGrant(sock) || !exists(sock)) continue;
+    sockets.add(resolve(sock)); // /var/run is usually a symlink to /run: mask the real node once
   }
+  for (const real of sockets) args.push("--ro-bind", "/dev/null", real);
+  const uid = opts.uid ?? process.getuid?.();
+  const runUser = uid === undefined ? undefined : `/run/user/${uid}`;
+  if (runUser && exists(runUser) && !liftedByGrant(runUser) && !hidesWorkdir(runUser)) args.push("--tmpfs", runUser);
+  // X11 and ssh-agent socket directories under /tmp: AFTER the rw /tmp bind above, or the
+  // bind would overmount the tmpfs.
+  const tmpMasks = new Set<string>();
+  for (const root of new Set(["/tmp", opts.tmpDir])) {
+    const names = [".X11-unix", ...(opts.listDirs?.(root) ?? []).filter((n) => n.startsWith("ssh-"))];
+    for (const n of names) tmpMasks.add(`${root}/${n}`);
+  }
+  for (const m of tmpMasks) {
+    if (exists(m) && !liftedByGrant(m) && !hidesWorkdir(m)) args.push("--tmpfs", m);
+  }
+  if (!hasNetwork) args.push("--unshare-net");
   return args;
 }

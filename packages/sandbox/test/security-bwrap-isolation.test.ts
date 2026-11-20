@@ -53,10 +53,11 @@ describe("F9 unix sockets are unreachable without a network approval", () => {
     assert.ok(!args.join(" ").includes("docker.sock"));
     assert.ok(!args.join(" ").includes("/run/user"));
   });
-  test("with a network approval the socket masks and /run/user tmpfs are NOT added", () => {
+  test("a network approval means the network, not local IPC: the masks are STILL applied", () => {
     const args = generateBwrapArgs([net("198.51.100.5")], withFs(["/var/run/docker.sock", "/run/docker.sock", "/run/user/1000"]));
-    assert.ok(!args.join(" ").includes("docker.sock"));
-    assert.ok(!args.join(" ").includes("/run/user"));
+    assert.ok(args.join(" ").includes("--ro-bind /dev/null /run/docker.sock"));
+    assert.ok(args.join(" ").includes("--tmpfs /run/user/1000"));
+    assert.ok(!args.includes("--unshare-net"));
   });
   test("an approved filesystem grant covering the socket lifts the mask", () => {
     const args = generateBwrapArgs([fsCap("/run/docker.sock")], withFs(["/run/docker.sock"]));
