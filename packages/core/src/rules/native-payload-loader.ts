@@ -31,7 +31,7 @@ const BASE64 = /['"]base64(?:url)?['"]/gi;
  */
 const LOOSE: Record<"read" | "decode" | "write" | "launch", RegExp> = {
   read: /\b(?:readFileSync|readFile|createReadStream)\b/,
-  decode: /\b(?:gunzip|inflate|brotliDecompress|unzip)\w*/,
+  decode: /\b(?:gunzipSync|gunzip|inflateSync|inflate|inflateRaw(?:Sync)?|unzipSync|unzip|brotliDecompress(?:Sync)?)\b/,
   write: /\b(?:writeFileSync|writeFile|createWriteStream)\b/,
   launch: /\b(?:spawn|spawnSync|exec|execSync|execFile|execFileSync)\b|process\.dlopen/,
 };

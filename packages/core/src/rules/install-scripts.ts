@@ -190,24 +190,31 @@ function makeResolver(files: PackageFile[]): (cmd: string) => PackageFile[] {
     return node?.first;
   };
 
-  const resolveRef = (raw: string): PackageFile | undefined => {
+  /**
+   * `exact`: only `package/<ref>` (a bare command word such as `echo` or `node-gyp`).
+   * `path`: also the suffix trie (a command word written with a `/`, e.g. `./setup` after `cd scripts`).
+   * `script`: an executed operand, with Node-style `.js` / `/index.js` retries and the suffix trie.
+   * A shell never appends `.js` to a command word, so only `script` retries.
+   */
+  type Mode = "exact" | "path" | "script";
+  const resolveRef = (raw: string, mode: Mode): PackageFile | undefined => {
     const ref = raw.replace(/^\.\//, "");
     if (!ref) return undefined;
     let hit = exact(`package/${ref}`);
+    if (hit || mode === "exact") return hit;
+    if (mode === "path") return suffix(ref);
+    const dotted = ref.slice(ref.lastIndexOf("/") + 1).includes(".");
     // Node resolves `node setup` / `node scripts` as setup.js / scripts/index.js.
-    if (!hit && !ref.slice(ref.lastIndexOf("/") + 1).includes(".")) {
-      hit = exact(`package/${ref}.js`) ?? exact(`package/${ref}/index.js`);
-    }
-    // After a `cd scripts &&` the file sits deeper than `package/<ref>`: fall back to the suffix trie
-    // for every operand (and `<ref>.js`, as Node would).
-    return hit ?? suffix(ref) ?? (ref.slice(ref.lastIndexOf("/") + 1).includes(".") ? undefined : suffix(`${ref}.js`));
+    if (!dotted) hit = exact(`package/${ref}.js`) ?? exact(`package/${ref}/index.js`);
+    // After a `cd scripts &&` the file sits deeper than `package/<ref>`.
+    return hit ?? suffix(ref) ?? (dotted ? undefined : suffix(`${ref}.js`));
   };
-  const resolveWord = (word: string): PackageFile | undefined => {
+  const resolveWord = (word: string, mode: Mode): PackageFile | undefined => {
     const w = trimPunct(word);
-    const direct = resolveRef(w);
+    const direct = resolveRef(w, mode);
     if (direct) return direct;
     for (const piece of w.split(WORD_PIECES)) {
-      const hit = resolveRef(piece);
+      const hit = resolveRef(piece, mode);
       if (hit) return hit;
     }
     return undefined;
@@ -241,7 +248,7 @@ function makeResolver(files: PackageFile[]): (cmd: string) => PackageFile[] {
       const inline = Object.hasOwn(INLINE_FLAG, interpreter) ? INLINE_FLAG[interpreter] : undefined;
       // The command word itself may be a package script (`./setup`).
       if (!inline) {
-        const hit = resolveWord(command);
+        const hit = resolveWord(command, name.includes("/") ? "path" : "exact");
         if (hit) out.add(hit);
       }
       // Operands: anything with a code extension is scanned wherever it sits (unknown wrappers like
@@ -269,21 +276,25 @@ function makeResolver(files: PackageFile[]): (cmd: string) => PackageFile[] {
             else {
               // Non-shell inline code (`node -e "require('./x.js')"`): code-extension names inside still count.
               for (const cw of code.split(/\s+/)) {
-                const hit = CODE_WORD.test(cw) ? resolveWord(cw) : undefined;
+                const hit = CODE_WORD.test(cw) ? resolveWord(cw, "script") : undefined;
                 if (hit) out.add(hit);
               }
             }
             continue;
           }
           const m = CODE_VALUE_FLAG.exec(w);
-          const value = m ? (m[1] ?? words[++j]) : undefined;
-          const hit = value ? resolveWord(value) : undefined;
+          // Any other `--flag=value` (`--test-reporter=./r.js`) counts when its value is a code file.
+          const eq = w.indexOf("=");
+          const generic = !m && eq > 0 && CODE_WORD.test(w.slice(eq + 1)) ? w.slice(eq + 1) : undefined;
+          const value = m ? (m[1] ?? words[++j]) : generic;
+          // A bare specifier (`dotenv/config`) is a node_modules module, not a package script.
+          const hit = value && /^(?:\.{1,2}\/|\/)/.test(value) ? resolveWord(value, "script") : undefined;
           if (hit) out.add(hit);
           continue;
         }
         const isCode = CODE_WORD.test(w);
         if (!isCode && (!inline || found)) continue;
-        const hit = resolveWord(w);
+        const hit = resolveWord(w, "script");
         if (hit) {
           out.add(hit);
           if (inline) found = true;
