@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 import { readFileSync, realpathSync } from "node:fs";
 import { resolveTxt } from "node:dns/promises";
+import type { AddressInfo } from "node:net";
 import { pathToFileURL } from "node:url";
 import { ClaimSteward, type UpstreamClaimEvidence } from "./steward.js";
 import { createStewardServer } from "./server.js";
 
-export { ClaimSteward, corroboratesClaimDomain, signTransferRequest, transferRequestBytes, type ClaimApplicationInput, type ClaimChallenge, type GrandfatherTier, type TxtResolver, type UpstreamClaimEvidence, type UpstreamClaimLookup } from "./steward.js";
+export { ClaimSteward, corroboratesClaimDomain, signTransferRequest, transferRequestBytes, type TransferRequest, type ClaimApplicationInput, type ClaimChallenge, type GrandfatherTier, type TxtResolver, type UpstreamClaimEvidence, type UpstreamClaimLookup } from "./steward.js";
 export { createStewardServer, type StewardServerOptions } from "./server.js";
 
 function main(): void {
@@ -22,6 +23,8 @@ function main(): void {
   catch (error) { console.error(`FATAL: cannot read claim-corpus private key: ${(error as Error).message}`); process.exit(1); }
   const port = Number(process.env.SENTINEL_STEWARD_PORT ?? "4874");
   if (!Number.isInteger(port) || port < 0 || port > 65535) { console.error("FATAL: SENTINEL_STEWARD_PORT must be an integer in [0, 65535]"); process.exit(1); }
+  const host = process.env.SENTINEL_STEWARD_HOST ?? "127.0.0.1";
+  if (!host.trim()) { console.error("FATAL: SENTINEL_STEWARD_HOST must be a non-empty host or address"); process.exit(1); }
   const registry = process.env.SENTINEL_STEWARD_REGISTRY ?? "https://registry.npmjs.org";
   try {
     const parsed = new URL(registry);
@@ -45,7 +48,7 @@ function main(): void {
   try { steward = new ClaimSteward({ stateFile, lookupUpstream }); }
   catch (error) { console.error(`FATAL: cannot load steward state: ${(error as Error).message}`); process.exit(1); }
   const app = createStewardServer({ steward, token, resolveTxt, privateKeyPem, releaseDir });
-  app.listen(port, () => console.log(`Sentinel claim steward listening on http://localhost:${port}`));
+  const server = app.listen(port, host, () => console.log(`Sentinel claim steward listening on http://${host.includes(":") ? `[${host}]` : host}:${(server.address() as AddressInfo).port}`));
 }
 
 function isEntrypoint(): boolean {
