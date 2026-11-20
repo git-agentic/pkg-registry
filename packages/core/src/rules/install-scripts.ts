@@ -245,7 +245,7 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
    */
   const followScriptWords = (words: string[], from: number, out: Set<PackageFile>): void => {
     // Any package-manager invocation may run the install lifecycle (`npm ci`, bare `yarn`, an alias nobody listed).
-    for (const n of INSTALL_SCRIPTS) enqueue(n);
+    for (const n of INSTALL_SCRIPTS) { enqueue(`pre${n}`); enqueue(n); enqueue(`post${n}`); } // npm runs preprepare/postprepare too
     for (let j = from; j < words.length; j++) {
       const w = words[j]!;
       for (const x of [w, ...(PM_COMMANDS.get(w) ?? [])]) {

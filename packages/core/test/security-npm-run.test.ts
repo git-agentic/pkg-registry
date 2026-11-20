@@ -136,6 +136,8 @@ describe("install hooks follow package-manager script references", () => {
     assert.deepEqual(sev({ postinstall: "npm ci", prepublish: CURL_SH }), ["critical"]);
     assert.deepEqual(sev({ postinstall: "yarn", prepare: CURL_SH }), ["critical"]);
     assert.deepEqual(sev({ postinstall: "npm --silent", prepare: CURL_SH }), ["critical"]);
+    assert.deepEqual(sev({ postinstall: "npm ci", preprepare: CURL_SH }), ["critical"]);
+    assert.deepEqual(sev({ postinstall: "npm ci", postprepare: CURL_SH }), ["critical"]);
     assert.deepEqual(sev({ postinstall: "echo hi", prepare: CURL_SH }), ["low"]); // not a package manager
   });
 
