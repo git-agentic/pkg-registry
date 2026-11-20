@@ -1,5 +1,6 @@
 import { sensitivePathsFor, type Capability } from "@git-agentic/sentinel-core";
 import { pathCovers } from "./path-cover.js";
+import { assertCwdNotRoot } from "./run-paths.js";
 import { canonicalizeMacPath, expandHome, isSafeGrantTarget } from "./deny-set.js";
 import { writeAllowFloor } from "./write-floor.js";
 import { readAllowList } from "./read-allow.js";
@@ -21,6 +22,7 @@ export function generateProfile(
   approved: Capability[],
   opts: { homeDir: string; cwd: string; tmpDir: string; nodePrefix: string; projectRoot: string },
 ): string {
+  assertCwdNotRoot(opts.cwd);
   const approvedFs = approved.filter((c) => c.kind === "filesystem").map((c) => c.target);
   const hasNetwork = approved.some((c) => c.kind === "network");
   const canon = (p: string) => canonicalizeMacPath(expandHome(p, opts.homeDir));
