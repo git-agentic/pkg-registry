@@ -63,5 +63,8 @@ export function verifyRegistrySignature(
       return "invalid";
     }
   }
-  return "unknown";
+  // Signatures present but none by a trusted keyid: an attacker-chosen keyid must
+  // not score better than no signature at all. With no trusted keys configured we
+  // genuinely cannot verify, so that stays "unknown".
+  return keys.length > 0 ? "unsigned" : "unknown";
 }
