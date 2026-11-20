@@ -74,11 +74,11 @@ async function main(): Promise<number> {
     approved = approvedCapsForManifest(manifest);
   }
 
-  const gyp = withPerRunDevdir(scrubEnv(process.env, approved), approved);
+  const gyp = withPerRunDevdir(scrubEnv(process.env, approved), approved, homedir());
   const sandbox = createSandbox();   // throws (fail closed) on unsupported platform / missing bwrap
   let r;
   try {
-    r = sandbox.run(cmd, { cwd, approved, homeDir: homedir(), env: gyp.env, projectRoot: resolveProjectRoot(cwd, root) });
+    r = sandbox.run(cmd, { cwd, approved: gyp.approved, homeDir: homedir(), env: gyp.env, projectRoot: resolveProjectRoot(cwd, root) });
   } finally {
     gyp.cleanup();
   }
