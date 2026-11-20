@@ -25,8 +25,11 @@ describe("PR comment marker is only trusted on the bot's own comment", () => {
     const dir = mkdtempSync(join(tmpdir(), "sentinel-comment-"));
     writeFileSync(join(dir, "sentinel-comment.md"), `${REPORT_MARKER}\nreport`);
     const calls: { op: "update" | "create"; id?: number }[] = [];
-    const github = { rest: { issues: {
-      listComments: async () => ({ data: comments }),
+    // listComments alone returns only the first page (30 comments); paginate walks them all.
+    const firstPage = comments.slice(0, 30);
+    const listComments = async () => ({ data: firstPage });
+    const github = { paginate: async (fn: unknown) => { assert.equal(fn, listComments); return comments; }, rest: { issues: {
+      listComments,
       updateComment: async (a: { comment_id: number }) => { calls.push({ op: "update", id: a.comment_id }); },
       createComment: async () => { calls.push({ op: "create" }); },
     } } };
@@ -44,6 +47,12 @@ describe("PR comment marker is only trusted on the bot's own comment", () => {
   test("a user spoofing the bot login without the Bot type is ignored", async () => {
     const calls = await runScript([{ id: 8, body: REPORT_MARKER, user: { login: "github-actions[bot]", type: "User" } }]);
     assert.deepEqual(calls, [{ op: "create" }]);
+  });
+
+  test("the bot's marker comment beyond the first page of 30 is still found", async () => {
+    const filler = Array.from({ length: 30 }, (_, i) => ({ id: 100 + i, body: "chatter", user: { login: "dev", type: "User" } }));
+    const calls = await runScript([...filler, { id: 9, body: REPORT_MARKER, user: { login: "github-actions[bot]", type: "Bot" } }]);
+    assert.deepEqual(calls, [{ op: "update", id: 9 }]);
   });
 
   test("the github-actions bot's own marker comment is still updated in place", async () => {

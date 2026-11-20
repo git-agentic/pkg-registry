@@ -27,9 +27,9 @@ export interface ProvenanceIdentity {
   workflow: string | null;
   /** OIDC issuer, e.g. "https://token.actions.githubusercontent.com". */
   issuer: string | null;
-  /** Source repository URL from the signed SLSA predicate. */
+  /** Source repository URL from the Fulcio certificate extension (OID 1.3.6.1.4.1.57264.1.12); null when the certificate lacks it. */
   sourceRepository: string | null;
-  /** Git ref the build ran from, e.g. "refs/heads/main". */
+  /** Git ref the build ran from, e.g. "refs/heads/main", from the Fulcio certificate extension (OID 1.3.6.1.4.1.57264.1.14). */
   ref: string | null;
   /** Builder id, e.g. "https://github.com/actions/runner/github-hosted". */
   builder: string | null;
