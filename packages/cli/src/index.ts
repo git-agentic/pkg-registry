@@ -2,7 +2,7 @@
 import { Buffer } from "node:buffer";
 import { lstatSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, relative, basename } from "node:path";
+import { join, relative, basename, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { createHash, createPublicKey } from "node:crypto";
@@ -20,7 +20,7 @@ import {
   buildAuditStatement, signAttestation, verifyAttestation, attestationKeyid,
 } from "@git-agentic/sentinel-core";
 import { createSandbox, runLifecycleScripts, scrubEnv } from "@git-agentic/sentinel-sandbox";
-import { formatReport, formatManifest, verdictExitCode, formatTree, treeExitCode, formatViolations, formatStats, formatHistory, formatExplain, formatLint, formatPreview, type Manifest, type ViolationRow, type ExplainResult, type PreviewResult } from "./format.js";
+import { formatReport, formatManifest, verdictExitCode, formatTree, treeExitCode, formatViolations, formatStats, formatHistory, formatExplain, formatLint, formatPreview, sanitizeTerminal, type Manifest, type ViolationRow, type ExplainResult, type PreviewResult } from "./format.js";
 import { packageCoordinateFromTarball } from "./scan-coordinate.js";
 
 const DEFAULT_PROXY = process.env.SENTINEL_PROXY ?? "http://localhost:4873";
@@ -297,9 +297,9 @@ policyCmd
     try {
       const { policy, hash } = loadPolicy({ file, sig, publicKeyPem: readFileSync(opts.pubkey, "utf8") });
       console.log(`✓ signature valid  ${hash}`);
-      console.log("  " + summarizePolicy(policy));
+      console.log("  " + sanitizeTerminal(summarizePolicy(policy)));
     } catch (err) {
-      console.error(`✗ ${(err as Error).message}`);
+      console.error(`✗ ${sanitizeTerminal((err as Error).message)}`);
       process.exit(2);
     }
   });
@@ -322,7 +322,7 @@ policyCmd
     try {
       policy = parsePolicy(readFileSync(file));
     } catch (err) {
-      console.error(`✗ ${(err as Error).message}`);
+      console.error(`✗ ${sanitizeTerminal((err as Error).message)}`);
       process.exit(2);
     }
     const r = lintPolicy(policy);
@@ -382,9 +382,9 @@ tokenCmd
   .action((token: string, opts: { pubkey: string }) => {
     const r = verifyToken(token, readFileSync(opts.pubkey, "utf8"));
     if (r.ok) {
-      console.log(`valid  role=${r.role}  sub=${r.sub}  exp=${new Date(r.exp * 1000).toISOString()}`);
+      console.log(sanitizeTerminal(`valid  role=${r.role}  sub=${r.sub}  exp=${new Date(r.exp * 1000).toISOString()}`));
     } else {
-      console.error(`invalid: ${r.reason}`);
+      console.error(sanitizeTerminal(`invalid: ${r.reason}`));
       process.exit(2);
     }
   });
@@ -454,9 +454,9 @@ program
     const requireVerdict = opts.require === "allow" || opts.require === "allow-or-warn" ? opts.require : undefined;
     const r = verifyAttestation(env, readFileSync(opts.key, "utf8"), { expectedSbomDigest, expectedPolicyHash: opts.policyHash, requireVerdict });
     if (r.valid) {
-      console.log(`✓ valid · verdict ${r.predicate.verdict} · policy ${r.predicate.policyHash ?? "?"} · ${r.predicate.timestamp}`);
+      console.log(sanitizeTerminal(`✓ valid · verdict ${r.predicate.verdict} · policy ${r.predicate.policyHash ?? "?"} · ${r.predicate.timestamp}`));
     } else {
-      console.error(`✗ attestation rejected: ${r.reason}`);
+      console.error(sanitizeTerminal(`✗ attestation rejected: ${r.reason}`));
       process.exitCode = 2;
     }
   });
@@ -466,7 +466,9 @@ program
   .description("Run a package's lifecycle scripts under a sandbox derived from its approved capabilities (macOS Seatbelt / Linux bubblewrap).")
   .argument("<package-dir>", "path to an unpacked package directory")
   .option("--approve <cap...>", "approved capabilities as kind:target (e.g. network:api.example.com)", [])
-  .action((dir: string, opts: { approve: string[] }) => {
+  .action((dirArg: string, opts: { approve: string[] }) => {
+    // Absolute from here on: the sandbox profile and cwd must not depend on how the operator spelled the path.
+    const dir = resolve(dirArg);
     let scripts: Record<string, string> = {};
     try {
       scripts = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"))?.scripts ?? {};
@@ -500,14 +502,14 @@ program
     }
 
     for (const r of results) {
-      console.log(`  ${r.hook}: \`${r.command}\` -> exit ${r.exitCode}`);
+      console.log(`  ${r.hook}: \`${sanitizeTerminal(r.command)}\` -> exit ${r.exitCode}`);
     }
     if (failed) {
       const unapproved = unapprovedAtoms(detected, approved);
       console.error("\x1b[33mA lifecycle script failed under sandbox enforcement.\x1b[0m");
       if (unapproved.length) {
         console.error("Detected, un-approved capabilities (likely cause — inferred from static analysis):");
-        for (const a of unapproved) console.error(`  › ${a}`);
+        for (const a of unapproved) console.error(`  › ${sanitizeTerminal(a)}`);
         console.error("Approve them (--approve <kind:target>) and retry, or treat the package as malicious.");
       }
       process.exit(1);
@@ -555,7 +557,7 @@ program
     if (r.violation) {
       const v = r.violation;
       console.error(
-        `\x1b[33msentinel: sandbox denied ${v.kind} access to ${v.target ?? v.deniedResource ?? "a denied resource"} (confidence: ${v.confidence})\x1b[0m`,
+        `\x1b[33msentinel: sandbox denied ${sanitizeTerminal(v.kind)} access to ${sanitizeTerminal(v.target ?? v.deniedResource ?? "a denied resource")} (confidence: ${sanitizeTerminal(v.confidence)})\x1b[0m`,
       );
     }
     process.exitCode = r.exitCode;
@@ -725,7 +727,7 @@ function runBin(bin: string, args: string[], proxy: string): void {
 }
 
 function fail(err: unknown, proxy: string): void {
-  const msg = (err as Error)?.message ?? String(err);
+  const msg = sanitizeTerminal((err as Error)?.message ?? String(err));
   console.error(`\x1b[31msentinel: ${msg}\x1b[0m`);
   if (/ECONNREFUSED|fetch failed/i.test(msg)) {
     console.error(`\x1b[90mIs the proxy running? Start it with: npm run proxy  (expected at ${proxy})\x1b[0m`);
