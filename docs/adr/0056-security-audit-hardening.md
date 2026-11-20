@@ -283,7 +283,8 @@ and `transferRequestBytes` take `currentChallengeId`.
 - Detection gaps left for follow-up (`npm run <name>` was closed in #85, by deliberate over-following:
   after `npm`, `pnpm`, `yarn` or `bun`, every word that names a defined script is followed with its
   `pre`/`post` scripts, each script once from a worklist, and its body gets the hook's inline-danger
-  check; `AUDIT_REVISION` is 3): `.`/`source` are not treated as interpreters, bare
+  check; #86 closed `.`/`source` as interpreters, pipes into an interpreter, pathed wrappers,
+  `tsx`/`ts-node`/`.ts` operands and `node <dir>`; `AUDIT_REVISION` is 4): bare
   `-r`/`NODE_OPTIONS` specifiers and extension-less preload paths are not
   resolved, command words are not looked up in bundled `node_modules/.bin`,
   and the overflow fallback stays regex-based. Other rules still scan those

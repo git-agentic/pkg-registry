@@ -96,9 +96,13 @@ export const installScriptsRule: Rule = {
 // Pieces of a shell word that may hide a path (`${VAR}setup`, `--require=./x.js`, `a\b`).
 const WORD_PIECES = /[${}\\=,'"`()<>]+/; // `<>`: `node <setup.js` reads setup.js
 const SIMPLE_COMMAND_SPLIT = /&&|\|\||[;|&\n]/;
+const PIPELINE_SPLIT = /&&|\|\||[;&\n]/; // like SIMPLE_COMMAND_SPLIT, but a single `|` stays inside the pipeline
 
-/** Split on `&&`, `||`, `;`, `|`, `&`, newline outside quotes. An unterminated quote falls back to the plain split. */
-function splitSimpleCommands(cmd: string): string[] {
+/**
+ * Split on `&&`, `||`, `;`, `|`, `&`, newline outside quotes (`keepPipes`: a single `|` does not split, giving
+ * pipelines). An unterminated quote falls back to the plain split.
+ */
+function splitSimpleCommands(cmd: string, keepPipes = false): string[] {
   const out: string[] = [];
   let start = 0;
   let quote = "";
@@ -107,13 +111,14 @@ function splitSimpleCommands(cmd: string): string[] {
     if (c === "\\" && quote !== "'") { i++; continue; }
     if (quote) { if (c === quote) quote = ""; continue; }
     if (c === "'" || c === '"') { quote = c; continue; }
+    if (c === "|" && keepPipes && cmd[i + 1] !== "|") continue;
     if (c === ";" || c === "|" || c === "&" || c === "\n") {
       out.push(cmd.slice(start, i));
       while (cmd[i + 1] === c && c !== ";" && c !== "\n") i++; // `&&`, `||`
       start = i + 1;
     }
   }
-  if (quote) return cmd.split(SIMPLE_COMMAND_SPLIT);
+  if (quote) return cmd.split(keepPipes ? PIPELINE_SPLIT : SIMPLE_COMMAND_SPLIT);
   out.push(cmd.slice(start));
   return out;
 }
@@ -144,14 +149,16 @@ const WRAPPERS = new Set(["env", "exec", "nohup", "time", "command", "npx"]);
 // Inline-code flags differ per interpreter (`sh -e` is errexit, not inline code).
 const SHELL_INLINE = /^-[a-z]*c[a-z]*$/i; // `-c`, `-ec`, `-lc`
 const NODE_INLINE = /^(?:-[ep]|-pe|--eval(?:=.*)?|--print(?:=.*)?)$/;
+const NO_INLINE = /(?!)/; // never matches: these interpreters take no inline code
 const INLINE_FLAG: Record<string, RegExp> = {
   sh: SHELL_INLINE, bash: SHELL_INLINE, zsh: SHELL_INLINE, dash: SHELL_INLINE, ksh: SHELL_INLINE,
-  node: NODE_INLINE, nodejs: NODE_INLINE, bun: NODE_INLINE, deno: NODE_INLINE,
+  node: NODE_INLINE, nodejs: NODE_INLINE, bun: NODE_INLINE, deno: NODE_INLINE, tsx: NODE_INLINE, "ts-node": NODE_INLINE,
+  ".": NO_INLINE, source: NO_INLINE, // `. ./setup` / `source setup`: the first operand is the sourced script
   python: /^-c$/, python3: /^-c$/, perl: /^-e$/, ruby: /^-e$/, php: /^-r$/,
   pwsh: /^-(?:c|command)$/i, powershell: /^-(?:c|command)$/i,
 };
 // Operands with these extensions are code wherever they appear (`sudo node x.js`, `timeout 5 sh x.sh`).
-const CODE_WORD = /\.(?:c?js|mjs|ts|sh|py|pl|rb)\b/i;
+const CODE_WORD = /\.(?:c?js|mjs|m?ts|cts|sh|py|pl|rb)\b/i;
 // Flags whose value is also executed code (`node -r ./hook main.js`).
 const CODE_VALUE_FLAG = /^--?(?:r|require|import|loader|experimental-loader)(?:=(.*))?$/;
 const MAX_SUFFIX_DEPTH = 64;
@@ -204,17 +211,29 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
    * A shell never appends `.js` to a command word, so only `script` retries.
    */
   type Mode = "exact" | "path" | "script";
+  // `node <dir>`: the `main` file of <dir>/package.json, then <dir>/index.js. Mains are parsed once per directory.
+  const mains = new Map<string, unknown>();
+  const entry = (dir: string): PackageFile | undefined => {
+    if (!mains.has(dir)) {
+      let main: unknown;
+      try { main = JSON.parse(exact(`${dir}/package.json`)?.content ?? "null")?.main; } catch { /* no usable main */ }
+      mains.set(dir, typeof main === "string" ? main.replace(/^\.\//, "") : undefined);
+    }
+    const main = mains.get(dir) as string | undefined;
+    return (main ? exact(`${dir}/${main}`) ?? exact(`${dir}/${main}.js`) ?? exact(`${dir}/${main}/index.js`) : undefined) ?? exact(`${dir}/index.js`);
+  };
   const resolveRef = (raw: string, mode: Mode): PackageFile | undefined => {
-    const ref = raw.replace(/^\.\//, "");
+    const ref = raw.replace(/^\.\//, "").replace(/\/$/, "") || (raw === "./" ? "." : "");
     if (!ref) return undefined;
+    if (ref === "." && mode === "script") return entry("package");
     let hit = exact(`package/${ref}`);
     if (hit || mode === "exact") return hit;
     if (mode === "path") return suffix(ref);
     const dotted = ref.slice(ref.lastIndexOf("/") + 1).includes(".");
-    // Node resolves `node setup` / `node scripts` as setup.js / scripts/index.js.
-    if (!dotted) hit = exact(`package/${ref}.js`) ?? exact(`package/${ref}/index.js`);
+    // Node resolves `node setup` / `node scripts` as setup.js / scripts/<main or index.js>; TS runners also try setup.ts.
+    if (!dotted) hit = exact(`package/${ref}.js`) ?? entry(`package/${ref}`) ?? exact(`package/${ref}.ts`);
     // After a `cd scripts &&` the file sits deeper than `package/<ref>`.
-    return hit ?? suffix(ref) ?? (dotted ? undefined : suffix(`${ref}.js`));
+    return hit ?? suffix(ref) ?? (dotted ? undefined : suffix(`${ref}.js`) ?? suffix(`${ref}.ts`));
   };
   const resolveWord = (word: string, mode: Mode): PackageFile | undefined => {
     const w = trimPunct(word);
@@ -226,8 +245,15 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
     }
     return undefined;
   };
+  // A path-qualified wrapper counts by its basename (`/usr/bin/env`).
   const isPrefix = (words: string[], i: number) =>
-    /^[A-Za-z_]\w*=/.test(words[i]!) || WRAPPERS.has(words[i]!) || (i > 0 && WRAPPERS.has(words[i - 1]!) && words[i]!.startsWith("-"));
+    /^[A-Za-z_]\w*=/.test(words[i]!) || WRAPPERS.has(base(words[i]!)) || (i > 0 && WRAPPERS.has(base(words[i - 1]!)) && words[i]!.startsWith("-"));
+  const isInterpreterCommand = (simple: string): boolean => {
+    const ws = simple.split(/\s+/).filter(Boolean).map(unquote);
+    let k = 0;
+    while (k < ws.length && isPrefix(ws, k)) k++;
+    return ws[k] !== undefined && Object.hasOwn(INLINE_FLAG, base(trimPunct(ws[k]!)));
+  };
 
   // Package scripts reached from a command line, scanned from a worklist (not recursion): each name once, so
   // the work is bounded by the number of scripts and a long chain cannot overflow the stack.
@@ -268,7 +294,12 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
     // Quote tracking can only ADD coverage: a stray apostrophe (`# it's`) must not hide later commands,
     // so the plain split is scanned too, and `$(...)` / backtick bodies are scanned as command lines.
     if (depth < MAX_INLINE_DEPTH) for (const body of substitutionBodies(cmd)) scan(body, out, depth + 1);
-    for (const simple of new Set([...splitSimpleCommands(cmd), ...cmd.split(SIMPLE_COMMAND_SPLIT)])) {
+    for (const pipeline of new Set([...splitSimpleCommands(cmd, true), ...cmd.split(PIPELINE_SPLIT)])) {
+    const quoted = splitSimpleCommands(pipeline); // quote-aware, so `php -r 'a;b' README` is one stage
+    const stages = new Set([...quoted, ...pipeline.split(SIMPLE_COMMAND_SPLIT)]);
+    // Over-follow: when any stage of a real pipeline is an interpreter, the other stages' operands (`cat x | sh`) are scripts.
+    const piped = quoted.length > 1 && quoted.some(isInterpreterCommand);
+    for (const simple of stages) {
       const rawWords = simple.split(/\s+/).filter(Boolean);
       const words = rawWords.map(unquote);
       // Indexes of words ending in each quote char, built once per command so repeated inline flags
@@ -293,7 +324,7 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
       const command = words[i];
       if (!command) continue;
       const name = trimPunct(command);
-      const interpreter = name.slice(name.lastIndexOf("/") + 1);
+      const interpreter = base(name);
       if (PACKAGE_MANAGERS.has(interpreter)) followScriptWords(words, i + 1, out);
       const inline = Object.hasOwn(INLINE_FLAG, interpreter) ? INLINE_FLAG[interpreter] : undefined;
       // The command word itself may be a package script (`./setup`).
@@ -355,13 +386,14 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
           continue;
         }
         const isCode = CODE_WORD.test(w);
-        if (!isCode && (!inline || found)) continue;
+        if (!isCode && !(piped && !inline) && (!inline || found)) continue;
         const hit = resolveWord(w, "script");
         if (hit) {
           out.add(hit);
           if (inline) found = true;
         }
       }
+    }
     }
   };
 
@@ -376,6 +408,7 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
 }
 
 const MAX_INLINE_DEPTH = 3;
+const base = (w: string) => w.slice(w.lastIndexOf("/") + 1);
 const PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun"]);
 // Scripts a built-in package-manager command runs besides the script of its own name (npm lifecycle).
 const INSTALL_SCRIPTS = ["preinstall", "install", "postinstall", "prepublish", "prepare"];
