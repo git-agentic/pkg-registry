@@ -32,7 +32,7 @@ export const installScriptsRule: Rule = {
     }
 
     const findings: Finding[] = [];
-    const referencedFiles = makeResolver(input.files);
+    const referencedFiles = makeResolver(input.files, scripts);
 
     for (const hook of LIFECYCLE) {
       const cmd = scripts[hook];
@@ -162,7 +162,7 @@ interface TrieNode {
  * nothing, and all work is linear in the command and total path length: exact paths
  * through a Map, JS suffixes through a reverse component trie (O(token components)).
  */
-function makeResolver(files: PackageFile[]): (cmd: string) => PackageFile[] {
+function makeResolver(files: PackageFile[], scripts: Record<string, string>): (cmd: string) => PackageFile[] {
   let byPath: Map<string, PackageFile> | undefined;
   let trie: TrieNode | undefined;
   const exact = (p: string) => (byPath ??= new Map(files.map((f) => [f.path, f] as const))).get(p);
@@ -222,11 +222,28 @@ function makeResolver(files: PackageFile[]): (cmd: string) => PackageFile[] {
   const isPrefix = (words: string[], i: number) =>
     /^[A-Za-z_]\w*=/.test(words[i]!) || WRAPPERS.has(words[i]!) || (i > 0 && WRAPPERS.has(words[i - 1]!) && words[i]!.startsWith("-"));
 
-  /** Scan one command line; `sh -c "<code>"` code is scanned again as a command line (depth-bounded, so linear). */
-  const scan = (cmd: string, out: Set<PackageFile>, depth: number): void => {
+  // Script names already followed in this resolution: a self-referencing script terminates and each runs once.
+  let followed = new Set<string>();
+  /** The script a package-manager command runs (`npm run x`, `yarn x`), or undefined. `yarn x` counts only when `x` is defined. */
+  const scriptRef = (words: string[], i: number): string | undefined => {
+    const pm = trimPunct(words[i]!);
+    const pmName = pm.slice(pm.lastIndexOf("/") + 1);
+    if (pmName !== "npm" && pmName !== "pnpm" && pmName !== "yarn") return undefined;
+    const args = words.slice(i + 1).filter((w) => !w.startsWith("-")); // `npm run --silent x`
+    const explicit = pmName === "yarn" ? args[0] === "run" : args[0] === "run" || args[0] === "run-script";
+    const name = args[explicit ? 1 : 0];
+    if (!name || (!explicit && pmName !== "yarn") || !Object.hasOwn(scripts, name) || typeof scripts[name] !== "string") return undefined;
+    return name;
+  };
+
+  /**
+   * Scan one command line; `sh -c "<code>"` code is scanned again as a command line (depth-bounded, so linear).
+   * A followed `scripts[name]` body is scanned the same way, at most MAX_SCRIPT_HOPS scripts deep.
+   */
+  const scan = (cmd: string, out: Set<PackageFile>, depth: number, hops = 0): void => {
     // Quote tracking can only ADD coverage: a stray apostrophe (`# it's`) must not hide later commands,
     // so the plain split is scanned too, and `$(...)` / backtick bodies are scanned as command lines.
-    if (depth < MAX_INLINE_DEPTH) for (const body of substitutionBodies(cmd)) scan(body, out, depth + 1);
+    if (depth < MAX_INLINE_DEPTH) for (const body of substitutionBodies(cmd)) scan(body, out, depth + 1, hops);
     for (const simple of new Set([...splitSimpleCommands(cmd), ...cmd.split(SIMPLE_COMMAND_SPLIT)])) {
       const rawWords = simple.split(/\s+/).filter(Boolean);
       const words = rawWords.map(unquote);
@@ -251,6 +268,11 @@ function makeResolver(files: PackageFile[]): (cmd: string) => PackageFile[] {
       }
       const command = words[i];
       if (!command) continue;
+      const ref = scriptRef(words, i);
+      if (ref !== undefined && hops < MAX_SCRIPT_HOPS && !followed.has(ref)) {
+        followed.add(ref);
+        scan(scripts[ref]!, out, depth, hops + 1);
+      }
       const name = trimPunct(command);
       const interpreter = name.slice(name.lastIndexOf("/") + 1);
       const inline = Object.hasOwn(INLINE_FLAG, interpreter) ? INLINE_FLAG[interpreter] : undefined;
@@ -292,7 +314,7 @@ function makeResolver(files: PackageFile[]): (cmd: string) => PackageFile[] {
               j = end;
             }
             code = unquote(code);
-            if (inline === SHELL_INLINE && depth < MAX_INLINE_DEPTH) scan(code, out, depth + 1);
+            if (inline === SHELL_INLINE && depth < MAX_INLINE_DEPTH) scan(code, out, depth + 1, hops);
             else {
               // Non-shell inline code (`node -e "require('./x.js')"`): code-extension names inside still count.
               for (const cw of code.split(/\s+/)) {
@@ -325,12 +347,14 @@ function makeResolver(files: PackageFile[]): (cmd: string) => PackageFile[] {
 
   return (cmd) => {
     const out = new Set<PackageFile>();
+    followed = new Set();
     scan(cmd, out, 0);
     return [...out];
   };
 }
 
 const MAX_INLINE_DEPTH = 3;
+const MAX_SCRIPT_HOPS = 8; // `npm run a` -> `npm run b` -> ... : a chain deeper than this is not followed
 const isPunct = (c: string | undefined) => c === "(" || c === ")" || c === '"' || c === "'" || c === "`";
 
 /** Trim quote/paren punctuation from both ends with two pointers (a `)+$` regex is quadratic on `)))…x`). */
