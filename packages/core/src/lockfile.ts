@@ -155,7 +155,8 @@ function parseYarnBerry(raw: string): Coordinate[] {
     const name = locator?.[1] ?? (yarnBerryName(key) || key);
     const version = typeof entry.version === "string" && entry.version ? entry.version : "0.0.0";
     const coord: Coordinate = { name, version }; // berry checksum is not SRI → no integrity
-    const registry = protocol === "npm" && /^[^\s#?/:@]+$/.test(locator![3]!) && version === entry.version;
+    // Registry only when the resolved version is plain and is the version we audit.
+    const registry = protocol === "npm" && /^[^\s#?/:@]+$/.test(locator![3]!) && locator![3] === entry.version;
     // Anything not provably a registry coordinate gates as non-registry; never skip it.
     if (!registry) coord.nonRegistry = resolution || key;
     putCoord(byKey, coord);

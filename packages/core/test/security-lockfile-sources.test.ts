@@ -133,6 +133,12 @@ lodash@^4.17.0:
   languageName: node
   linkType: hard
 
+"liar@npm:^1.0.0":
+  version: 1.0.0
+  resolution: "liar@npm:9.9.9"
+  languageName: node
+  linkType: hard
+
 "???weird???":
   version: 2.0.0
   resolution: "???weird???"
@@ -145,6 +151,7 @@ lodash@^4.17.0:
     assert.equal(real.nonRegistry, undefined);
     const weird = coords.find((c) => c.nonRegistry === "???weird???");
     assert.ok(weird, "unparseable entry is emitted as non-registry, not skipped");
+    assert.equal(coords.find((c) => c.name === "liar")?.nonRegistry, "liar@npm:9.9.9", "version must match the resolution");
   });
 
   test("pnpm: git and tarball resolutions are flagged, directory entries are skipped, registry stays clean", () => {
