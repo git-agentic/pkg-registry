@@ -6,6 +6,7 @@ import { generateProfile } from "./profile.js";
 import { computeDenySet } from "./deny-set.js";
 import { classifyViolation } from "./violation.js";
 import { nodeInstallPrefix } from "./read-allow.js";
+import { normalizeRunPaths } from "./run-paths.js";
 
 /** `sandbox-exec` argv: the profile is passed INLINE (`-p`). A profile file would sit in the
  * write floor (tmpdir), where a lingering sandboxed process could rewrite the next run's profile. */
@@ -25,10 +26,11 @@ export class SeatbeltSandbox implements Sandbox {
 
   /** Shared by `run` and `runArgv`: build the profile, invoke `sandbox-exec` with the given
    * argv tail (either `/bin/sh -c cmd` or `file ...args`), and classify the result. */
-  private execWithTail(tail: string[], opts: { cwd: string; approved: Capability[]; homeDir: string; env?: NodeJS.ProcessEnv; projectRoot?: string }): SandboxResult {
+  private execWithTail(tail: string[], rawOpts: { cwd: string; approved: Capability[]; homeDir: string; env?: NodeJS.ProcessEnv; projectRoot?: string }): SandboxResult {
     if (process.platform !== "darwin") {
       throw new Error(`sandbox enforcement unavailable on ${process.platform} (macOS Seatbelt required)`);
     }
+    const opts = { ...rawOpts, ...normalizeRunPaths(rawOpts) };
     const profile = generateProfile(opts.approved, {
       homeDir: opts.homeDir, cwd: opts.cwd, tmpDir: tmpdir(),
       nodePrefix: nodeInstallPrefix(process.execPath),

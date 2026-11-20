@@ -21,7 +21,7 @@ export function execAllowFloor(opts: { nodePrefix: string; projectRoot: string }
     "/Applications/Xcode.app",
     "/opt/homebrew",          // Homebrew (arm64)
     "/usr/local",             // Homebrew (Intel), user-installed tools
-  ];
+  ].filter((p) => p !== "/");  // a projectRoot of "/" must not make everything executable
 }
 
 /**
