@@ -167,14 +167,23 @@ export function analyzeLoaderChain(source: string, opts: { moduleLoadReachable?:
     if (!m) { m = new Map(); taint.set(s, m); }
     return m;
   };
-  /** Exact scopes REPLACE a binding's taint (kill-on-reassign); a merged scope is a "may" scope and only adds to it. */
-  const putTaint = (m: Map<string, Set<Tag>>, name: string, tags: Set<Tag>, merged: boolean): void => {
-    const cur = merged ? m.get(name) : undefined;
-    if (cur) for (const t of tags) cur.add(t); else m.set(name, tags);
+  // Functions nested past the scope bound are "may" scopes: their declarations and assignments never touch the tracked
+  // scopes. They only add to this name → tags overlay, which is never a shadowing entry and may outlive the function.
+  const mergedTaint = new Map<string, Set<Tag>>();
+  const addMerged = (name: string, tags: Iterable<Tag>): void => {
+    const cur = mergedTaint.get(name) ?? mergedTaint.set(name, new Set()).get(name)!;
+    for (const t of tags) cur.add(t);
   };
+  /** Exact scopes REPLACE a binding's taint (kill-on-reassign); a merged scope only adds to the overlay. */
+  const putTaint = (scope: any, name: string, tags: Set<Tag>, merged: boolean): void => {
+    if (merged) addMerged(name, tags); else scopeTaint(scope).set(name, tags);
+  };
+  /** Lexical resolution unioned with the merged overlay for that name. */
   const lookupTaint = (chain: any[], name: string): Set<Tag> | undefined => {
-    for (const s of chain) { const t = taint.get(s)?.get(name); if (t) return t; }
-    return undefined;
+    let found: Set<Tag> | undefined;
+    for (const s of chain) { const t = taint.get(s)?.get(name); if (t) { found = t; break; } }
+    const o = mergedTaint.get(name);
+    return !o ? found : !found ? o : new Set([...found, ...o]);
   };
   const declaringScope = (chain: any[], name: string): any => {
     for (const s of chain) { if (taint.get(s)?.has(name)) return s; }
@@ -456,16 +465,16 @@ export function analyzeLoaderChain(source: string, opts: { moduleLoadReachable?:
       const name = node.id.name;
       declInit.set(name, node.init);
       const relevant = new Set<Tag>([...payloadTags(node.init, chain)].filter((t) => t === "read" || t === "decoded"));
-      putTaint(scopeTaint(chain[0]), name, relevant, merged);   // declaration REPLACES (UNION in a merged scope)
+      putTaint(chain[0], name, relevant, merged);   // declaration REPLACES (UNION in a merged scope)
     },
     AssignmentExpression(node: any, _st: any, _ancestors: any[], chain: any[], merged: boolean) {
       if (node.operator !== "=" || node.left.type !== "Identifier") return;
       const name = node.left.name;
       declInit.set(name, node.right);
       const relevant = new Set<Tag>([...payloadTags(node.right, chain)].filter((t) => t === "read" || t === "decoded"));
-      putTaint(scopeTaint(declaringScope(chain, name)), name, relevant, merged);   // reassignment REPLACES (kill-on-reassign, S2; UNION in a merged scope)
+      putTaint(declaringScope(chain, name), name, relevant, merged);   // reassignment REPLACES (kill-on-reassign, S2; UNION in a merged scope)
     },
-    CallExpression(node: any, _st: any, _ancestors: any[], chain: any[]) {
+    CallExpression(node: any, _st: any, _ancestors: any[], chain: any[], merged: boolean) {
       const cat = classifyCall(node);
       const args = node.arguments ?? [];
 
@@ -487,7 +496,8 @@ export function analyzeLoaderChain(source: string, opts: { moduleLoadReachable?:
         if (pathArg && decodeInScope && carriesPayload(payloadTags(dataArg, chain))) {
           if (pathArg.type === "Identifier") {
             const s = declaringScope(chain, pathArg.name);
-            (scopeTaint(s).get(pathArg.name) ?? scopeTaint(s).set(pathArg.name, new Set()).get(pathArg.name)!).add("written-path");
+            if (merged) addMerged(pathArg.name, ["written-path"]);
+            else (scopeTaint(s).get(pathArg.name) ?? scopeTaint(s).set(pathArg.name, new Set()).get(pathArg.name)!).add("written-path");
           } else {
             const key = structKey(pathArg);
             if (key !== null) (writtenPaths.get(key) ?? writtenPaths.set(key, new Set()).get(key)!).add(chain[0]);

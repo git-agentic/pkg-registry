@@ -151,6 +151,32 @@ go(out);
     assert.equal(loaderChain.analyzeLoaderChain(nested(50, killed)).correlated, false);
   });
 
+  test("a merged declaration never hides an outer tracked binding, and leaves nothing that does", (t) => {
+    // `out` is written in an outer tracked function F (depth 5). Below it, functions nest to the scope bound, so the
+    // deepest tracked scope D lies between F's body and the merged function that redeclares `out`. The launch of `out`
+    // sits in D after the merged function: a merged declaration must not leave an entry in D that hides F's `out`.
+    const head = `
+const { readFileSync: rd, writeFileSync: wr } = require("fs");
+const { spawnSync: go } = require("child_process");
+const { gunzipSync: gz } = require("zlib");
+const p = require("path");
+`;
+    const write = `const blob = rd(p.join(__dirname, "intro.js")); const out = p.join(require("os").tmpdir(), ".cache-x"); wr(out, gz(blob));\n`;
+    const open = (n: number) => "function f(){".repeat(n);
+    const close = (n: number) => "}".repeat(n);
+    try { acorn.parse(open(1004) + close(1004), { ecmaVersion: "latest", sourceType: "script" }); } catch { t.skip("the parser cannot nest this deep on this Node"); return; }
+    for (const decl of ["let out;", 'const out = "x";', 'var out = "x"; out = "y";']) {
+      for (const total of [999, 1000, 1002]) { // the `total`-th function D (scopes are tracked up to the 999th, Program being the first)
+        // F is the 5th function; D is the `total`-th function (the deepest tracked one at 999); the merged function (depth total + 1) redeclares `out`.
+        const src = head + open(4) + `function F(){${write}${open(total - 6)}function D(){\n` +
+          `function merged(){ ${decl} }\ngo(out);\n}${close(total - 6)}}\n${close(4)}`;
+        const a = loaderChain.analyzeLoaderChain(src);
+        assert.equal(a.parseFailed, false, `${total} ${decl}`);
+        assert.equal(a.correlated, true, `${total}: ${decl}`);
+      }
+    }
+  });
+
   test("a padded benign file that only mentions the four names is not critical", () => {
     assert.equal(loaderSeverities(PAD(60000) + BENIGN).includes("critical"), false);
     assert.deepEqual(loaderSeverities(PAD(60000) + BENIGN), []);
