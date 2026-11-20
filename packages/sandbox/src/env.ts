@@ -23,8 +23,12 @@ export const ENV_ALLOWLIST = {
   ]),
 };
 
-function allowed(name: string): boolean {
+/** `scheme://user[:pass]@host` — credentials embedded in a URL value (e.g. `npm_config_https_proxy`). */
+const URL_CREDENTIAL_RE = /:\/\/[^/@\s]+@/;
+
+function allowed(name: string, value: string): boolean {
   if (CREDENTIAL_ENV_RE.test(name)) return false;   // credential-screen wins over any allowlist match
+  if (name.startsWith("npm_config_") && URL_CREDENTIAL_RE.test(value)) return false;   // names screen is blind to values
   return ENV_ALLOWLIST.exact.has(name) || ENV_ALLOWLIST.prefixes.some((p) => name.startsWith(p));
 }
 
@@ -34,7 +38,7 @@ export function scrubEnv(sourceEnv: NodeJS.ProcessEnv, approvedEnv: Capability[]
   const out: NodeJS.ProcessEnv = {};
   for (const [k, v] of Object.entries(sourceEnv)) {
     if (v === undefined) continue;
-    if (allowed(k) || granted.has(k)) out[k] = v;
+    if (allowed(k, v) || granted.has(k)) out[k] = v;
   }
   return out;
 }

@@ -94,6 +94,24 @@ function excerpt(line: string): string {
  * still contained by the sandbox.
  */
 export function classifyViolation(result: SandboxResult, denySet: DenySet): SandboxViolation | null {
+  const v = classify(result, denySet);
+  if (!v) return null;
+  // Attribution above ran on the raw text; what is REPORTED (to a terminal, the proxy, an MCP
+  // client) must not carry attacker-chosen escape sequences from a package's stderr.
+  return {
+    ...v,
+    target: v.target === null ? null : stripControl(v.target),
+    deniedResource: v.deniedResource === null ? null : stripControl(v.deniedResource),
+    evidence: { ...v.evidence, stderrExcerpt: stripControl(v.evidence.stderrExcerpt) },
+  };
+}
+
+/** Remove C0 (incl. ESC, NUL, CR, LF, TAB) and C1 control characters, and DEL. */
+function stripControl(s: string): string {
+  return s.replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
+}
+
+function classify(result: SandboxResult, denySet: DenySet): SandboxViolation | null {
   if (result.exitCode === 0) return null;
   const stderr = result.stderr ?? "";
   if (!PERM_SIGNATURE.test(stderr)) return null;
