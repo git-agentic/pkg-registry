@@ -244,9 +244,8 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
    * itself dangerous; missing one that runs is a bypass.
    */
   const followScriptWords = (words: string[], from: number, out: Set<PackageFile>): void => {
-    // An unknown subcommand (not a known command, not a script) may still run `prepare`: follow it by default.
-    const sub = words.slice(from).find((w) => !w.startsWith("-"));
-    if (sub !== undefined && !PM_COMMANDS.has(sub) && !Object.hasOwn(scripts, sub)) enqueue("prepare");
+    // Any package-manager invocation may run the install lifecycle (`npm ci`, bare `yarn`, an alias nobody listed).
+    for (const n of INSTALL_SCRIPTS) enqueue(n);
     for (let j = from; j < words.length; j++) {
       const w = words[j]!;
       for (const x of [w, ...(PM_COMMANDS.get(w) ?? [])]) {
@@ -379,15 +378,15 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
 const MAX_INLINE_DEPTH = 3;
 const PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun"]);
 // Scripts a built-in package-manager command runs besides the script of its own name (npm lifecycle).
-const INSTALL_SCRIPTS = ["preinstall", "install", "postinstall", "prepare"];
+const INSTALL_SCRIPTS = ["preinstall", "install", "postinstall", "prepublish", "prepare"];
 const PM_COMMANDS = new Map<string, string[]>([
   ...["t", "tst"].map((c) => [c, ["test"]] as [string, string[]]),
-  ...["it", "install-test", "cit", "install-ci-test"].map((c) => [c, [...INSTALL_SCRIPTS, "test"]] as [string, string[]]),
+  ...["it", "install-test", "cit", "install-ci-test", "clean-install-test", "sit"].map((c) => [c, [...INSTALL_SCRIPTS, "test"]] as [string, string[]]),
   ["restart", ["restart", "stop", "start"]],
   ["pack", ["prepack", "prepare", "postpack"]],
   ["publish", ["prepublishOnly", "prepack", "prepare", "postpack", "publish", "postpublish"]],
   ...["version", "verison"].map((c) => [c, ["preversion", "version", "postversion"]] as [string, string[]]),
-  ...["install", "i", "ci", "rebuild", "add", "in", "ins", "inst", "insta", "instal", "isnt", "isnta", "isntal", "isntall"]
+  ...["install", "i", "ci", "rebuild", "rb", "clean-install", "ic", "install-clean", "isntall-clean", "add", "in", "ins", "inst", "insta", "instal", "isnt", "isnta", "isntal", "isntall"]
     .map((c) => [c, INSTALL_SCRIPTS] as [string, string[]]),
 ]);
 const isPunct = (c: string | undefined) => c === "(" || c === ")" || c === '"' || c === "'" || c === "`";
