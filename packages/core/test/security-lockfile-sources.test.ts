@@ -13,7 +13,7 @@ describe("F19: non-registry lockfile sources are flagged, not audited as registr
       "node_modules/tardep": { version: "1.0.0", resolved: "https://codeload.github.com/evil/tardep/tar.gz/abc123" },
       "node_modules/ftpdep": { version: "1.0.0", resolved: "ftp://evil.example/-/ftpdep-1.0.0.tgz" },
       "node_modules/lodash": { version: "4.17.21", resolved: "https://registry.npmjs.org/lodash/-/lodash-4.17.21.tgz", integrity: "sha512-L" },
-      "node_modules/@scope/pkg": { version: "1.2.3", resolved: "https://registry.npmjs.org/@scope/pkg/-/pkg-1.2.3.tgz" },
+      "node_modules/@scope/pkg": { version: "1.2.3", resolved: "https://registry.npmjs.org/@scope/pkg/-/pkg-1.2.3.tgz", integrity: "sha512-S" },
     }));
     const by = Object.fromEntries(coords.map((c) => [c.name, c]));
     assert.equal(by["gitdep"]!.nonRegistry, "git+ssh://git@github.com/evil/gitdep.git#abc123");
@@ -27,7 +27,7 @@ describe("F19: non-registry lockfile sources are flagged, not audited as registr
   });
 
   test("npm: nonRegistry is sticky across duplicate name@version entries, in either order", () => {
-    const reg = { version: "1.0.0", resolved: "https://registry.npmjs.org/dup/-/dup-1.0.0.tgz" };
+    const reg = { version: "1.0.0", resolved: "https://registry.npmjs.org/dup/-/dup-1.0.0.tgz", integrity: "sha512-D" };
     const git = { version: "1.0.0", resolved: "git+ssh://git@github.com/evil/dup.git#abc" };
     for (const packages of [
       { "node_modules/dup": git, "node_modules/a/node_modules/dup": reg },

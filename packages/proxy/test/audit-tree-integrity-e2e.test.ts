@@ -80,9 +80,11 @@ describe("audit-tree integrity cross-check + failOnError (e2e)", () => {
     assert.equal(row.status, "block");
   });
 
-  test("an unknown-algorithm pin cannot be recomputed and is left unverified (skip, not a false block)", async () => {
+  test("an unknown-algorithm pin cannot be recomputed, so it is a mismatch and blocks (never fails open)", async () => {
     const r = await tree(base, [{ name: "leftpad-lite", version: "1.0.0", integrity: "md5-abcdef1234567890abcdef1234567890" }]);
-    assert.equal(r.packages.find((p) => p.name === "leftpad-lite")!.integrityMismatch, false);
+    const row = r.packages.find((p) => p.name === "leftpad-lite")!;
+    assert.equal(row.integrityMismatch, true);
+    assert.equal(row.status, "block");
   });
 
   test("audit-tree response carries the policyHash for attestation binding", async () => {

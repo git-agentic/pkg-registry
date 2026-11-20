@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,7 +10,7 @@ const execFileAsync = promisify(execFile);
 import { after, before, describe, test } from "node:test";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
-import { DEFAULT_POLICY } from "@git-agentic/sentinel-core";
+import { DEFAULT_POLICY, integrityOf } from "@git-agentic/sentinel-core";
 import { createServer } from "../src/server.js";
 import { AuditStore } from "../src/store.js";
 import { LocalFixtureUpstream } from "../src/upstream.js";
@@ -32,7 +32,10 @@ function ensureFixtures(): void {
 function lockfile(pkgs: { name: string; version: string }[]): string {
   const packages: Record<string, unknown> = { "": { name: "proj", version: "1.0.0" } };
   for (const p of pkgs) {
-    packages[`node_modules/${p.name}`] = { version: p.version, resolved: `https://registry/${p.name}/-/x.tgz` };
+    // A registry coordinate needs an integrity pin; use the real one when the fixture tarball exists.
+    const file = join(FIXTURES, ".tarballs", `${p.name}-${p.version}.tgz`);
+    const integrity = existsSync(file) ? integrityOf(readFileSync(file)) : "sha512-" + Buffer.alloc(64, 7).toString("base64");
+    packages[`node_modules/${p.name}`] = { version: p.version, resolved: `https://registry/${p.name}/-/x.tgz`, integrity };
   }
   return JSON.stringify({ name: "proj", version: "1.0.0", lockfileVersion: 3, packages });
 }

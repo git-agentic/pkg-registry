@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import http from "node:http";
 import { after, describe, test } from "node:test";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
@@ -42,13 +43,14 @@ async function boot(overrides: Partial<Parameters<typeof createServer>[0]> = {})
 const CREDS = { authorization: "Bearer client-secret", cookie: "session=abc", "npm-otp": "123456", "x-probe": "keep" };
 
 describe("F17: client credentials are not forwarded upstream on compatibility routes", () => {
-  test("authorization, cookie and npm-otp are dropped on every compat route except POST /-/v1/login", async () => {
+  test("authorization, cookie and npm-otp are dropped on every compat route, including POST /-/v1/login", async () => {
     const { base, seen } = await boot();
     const routes = [
       { path: "/-/v1/search?text=x", method: "GET" },
       { path: "/-/npm/v1/security/advisories/bulk", method: "POST" },
       { path: "/-/npm/v1/keys", method: "GET" },
       { path: "/-/npm/v1/attestations/lodash@4.17.21", method: "GET" },
+      { path: "/-/v1/login", method: "POST" },
     ];
     for (const r of routes) {
       const res = await fetch(`${base}${r.path}`, { method: r.method, headers: { ...CREDS, "content-type": "application/json" }, ...(r.method === "POST" ? { body: "{}" } : {}) });
@@ -61,14 +63,6 @@ describe("F17: client credentials are not forwarded upstream on compatibility ro
       assert.equal(call.headers["npm-otp"], undefined, `${call.path} leaked npm-otp`);
       assert.equal(call.headers["x-probe"], "keep");
     }
-  });
-
-  test("POST /-/v1/login keeps its credentials (npm's own web login needs them)", async () => {
-    const { base, seen } = await boot();
-    const res = await fetch(`${base}/-/v1/login`, { method: "POST", headers: { ...CREDS, "content-type": "application/json" }, body: "{}" });
-    assert.equal(res.status, 200);
-    assert.equal(seen[0]!.headers["authorization"], "Bearer client-secret");
-    assert.equal(seen[0]!.headers["cookie"], "session=abc");
   });
 });
 
@@ -93,5 +87,28 @@ describe("F20: compatibility bodies are capped and rate-gated", () => {
     const second = await fetch(`${base}/-/npm/v1/keys`);
     assert.equal(second.status, 429);
     assert.equal(seen.length, 1);
+  });
+
+  test("a slow chunked upload that crosses the cap still receives the 413 (Connection: close)", async () => {
+    const { base, seen } = await boot();
+    const url = new URL(`${base}/-/npm/v1/security/advisories/bulk`);
+    const result = await new Promise<{ status?: number; connection?: string; error?: string }>((resolve) => {
+      const req = http.request({ host: url.hostname, port: url.port, path: url.pathname, method: "POST", headers: { "transfer-encoding": "chunked", "content-type": "application/json" } }, (res) => {
+        res.resume();
+        res.on("end", () => resolve({ status: res.statusCode, connection: String(res.headers["connection"]) }));
+      });
+      req.on("error", (e) => resolve({ error: e.message }));
+      const chunk = Buffer.alloc(1024 * 1024, 0x61);
+      let sent = 0;
+      const timer = setInterval(() => {
+        if (req.destroyed || sent >= 12) { clearInterval(timer); req.end(); return; }
+        sent++;
+        req.write(chunk);
+      }, 40);
+    });
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, 413);
+    assert.match(result.connection ?? "", /close/i);
+    assert.equal(seen.length, 0);
   });
 });
