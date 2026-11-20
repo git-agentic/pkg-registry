@@ -123,3 +123,13 @@ describe("grants and IPC mask candidates are compared in resolved space", () => 
     assert.ok(nulls(gen([fsCap("/work/data")])).includes("/run/docker.sock"));
   });
 });
+
+describe("a grant is never symlink-resolved to lift an IPC mask", () => {
+  test("a grant on a package-writable symlink that points at /run does not unmask the docker socket", () => {
+    const realpath = (p: string) => (p === "/work/pkg/x" ? "/run" : p.replace(/^\/var\/run(?=\/|$)/, "/run"));
+    const args = generateBwrapArgs([fsCap("/work/pkg/x")], { ...OPTS, realpath, pathExists: exists(["/run/docker.sock", "/run/user/1000"]) });
+    const j = joined(args);
+    assert.ok(j.includes("--ro-bind /dev/null /run/docker.sock"), j);
+    assert.ok(j.includes("--tmpfs /run/user/1000"), j);
+  });
+});
