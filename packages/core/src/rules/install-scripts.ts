@@ -106,16 +106,17 @@ function splitSimpleCommands(cmd: string, keepPipes = false): string[] {
   const out: string[] = [];
   let start = 0;
   let quote = "";
+  let pipeEnd = -1; // index of the last char of the last unquoted, unescaped `|` / `|&`
   for (let i = 0; i < cmd.length; i++) {
     const c = cmd[i]!;
     if (c === "\\" && quote !== "'") { i++; continue; }
     if (quote) { if (c === quote) quote = ""; continue; }
     if (c === "'" || c === '"') { quote = c; continue; }
-    if (c === "|" && keepPipes && cmd[i + 1] !== "|") { if (cmd[i + 1] === "&") i++; continue; }
-    if (c === "\n" && keepPipes) { // a newline right after `|` continues the pipeline
+    if (c === "|" && keepPipes && cmd[i + 1] !== "|") { if (cmd[i + 1] === "&") i++; pipeEnd = i; continue; }
+    if (c === "\n" && keepPipes) { // a newline right after a pipe operator continues the pipeline
       let j = i - 1;
       while (j >= start && (cmd[j] === " " || cmd[j] === "\t")) j--;
-      if (j > start && cmd[j] === "|" && cmd[j - 1] !== "|") continue;
+      if (j === pipeEnd) continue;
     }
     if (c === ";" || c === "|" || c === "&" || c === "\n") {
       out.push(cmd.slice(start, i));
@@ -229,6 +230,7 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
     }
     return hit ?? undefined;
   };
+  let spill: PackageFile[] = []; // extra candidates a resolution found besides the one it returned
   const resolveRef = (raw: string, mode: Mode): PackageFile | undefined => {
     const ref = raw.replace(/^\.\//, "").replace(/\/$/, "") || (raw === "./" ? "." : "");
     if (!ref) return undefined;
@@ -237,12 +239,18 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
     if (hit || mode === "exact") return hit;
     if (mode === "path") return suffix(ref);
     const dotted = ref.slice(ref.lastIndexOf("/") + 1).includes(".");
+    // After a `cd scripts &&` the file sits deeper than `package/<ref>`.
+    const nested = () => suffix(ref) ?? (dotted ? undefined : suffix(`${ref}.js`) ?? suffix(`${ref}.ts`));
     // Node resolves `node setup` / `node scripts` as setup.js / scripts/<main or index.js>; TS runners also try setup.ts.
     if (!dotted) hit = exact(`package/${ref}.js`);
-    hit ??= entry(`package/${ref}`); // a directory may have a dot in its name (`tools.v2`)
+    const dir = hit ? undefined : entry(`package/${ref}`); // a directory may have a dot in its name (`tools.v2`)
+    if (dir) {
+      const n = nested(); // over-follow: a directory entry must not hide a nested file the suffix lookup finds
+      if (n && n !== dir) spill.push(n);
+      return dir;
+    }
     if (!dotted) hit ??= exact(`package/${ref}.ts`);
-    // After a `cd scripts &&` the file sits deeper than `package/<ref>`.
-    return hit ?? suffix(ref) ?? (dotted ? undefined : suffix(`${ref}.js`) ?? suffix(`${ref}.ts`));
+    return hit ?? nested();
   };
   const resolveWord = (word: string, mode: Mode): PackageFile | undefined => {
     const w = trimPunct(word);
@@ -254,19 +262,17 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
     }
     return undefined;
   };
-  // A command word is judged by its basename (`/usr/bin/env` is `env`), except a relative path that names a
-  // package file (`./bin/env`): that is the file itself, scanned as a command, not the wrapper it is named after.
-  const cmdBase = (w: string): string => {
-    const t = trimPunct(w);
-    return t.includes("/") && !t.startsWith("/") && resolveWord(t, "path") ? t : base(t);
-  };
+  // A command word is judged by its basename (`/usr/bin/env` is `env`). A relative path that names a package file
+  // (`./bin/env`) is that file too: it is scanned (`localCommand`) and still plays the wrapper/interpreter role.
+  const localCommand = (w: string): PackageFile | undefined =>
+    w.includes("/") && !w.startsWith("/") ? exact(`package/${trimPunct(w).replace(/^\.\//, "")}`) : undefined;
   const isPrefix = (words: string[], i: number) =>
-    /^[A-Za-z_]\w*=/.test(words[i]!) || WRAPPERS.has(cmdBase(words[i]!)) || (i > 0 && WRAPPERS.has(cmdBase(words[i - 1]!)) && words[i]!.startsWith("-"));
+    /^[A-Za-z_]\w*=/.test(words[i]!) || WRAPPERS.has(base(words[i]!)) || (i > 0 && WRAPPERS.has(base(words[i - 1]!)) && words[i]!.startsWith("-"));
   const isInterpreterCommand = (simple: string): boolean => {
     const ws = simple.split(/\s+/).filter(Boolean).map(unquote);
     let k = 0;
     while (k < ws.length && isPrefix(ws, k)) k++;
-    return ws[k] !== undefined && Object.hasOwn(INLINE_FLAG, cmdBase(ws[k]!));
+    return ws[k] !== undefined && Object.hasOwn(INLINE_FLAG, base(trimPunct(ws[k]!)));
   };
 
   // Package scripts reached from a command line, scanned from a worklist (not recursion): each name once, so
@@ -327,6 +333,8 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
       };
       let i = 0;
       for (; i < words.length && isPrefix(words, i); i++) {
+        const local = localCommand(words[i]!);
+        if (local) out.add(local);
         // `NODE_OPTIONS=--require=./hook.js node -v`: a code file inside an assignment value runs too.
         const eq = words[i]!.indexOf("=");
         if (eq < 0) continue;
@@ -338,7 +346,9 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
       const command = words[i];
       if (!command) continue;
       const name = trimPunct(command);
-      const interpreter = cmdBase(name);
+      const interpreter = base(name);
+      const local = localCommand(command);
+      if (local) out.add(local);
       if (PACKAGE_MANAGERS.has(interpreter)) followScriptWords(words, i + 1, out);
       const inline = Object.hasOwn(INLINE_FLAG, interpreter) ? INLINE_FLAG[interpreter] : undefined;
       // The command word itself may be a package script (`./setup`).
@@ -415,8 +425,10 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
     const out = new Set<PackageFile>();
     visited = new Set();
     queue = [];
+    spill = [];
     scan(cmd, out, 0);
     for (let q = 0; q < queue.length; q++) scan(queue[q]![1], out, 0); // the queue grows while it is read
+    for (const f of spill) out.add(f);
     return { files: [...out], scripts: queue };
   };
 }

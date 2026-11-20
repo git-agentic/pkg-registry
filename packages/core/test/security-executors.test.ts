@@ -60,6 +60,27 @@ describe("install hooks follow the files these forms execute", () => {
   row("newline continues a pipeline", "cat setup |\nsh", "package/setup");
   row("dotted directory name", "node tools.v2", "package/tools.v2/index.js");
 
+  row("newline after |& continues a pipeline", "cat setup |&\nsh", "package/setup");
+
+  test("an escaped pipe is not a pipe, so the newline after it separates commands", () => {
+    assert.deepEqual(sev("cat setup \\|\nsh", { "package/setup": PAYLOAD }), ["low"]);
+  });
+
+  test("a package-local wrapper is scanned and still acts as a wrapper", () => {
+    // payload in the extension-less operand of the wrapped interpreter, benign wrapper file
+    assert.deepEqual(sev("./bin/env node evil", { "package/bin/env": BENIGN, "package/evil": PAYLOAD }), ["critical"]);
+    assert.deepEqual(sev("./bin/env node evil", { "package/bin/env": BENIGN, "package/evil": BENIGN }), ["low"]);
+    assert.deepEqual(sev("./bin/env setup", { "package/bin/env": PAYLOAD, "package/setup.js": BENIGN }), ["critical"]);
+    assert.deepEqual(sev("./bin/node evil", { "package/bin/node": BENIGN, "package/evil": PAYLOAD }), ["critical"]);
+  });
+
+  test("a dotted directory entry does not hide a nested file the suffix lookup finds", () => {
+    const dir = { "package/tools.v2/index.js": BENIGN };
+    assert.deepEqual(sev("cd scripts && node tools.v2", { ...dir, "package/scripts/tools.v2": PAYLOAD }), ["critical"]);
+    assert.deepEqual(sev("cd scripts && node tools.v2", { ...dir, "package/scripts/tools.v2": BENIGN }), ["low"]);
+    assert.deepEqual(sev("node tools.v2", { "package/tools.v2/index.js": PAYLOAD, "package/scripts/tools.v2": BENIGN }), ["critical"]);
+  });
+
   test("a package-local command word is a package file, not env/node", () => {
     assert.deepEqual(sev("./bin/env setup", { "package/bin/env": PAYLOAD, "package/setup.js": BENIGN }), ["critical"]);
     assert.deepEqual(sev("bin/node setup", { "package/bin/node": PAYLOAD, "package/setup.js": BENIGN }), ["critical"]);
@@ -78,9 +99,10 @@ describe("install hooks follow the files these forms execute", () => {
 
   test("many directory references stay cheap even with a huge `main`", () => {
     const pkg = { main: `${"a".repeat(200000)}.js` };
-    const t0 = Date.now();
+    const t0 = performance.now();
     assert.deepEqual(sev(`cat ${". ".repeat(50000)}| sh`, { "package/index.js": BENIGN }, pkg), ["low"]);
-    assert.ok(Date.now() - t0 < 1000, `took ${Date.now() - t0} ms`);
+    const ms = performance.now() - t0;
+    assert.ok(ms < 1000, `took ${ms} ms`);
   });
 
   test("a pipeline with no interpreter does not execute its operands", () => {
