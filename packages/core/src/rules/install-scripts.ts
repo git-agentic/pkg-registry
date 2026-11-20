@@ -87,7 +87,7 @@ export const installScriptsRule: Rule = {
 };
 
 // Pieces of a shell word that may hide a path (`${VAR}setup`, `--require=./x.js`, `a\b`).
-const WORD_PIECES = /[${}\\=,'"`()]+/;
+const WORD_PIECES = /[${}\\=,'"`()<>]+/; // `<>`: `node <setup.js` reads setup.js
 const SIMPLE_COMMAND_SPLIT = /&&|\|\||[;|&\n]/;
 
 /** Split on `&&`, `||`, `;`, `|`, `&`, newline outside quotes. An unterminated quote falls back to the plain split. */

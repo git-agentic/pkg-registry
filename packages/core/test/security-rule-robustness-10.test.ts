@@ -79,3 +79,10 @@ describe("overflow decode signal needs a whole identifier", () => {
     assert.ok(f.some((x) => x.severity === "critical"));
   });
 });
+
+describe("input redirection attached to a script path", () => {
+  test("`node <setup.js` and `sh <build.sh` scan the redirected script", () => {
+    assert.equal(crit({ "package/setup.js": `${CURL_SH}\n` }, "node <setup.js").length, 1);
+    assert.equal(crit({ "package/build.sh": `${CURL_SH}\n` }, "sh <build.sh").length, 1);
+  });
+});
