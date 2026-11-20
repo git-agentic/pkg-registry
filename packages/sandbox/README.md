@@ -22,7 +22,7 @@ npm install @git-agentic/sentinel-sandbox@alpha
   compilation involved.
 - **Linux (bubblewrap):** filesystem/network/env containment and the
   exfil-tool exec carve-out are always enforced, along with a private pid
-  namespace, `--die-with-parent`, `--new-session`, and masks for local IPC sockets
+  namespace, `--new-session`, and masks for local IPC sockets
   (session bus, docker/containerd/podman/crio, system dbus, X11, ssh agents)
   whether or not network is approved. The **exec floor** is
   enforced via a Landlock helper that this package ships **as source only**

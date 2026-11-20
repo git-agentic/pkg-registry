@@ -116,7 +116,7 @@ describe("BubblewrapSandbox enforcement", { skip }, () => {
     const work = realpathSync(mkdtempSync(join(tmpdir(), "bw-work-")));
     const inside = join(work, "build-output.txt");
     const r = new BubblewrapSandbox().run(`echo OK > "${inside}"`, { cwd: work, approved: [], homeDir: home });
-    assert.equal(r.exitCode, 0);
+    assert.equal(r.exitCode, 0, `bwrap stderr: ${r.stderr}`);
     assert.equal(readFileSync(inside, "utf8").trim(), "OK", "a write inside the floor (cwd) must succeed");
   });
 

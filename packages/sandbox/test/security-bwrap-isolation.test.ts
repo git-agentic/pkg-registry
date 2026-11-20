@@ -15,16 +15,17 @@ const mounts = (args: string[], flag: string) =>
   args.flatMap((a, i) => (a === flag ? [[args[i + 1], args[i + 2]]] : []));
 
 describe("F8 bwrap separates the pid namespace and session", () => {
-  test("adds --unshare-pid, --die-with-parent and --new-session, before --proc /proc", () => {
+  test("adds --unshare-pid and --new-session (no --die-with-parent), before --proc /proc", () => {
+    assert.ok(!generateBwrapArgs([], OPTS).includes("--die-with-parent"));
     const args = generateBwrapArgs([], OPTS);
-    for (const f of ["--unshare-pid", "--die-with-parent", "--new-session"]) {
+    for (const f of ["--unshare-pid", "--new-session"]) {
       assert.ok(args.includes(f), `${f} must be present`);
     }
     assert.ok(args.indexOf("--unshare-pid") < args.indexOf("--proc"), "pid namespace before the /proc mount");
   });
   test("present when network is approved too (not tied to --unshare-net)", () => {
     const args = generateBwrapArgs([net("198.51.100.5")], OPTS);
-    for (const f of ["--unshare-pid", "--die-with-parent", "--new-session"]) assert.ok(args.includes(f), f);
+    for (const f of ["--unshare-pid", "--new-session"]) assert.ok(args.includes(f), f);
     assert.ok(!args.includes("--unshare-net"));
   });
 });

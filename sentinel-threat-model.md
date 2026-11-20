@@ -277,8 +277,7 @@ at serve time (ADR-0023).
 
 ADR-0056 closes several escape paths. The Seatbelt profile is passed inline
 (`sandbox-exec -p`), so no profile file sits in the writable temp dir for a
-lingering process to rewrite. bwrap adds `--unshare-pid --die-with-parent
---new-session` and masks local IPC whether or not network is approved, because
+lingering process to rewrite. bwrap adds `--unshare-pid --new-session` and masks local IPC whether or not network is approved, because
 `--unshare-net` does not cover pathname unix sockets: the session bus, the
 docker, containerd, podman and crio sockets, the system dbus socket, and
 `/tmp/.X11-unix` and `/tmp/ssh-*` when present. `launchctl`, `open`,
@@ -374,7 +373,7 @@ Stated plainly. Each is a deliberate, recorded trade-off, not an oversight.
   a copied `launchctl`.
 - **A sandboxed process can outlive its script on macOS (ADR-0056).** There is
   no process-group kill. Containment still holds while it runs, but it is no
-  longer tied to the install's lifetime. On Linux `--die-with-parent` covers it.
+  longer tied to the install's lifetime. On Linux the pid namespace ends with the command, so orphans die with it.
 - **Enforced installs reject sha1-only packages (ADR-0056).** The integrity
   binding compares per algorithm. A package npm records only as sha1 cannot run
   an enforced script, and npm older than 7, which does not set

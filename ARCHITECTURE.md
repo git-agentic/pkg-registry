@@ -1405,8 +1405,8 @@ are collected here.
   (`AUDIT_REVISION`); persisted reports from another engine version or revision are skipped
   on load, and a native publication with a stale audit is re-audited from its stored bytes.
   Store writes are debounced (about 500 ms) and flushed on exit, `SIGTERM` and `SIGINT`.
-- **bwrap isolation.** Every run adds `--unshare-pid --die-with-parent --new-session`, so
-  the sandbox sees only its own processes, no orphan outlives the run, and a script cannot
+- **bwrap isolation.** Every run adds `--unshare-pid --new-session`, so the sandbox sees
+  only its own processes, orphans die with the pid namespace when the command exits, and a script cannot
   inject keystrokes into the controlling tty. Local IPC masks apply whether or not network
   is approved, because `--unshare-net` does not cover pathname unix sockets: the session bus
   under `/run/user/<uid>`, the docker, containerd, podman and crio sockets, the system dbus

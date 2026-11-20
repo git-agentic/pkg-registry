@@ -157,7 +157,9 @@ decisions. Findings that stayed as documented trade-offs are listed at the end.
     file under the OS temp dir was inside the write floor, so a lingering
     sandboxed process could rewrite the next run's profile.
 17. **bwrap isolates pid, session and local IPC.** Every run adds
-    `--unshare-pid --die-with-parent --new-session`. Local IPC masks apply
+    `--unshare-pid --new-session`. `--die-with-parent` is not used: its
+    `PR_SET_PDEATHSIG` is tied to the forking thread and intermittently killed
+    runs at start, and the pid namespace already ends orphans with the command. Local IPC masks apply
     whether or not network is approved, because `--unshare-net` does not cover
     pathname unix sockets: the user session bus under `/run/user/<uid>`, the
     docker, containerd, podman and crio sockets, the system dbus socket, and

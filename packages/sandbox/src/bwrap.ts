@@ -55,9 +55,10 @@ export function generateBwrapArgs(
   const containsHome = (p: string) => p === home || home.startsWith(p + "/");
 
   // --unshare-pid: own pid namespace, so `--proc /proc` shows only the sandbox's processes (a host
-  // /proc leaks other users' env/cmdlines). --die-with-parent: no orphan outlives the run.
+  // /proc leaks other users' env/cmdlines). Orphans die with the pid namespace when the command exits. No --die-with-parent: its
+  // PR_SET_PDEATHSIG is tied to the forking THREAD, and it intermittently killed runs at start.
   // --new-session: setsid, so a script cannot inject keystrokes into the controlling tty (TIOCSTI).
-  const args = ["--unshare-pid", "--die-with-parent", "--new-session", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc"];
+  const args = ["--unshare-pid", "--new-session", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc"];
 
   // Slice 1 rw set (write floor + guarded Grants), expanded; host /dev excluded (`--dev /dev`
   // already provides an isolated writable /dev — re-binding host /dev re-exposes the device tree).
