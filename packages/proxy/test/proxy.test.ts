@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, before, describe, test } from "node:test";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
-import { DEFAULT_POLICY, type EnterprisePolicy } from "@git-agentic/sentinel-core";
+import { DEFAULT_POLICY, type EnterprisePolicy, type NpmSigningKey } from "@git-agentic/sentinel-core";
 import { createServer } from "../src/server.js";
 import { AuditStore } from "../src/store.js";
 import { LocalFixtureUpstream } from "../src/upstream.js";
@@ -41,6 +41,8 @@ describe("registry proxy (block policy, local fixtures)", () => {
       approvals,
       enterprisePolicy: DEFAULT_POLICY,
       policy: "block",
+      // The fixtures are signed with test keys; an untrusted keyid now scores like unsigned.
+      signingKeys: JSON.parse(readFileSync(join(FIXTURES, "signing-keys.json"), "utf8")) as NpmSigningKey[],
       privateStore: new PrivatePackageStore(),
       violations: new ViolationStore(),
       approvalRequests: new ApprovalRequestStore(),
