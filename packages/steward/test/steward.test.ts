@@ -28,9 +28,9 @@ describe("claim steward pipeline", () => {
     let queried = "";
     assert.equal(await steward.verifyChallenge(application.id, async (domain) => { queried = domain; return [["wrong-value"]]; }), false);
     assert.equal(queried, "acme.example");
-    assert.throws(() => steward.approve(application.id), /passed challenge/i);
+    await assert.rejects(async () => steward.approve(application.id), /passed challenge/i);
     assert.equal(await steward.verifyChallenge(application.id, async () => [[application.txtValue]]), true);
-    steward.approve(application.id);
+    await steward.approve(application.id);
     assert.deepEqual(steward.release("r1").corpus.claims.map((claim) => claim.namespace), ["@acme/*"]);
 
     now += 366 * 24 * 60 * 60 * 1000;
@@ -48,7 +48,7 @@ describe("claim steward pipeline", () => {
       lookupUpstream: async () => ({ kind: "active", packument: { name: "tanstack", repository: "https://github.com/squatter/tanstack" } }) });
     const app = await steward.issueChallenge({ namespace: "tanstack", domain: "tanstack.com", claimantPublicKey: claimant.publicKey });
     await steward.verifyChallenge(app.id, async () => [[app.txtValue]]);
-    steward.approve(app.id, { evidenceRef: "case/PEP541-grade-42" });
+    await steward.approve(app.id, { evidenceRef: "case/PEP541-grade-42" });
     const announced = steward.release("announce").corpus;
     assert.equal(announced.claims.length, 0);
     assert.equal(announced.pendingClaims?.[0]?.namespace, "tanstack");
@@ -67,12 +67,12 @@ describe("claim steward pipeline", () => {
     const steward = new ClaimSteward({ now: () => now, id: () => `id-${++next}`, lookupUpstream: absent });
     const original = await steward.issueChallenge({ namespace: "pkg", domain: "old.example", claimantPublicKey: oldClaimant.publicKey });
     await steward.verifyChallenge(original.id, async () => [[original.txtValue]]);
-    steward.approve(original.id);
+    await steward.approve(original.id);
     const target = await steward.issueChallenge({ namespace: "pkg", domain: "new.example", claimantPublicKey: newClaimant.publicKey });
     await steward.verifyChallenge(target.id, async () => [[target.txtValue]]);
     assert.throws(() => steward.requestTransfer("pkg", target.id, "invalid"), /valid old claimant signature/);
     const signature = signTransferRequest({ namespace: "pkg", targetDomain: "new.example", targetChallengeId: target.id,
-      targetClaimantPublicKey: newClaimant.publicKey }, oldClaimant.privateKey);
+      targetClaimantPublicKey: newClaimant.publicKey, currentChallengeId: original.id }, oldClaimant.privateKey);
     steward.requestTransfer("pkg", target.id, signature);
 
     assert.equal(steward.release("pending").corpus.claims[0]?.domain, "old.example");
@@ -87,7 +87,7 @@ describe("claim steward pipeline", () => {
     const steward = new ClaimSteward({ now: () => now, id: () => `dispute-${++next}`, lookupUpstream: absent });
     const original = await steward.issueChallenge({ namespace: "contested", domain: "old.example", claimantPublicKey: claimant.publicKey });
     await steward.verifyChallenge(original.id, async () => [[original.txtValue]]);
-    steward.approve(original.id);
+    await steward.approve(original.id);
     const challenger = await steward.issueChallenge({ namespace: "contested", domain: "new.example", claimantPublicKey: claimant.publicKey });
     await steward.verifyChallenge(challenger.id, async () => [[challenger.txtValue]]);
     const unrelated = await steward.issueChallenge({ namespace: "other-name", domain: "new.example", claimantPublicKey: claimant.publicKey });
@@ -109,7 +109,7 @@ describe("claim steward pipeline", () => {
     const steward = new ClaimSteward({ now: () => Date.parse("2026-07-01T00:00:00.000Z"), id: () => "free", lookupUpstream: absent });
     const app = await steward.issueChallenge({ namespace: "free-name", domain: "free.example", claimantPublicKey: claimant.publicKey });
     await steward.verifyChallenge(app.id, async () => [[app.txtValue]]);
-    steward.approve(app.id);
+    await steward.approve(app.id);
     const release = steward.release("signed-1", privateKey);
     assert.ok(release.signature);
     assert.equal(verifyClaimCorpusBytes(release.raw, release.signature!, publicKey), true);
@@ -122,7 +122,7 @@ describe("claim steward pipeline", () => {
     const first = new ClaimSteward({ now: () => Date.parse("2026-07-13T12:00:00.000Z"), id: () => "claimed", stateFile, lookupUpstream: absent });
     const challenge = await first.issueChallenge({ namespace: "@acme/*", domain: "acme.example", claimantPublicKey: claimant.publicKey });
     await first.verifyChallenge(challenge.id, async () => [[challenge.txtValue]]);
-    first.approve(challenge.id);
+    await first.approve(challenge.id);
     first.recordRetraction({
       kind: "retraction", id: "SENTINEL-RETRACT-steward", name: "@acme/widget", version: "2.0.0",
       integrity: "sha512-YWJj", reason: "security", retractedAt: "2026-07-13T11:00:00.000Z", severity: "high",
@@ -155,7 +155,7 @@ describe("claim steward pipeline", () => {
     const first = new ClaimSteward({ now: () => Date.parse("2026-07-01T00:00:00.000Z"), id: () => "durable", stateFile, lookupUpstream: absent });
     const app = await first.issueChallenge({ namespace: "durable-name", domain: "durable.example", claimantPublicKey: claimant.publicKey });
     await first.verifyChallenge(app.id, async () => [[app.txtValue]]);
-    first.approve(app.id);
+    await first.approve(app.id);
 
     const restarted = new ClaimSteward({ now: () => Date.parse("2026-07-02T00:00:00.000Z"), stateFile, lookupUpstream: absent });
     assert.equal(restarted.release("after-restart").corpus.claims[0]?.namespace, "durable-name");
@@ -163,16 +163,21 @@ describe("claim steward pipeline", () => {
   });
 
   test("renewal requires a passed challenge for the same namespace as well as the same domain", async () => {
-    const steward = new ClaimSteward({ now: () => Date.parse("2026-07-01T00:00:00.000Z"), lookupUpstream: absent });
+    let now = Date.parse("2026-07-01T00:00:00.000Z");
+    const steward = new ClaimSteward({ now: () => now, lookupUpstream: absent });
     const first = await steward.issueChallenge({ namespace: "first-name", domain: "shared.example", claimantPublicKey: claimant.publicKey });
     await steward.verifyChallenge(first.id, async () => [[first.txtValue]]);
-    steward.approve(first.id);
+    await steward.approve(first.id);
     const second = await steward.issueChallenge({ namespace: "second-name", domain: "shared.example", claimantPublicKey: claimant.publicKey });
     await steward.verifyChallenge(second.id, async () => [[second.txtValue]]);
-    steward.approve(second.id);
+    await steward.approve(second.id);
 
     assert.throws(() => steward.renew("second-name", first.id), /namespace mismatch/);
-    steward.renew("second-name", second.id);
+    // The challenge that created the claim is not a renewal; a fresh one is (pinned by security-steward.test.ts).
+    now += 24 * 60 * 60 * 1000;
+    const renewal = await steward.issueChallenge({ namespace: "second-name", domain: "shared.example", claimantPublicKey: claimant.publicKey });
+    await steward.verifyChallenge(renewal.id, async () => [[renewal.txtValue]]);
+    steward.renew("second-name", renewal.id);
     assert.equal(steward.release("renewed").corpus.claims.find((claim) => claim.namespace === "second-name")?.status, "active");
   });
 
@@ -180,7 +185,7 @@ describe("claim steward pipeline", () => {
     const longDead = new ClaimSteward({ lookupUpstream: async () => ({ kind: "long-dead-placeholder", packument: { name: "retired", deprecated: "retired" } }) });
     const app = await longDead.issueChallenge({ namespace: "retired", domain: "retired.example", claimantPublicKey: claimant.publicKey });
     await longDead.verifyChallenge(app.id, async () => [[app.txtValue]]);
-    longDead.approve(app.id);
+    await longDead.approve(app.id);
     assert.equal(longDead.release("long-dead").corpus.claims[0]?.namespace, "retired");
   });
 
@@ -188,7 +193,7 @@ describe("claim steward pipeline", () => {
     const steward = new ClaimSteward({ lookupUpstream: absent });
     const app = await steward.issueChallenge({ namespace: "renamed", domain: "old.example", claimantPublicKey: claimant.publicKey });
     await steward.verifyChallenge(app.id, async () => [[app.txtValue]]);
-    steward.approve(app.id);
+    await steward.approve(app.id);
     steward.freezeForDomainChange("renamed", "monitor/domain-change-7");
     assert.equal(steward.release("frozen").corpus.claims[0]?.status, "frozen");
   });

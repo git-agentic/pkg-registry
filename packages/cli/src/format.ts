@@ -9,6 +9,24 @@ const C = {
 const useColor = process.stdout.isTTY && !process.env.NO_COLOR;
 const c = (code: string, s: string) => (useColor ? code + s + C.reset : s);
 
+// Terminal escape sequences (CSI, OSC/DCS/SOS/PM/APC strings, other ESC sequences; 7-bit and C1 forms), then any
+// remaining C0 control (except \n and \t), DEL and C1 control. Package metadata, findings and proxy answers are
+// untrusted: unfiltered, they can retitle the window, clear the screen or overwrite the verdict line.
+const ESCAPE_SEQUENCE = /(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]?|(?:\x1b[\]PX^_]|[\x90\x98\x9d\x9e\x9f])[^\x07\x1b\x9c]*(?:\x07|\x1b\\|\x9c)?|\x1b[ -/]*[0-~]/g;
+const CONTROL_CHARS = /[\x00-\x08\x0b-\x1f\x7f-\x9f]/g;
+
+export function sanitizeTerminal(s: string): string {
+  return s.replace(ESCAPE_SEQUENCE, "").replace(CONTROL_CHARS, "");
+}
+
+/** Deep-sanitize every string (and object key) of an untrusted payload before it is formatted. */
+function clean<T>(v: T): T {
+  if (typeof v === "string") return sanitizeTerminal(v) as T;
+  if (Array.isArray(v)) return v.map(clean) as T;
+  if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).map(([k, x]) => [sanitizeTerminal(k), clean(x)])) as T;
+  return v;
+}
+
 const verdictColor: Record<Verdict, string> = {
   allow: C.green,
   warn: C.yellow,
@@ -31,7 +49,8 @@ function bar(score: number): string {
 }
 
 /** Pre-install verdict panel. */
-export function formatReport(r: AuditReport): string {
+export function formatReport(input: AuditReport): string {
+  const r = clean(input);
   const m = r.meta;
   const L: string[] = [];
   L.push("");
@@ -93,7 +112,8 @@ const stateColor: Record<string, string> = {
   approved: C.green, inherited: C.green, required: C.yellow, denied: C.red, "n-a": C.gray,
 };
 
-export function formatManifest(m: Manifest): string {
+export function formatManifest(input: Manifest): string {
+  const m = clean(input);
   const L: string[] = [];
   L.push("");
   L.push(c(C.bold, `  ${m.meta.name}@${m.meta.version}`));
@@ -127,7 +147,8 @@ const treeStatusColor: Record<string, string> = {
 };
 
 /** Whole-tree audit summary: one line per package, then counts + aggregate verdict. */
-export function formatTree(r: TreeAuditResult): string {
+export function formatTree(input: TreeAuditResult): string {
+  const r = clean(input);
   const L: string[] = [];
   L.push("");
   L.push(c(C.bold, `  dependency tree audit (${r.packages.length} packages)`));
@@ -163,7 +184,8 @@ export interface ViolationRow {
 }
 
 /** Runtime violation list surfaced from the proxy's `/-/violations` feed. */
-export function formatViolations(rows: ViolationRow[]): string {
+export function formatViolations(input: ViolationRow[]): string {
+  const rows = clean(input);
   const L: string[] = ["", c(C.bold, `  runtime violations (${rows.length})`), c(C.gray, `  ${"─".repeat(56)}`)];
   if (rows.length === 0) L.push(c(C.gray, "  none recorded"));
   for (const v of rows) {
@@ -181,7 +203,8 @@ export interface StatsSummary {
 }
 
 /** Durable observability rollup surfaced from the proxy's `/-/metrics` feed. */
-export function formatStats(m: StatsSummary): string {
+export function formatStats(input: StatsSummary): string {
+  const m = clean(input);
   const L: string[] = [
     "",
     c(C.bold, `  audits: ${m.summary.total}`) +
@@ -207,7 +230,8 @@ export interface HistoryRow {
 }
 
 /** Recorded-audit list surfaced from the proxy's `/-/history` feed. */
-export function formatHistory(rows: HistoryRow[]): string {
+export function formatHistory(input: HistoryRow[]): string {
+  const rows = clean(input);
   if (!rows.length) return c(C.gray, "\n  (no audits recorded)\n");
   const L: string[] = ["", c(C.bold, `  ${rows.length} audit(s):`)];
   for (const r of rows) {
@@ -227,7 +251,8 @@ export interface ExplainResult {
 }
 
 /** Verdict explanation + per-finding remediation, suggested known-good version, and waiver command. */
-export function formatExplain(r: ExplainResult): string {
+export function formatExplain(input: ExplainResult): string {
+  const r = clean(input);
   const L: string[] = ["", `  ${r.report.meta.name}@${r.report.meta.version}  —  ${c(verdictColor[r.report.verdict] ?? C.gray, r.report.verdict.toUpperCase())}  ${r.report.score}/100`, ""];
   L.push(c(C.bold, "  " + r.remediation.guidance));
   L.push("");
@@ -248,7 +273,8 @@ export function formatExplain(r: ExplainResult): string {
   return L.join("\n");
 }
 
-export function formatLint(r: { errors: LintFinding[]; warnings: LintFinding[] }): string {
+export function formatLint(input: { errors: LintFinding[]; warnings: LintFinding[] }): string {
+  const r = clean(input);
   const L: string[] = [];
   for (const e of r.errors) L.push(c(C.red, `  ✗ ${e.code}: ${e.message}`));
   for (const w of r.warnings) L.push(c(C.yellow, `  ⚠ ${w.code}: ${w.message}`));
@@ -264,7 +290,8 @@ export interface PreviewResult {
   changed: { name: string; version: string; from: string; to: string; fromScore: number; toScore: number }[];
 }
 
-export function formatPreview(r: PreviewResult): string {
+export function formatPreview(input: PreviewResult): string {
+  const r = clean(input);
   const L: string[] = ["", `  ${r.total} audit(s) replayed · ${c(C.bold, String(r.changed.length))} would change`, ""];
   const t = r.transitions;
   const parts = Object.entries(t).filter(([k, v]) => k !== "unchanged" && v > 0).map(([k, v]) => `${k}: ${v}`);

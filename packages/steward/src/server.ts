@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:
 import { join } from "node:path";
 import express, { type Request, type Response } from "express";
 import { rateLimit } from "express-rate-limit";
-import { ClaimSteward, type ClaimApplicationInput, type TxtResolver } from "./steward.js";
+import { ClaimSteward, type TxtResolver } from "./steward.js";
 import type { RetractionAdvisory } from "@git-agentic/sentinel-core";
 
 export interface StewardServerOptions {
@@ -27,6 +27,19 @@ function sendError(res: Response, error: unknown): void {
   res.status(400).json({ error: (error as Error).message });
 }
 
+/** Required string field of a JSON body; anything else is a 400, never coerced. */
+function str(body: unknown, key: string): string {
+  const value = (body as Record<string, unknown> | undefined)?.[key];
+  if (typeof value !== "string" || !value) throw new Error(`${key} must be a non-empty string`);
+  return value;
+}
+
+function optionalStr(body: unknown, key: string): string | undefined {
+  const value = (body as Record<string, unknown> | undefined)?.[key];
+  if (value !== undefined && (typeof value !== "string" || !value)) throw new Error(`${key} must be a non-empty string`);
+  return value;
+}
+
 /** Authenticated steward control plane. Every mutation is operator-token gated. */
 export function createStewardServer(options: StewardServerOptions) {
   if (!options.token) throw new Error("steward token must be configured");
@@ -46,39 +59,43 @@ export function createStewardServer(options: StewardServerOptions) {
   });
 
   app.post("/-/claims/challenges", async (req: Request, res: Response) => {
-    try { res.status(201).json(await options.steward.issueChallenge(req.body as ClaimApplicationInput)); }
+    try {
+      const trustedPublishers = (req.body as { trustedPublishers?: unknown } | undefined)?.trustedPublishers;
+      if (trustedPublishers !== undefined && !Array.isArray(trustedPublishers)) throw new Error("trustedPublishers must be an array");
+      res.status(201).json(await options.steward.issueChallenge({
+        namespace: str(req.body, "namespace"), domain: str(req.body, "domain"), claimantPublicKey: str(req.body, "claimantPublicKey"),
+        ...(trustedPublishers ? { trustedPublishers } : {}),
+      }));
+    }
     catch (error) { sendError(res, error); }
   });
   app.post("/-/claims/challenges/:id/verify", async (req, res) => {
     try { res.json({ verified: await options.steward.verifyChallenge(req.params.id, options.resolveTxt) }); }
     catch (error) { sendError(res, error); }
   });
-  app.post("/-/claims/challenges/:id/approve", (req, res) => {
-    try { options.steward.approve(req.params.id, req.body as { evidenceRef?: string }); res.json({ approved: true }); }
+  app.post("/-/claims/challenges/:id/approve", async (req, res) => {
+    try { await options.steward.approve(req.params.id, { evidenceRef: optionalStr(req.body, "evidenceRef") }); res.json({ approved: true }); }
     catch (error) { sendError(res, error); }
   });
   app.post("/-/claims/transfers", (req, res) => {
     try {
-      const body = req.body as { namespace: string; targetChallengeId: string; oldClaimantSignature: string };
-      options.steward.requestTransfer(body.namespace, body.targetChallengeId, body.oldClaimantSignature);
+      options.steward.requestTransfer(str(req.body, "namespace"), str(req.body, "targetChallengeId"), str(req.body, "oldClaimantSignature"));
       res.status(202).json({ pending: true });
     } catch (error) { sendError(res, error); }
   });
   app.post("/-/claims/disputes", (req, res) => {
-    try { options.steward.contest((req.body as { namespace: string }).namespace); res.status(202).json({ frozen: true }); }
+    try { options.steward.contest(str(req.body, "namespace")); res.status(202).json({ frozen: true }); }
     catch (error) { sendError(res, error); }
   });
   app.post("/-/claims/dispute-rulings", (req, res) => {
     try {
-      const body = req.body as { namespace: string; targetChallengeId: string; evidenceRef: string };
-      options.steward.ruleDispute(body.namespace, body.targetChallengeId, body.evidenceRef);
+      options.steward.ruleDispute(str(req.body, "namespace"), str(req.body, "targetChallengeId"), str(req.body, "evidenceRef"));
       res.status(202).json({ pending: true });
     } catch (error) { sendError(res, error); }
   });
   app.post("/-/claims/renewals", (req, res) => {
     try {
-      const body = req.body as { namespace: string; challengeId: string };
-      options.steward.renew(body.namespace, body.challengeId);
+      options.steward.renew(str(req.body, "namespace"), str(req.body, "challengeId"));
       res.json({ renewed: true });
     } catch (error) { sendError(res, error); }
   });
@@ -88,8 +105,7 @@ export function createStewardServer(options: StewardServerOptions) {
   });
   app.post("/-/claims/domain-change-freezes", (req, res) => {
     try {
-      const body = req.body as { namespace: string; evidenceRef: string };
-      options.steward.freezeForDomainChange(body.namespace, body.evidenceRef);
+      options.steward.freezeForDomainChange(str(req.body, "namespace"), str(req.body, "evidenceRef"));
       res.json({ frozen: true });
     } catch (error) { sendError(res, error); }
   });

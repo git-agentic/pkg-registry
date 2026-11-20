@@ -23,6 +23,10 @@ SENTINEL_CLAIM_CORPUS_RELEASE_DIR=./steward/release \
 sentinel-steward
 ```
 
+The control plane listens on `127.0.0.1:4874` by default. Set
+`SENTINEL_STEWARD_HOST` (and `SENTINEL_STEWARD_PORT`) to expose it, ideally
+behind TLS.
+
 See the [Sentinel repository](https://github.com/git-agentic/pkg-registry)
 for the claim lifecycle, corpus format, and threat model.
 

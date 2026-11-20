@@ -50,5 +50,7 @@ function scoreCell(p: TreePackageRow): string {
 function escapePipe(s: string): string {
   // Escape backslashes FIRST, else an input `\|` would become `\\|` — a literal
   // backslash followed by an unescaped pipe that breaks out of the table cell.
-  return s.replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\n/g, " ");
+  // Backtick, `<`, `[`, `]` block code/HTML/link/image syntax; `@` gets a zero-width
+  // space so a finding cannot @mention (and notify) a user.
+  return s.replace(/\\/g, "\\\\").replace(/[|`<[\]]/g, "\\$&").replace(/@/g, "@\u200b").replace(/\r?\n|\r/g, " ");
 }

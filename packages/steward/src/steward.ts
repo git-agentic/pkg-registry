@@ -79,18 +79,29 @@ function isCanonicalInstant(value: unknown): value is string {
   return typeof value === "string" && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
 }
 
+/** A challenge is a short-lived proof: every use of it must fall inside this window of its issuance. */
+const CHALLENGE_TTL = 30 * DAY;
+
+function evidenceTier(evidence: UpstreamClaimEvidence, domain: string): GrandfatherTier {
+  return evidence.kind === "absent" || evidence.kind === "long-dead-placeholder" ? 3 : corroboratesClaimDomain(evidence.packument, domain) ? 1 : 2;
+}
+
 function renewalDue(verifiedAt: string): string {
   const date = new Date(verifiedAt);
   date.setUTCFullYear(date.getUTCFullYear() + 1);
   return date.toISOString();
 }
 
-export function transferRequestBytes(input: { namespace: string; targetDomain: string; targetChallengeId: string; targetClaimantPublicKey: string }): Buffer {
-  return Buffer.from(JSON.stringify({ schema: 1, ...input }));
+/** `currentChallengeId` binds the signature to the claim's current proof, so it dies on any renewal or transfer. */
+export interface TransferRequest { namespace: string; targetDomain: string; targetChallengeId: string; targetClaimantPublicKey: string; currentChallengeId: string }
+
+export function transferRequestBytes(input: TransferRequest): Buffer {
+  const { namespace, targetDomain, targetChallengeId, targetClaimantPublicKey, currentChallengeId } = input;
+  return Buffer.from(JSON.stringify({ schema: 1, namespace, targetDomain, targetChallengeId, targetClaimantPublicKey, currentChallengeId }));
 }
 
 export function signTransferRequest(
-  input: { namespace: string; targetDomain: string; targetChallengeId: string; targetClaimantPublicKey: string },
+  input: TransferRequest,
   privateKeyPem: string,
 ): string {
   return edSign(null, transferRequestBytes(input), createPrivateKey(privateKeyPem)).toString("base64");
@@ -120,17 +131,13 @@ function directUrls(packument: unknown): string[] {
 
 /** Pure Tier-1 linkage check over upstream-owned metadata and the challenged domain. */
 export function corroboratesClaimDomain(upstreamPackument: unknown, claimDomain: string): boolean {
-  const org = claimDomain.split(".")[0]?.replaceAll("-", "").toLowerCase();
   return directUrls(upstreamPackument).some((raw) => {
     try {
       const normalized = raw.replace(/^git\+/, "").replace(/^git:\/\//, "https://");
       const url = new URL(normalized);
       const host = url.hostname.toLowerCase();
-      if (host === claimDomain || host.endsWith(`.${claimDomain}`)) return true;
-      if (host === "github.com" || host === "gitlab.com") {
-        return Boolean(org) && (url.pathname.split("/").filter(Boolean)[0]?.replaceAll("-", "").toLowerCase() === org);
-      }
-      return false;
+      // Only a host at or under the claimed domain counts: a same-named GitHub/GitLab org is free to register.
+      return host === claimDomain || host.endsWith(`.${claimDomain}`);
     } catch { return false; }
   });
 }
@@ -170,39 +177,46 @@ export class ClaimSteward {
     const txtValue = `sentinel-claim=${id}.${randomBytes(18).toString("base64url")}`;
     const evidence = await this.lookupUpstream(input.namespace);
     const upstreamPackument = evidence.kind === "absent" ? null : evidence.packument;
-    const tier: GrandfatherTier = evidence.kind === "absent" || evidence.kind === "long-dead-placeholder"
-      ? 3
-      : corroboratesClaimDomain(evidence.packument, input.domain) ? 1 : 2;
-    this.applications.set(id, { ...input, tier, upstreamPackument, id, domain: input.domain, txtValue, issuedAt: iso(this.now()) });
+    const tier = evidenceTier(evidence, input.domain);
+    // Copy known fields only: spreading the request body would let a caller set `verifiedAt` and skip the DNS proof.
+    const { namespace, domain, claimantPublicKey, trustedPublishers } = input;
+    this.applications.set(id, { namespace, domain, claimantPublicKey, ...(trustedPublishers ? { trustedPublishers } : {}),
+      tier, upstreamPackument, id, txtValue, issuedAt: iso(this.now()) });
     this.persist();
     return { id, domain: input.domain, txtValue };
   }
 
   async verifyChallenge(id: string, resolveTxt: TxtResolver): Promise<boolean> {
     const application = this.application(id);
+    this.assertFresh(application);
     const records = await resolveTxt(application.domain);
     const passed = records.some((parts) => parts.join("") === application.txtValue);
     if (passed) { application.verifiedAt = iso(this.now()); this.persist(); }
     return passed;
   }
 
-  approve(id: string, options: { evidenceRef?: string } = {}): void {
+  async approve(id: string, options: { evidenceRef?: unknown } = {}): Promise<void> {
     const application = this.application(id);
+    this.assertFresh(application);
     if (!application.verifiedAt) throw new Error("claim cannot be approved without a passed challenge");
+    const { evidenceRef } = options;
+    if (evidenceRef !== undefined && (typeof evidenceRef !== "string" || !evidenceRef)) throw new Error("evidenceRef must be a non-empty string");
+    // The tier fixed at issuance can be stale (the name may have been taken since): recompute from fresh upstream evidence.
+    const evidence = await this.lookupUpstream(application.namespace);
+    // No awaits below, so these checks and the writes are atomic with respect to other requests.
+    application.tier = evidenceTier(evidence, application.domain);
+    application.upstreamPackument = evidence.kind === "absent" ? null : evidence.packument;
     if (this.claims.has(application.namespace) || this.pendingGrants.has(application.namespace)) {
       throw new Error(`namespace overlap: ${application.namespace} already claimed or pending`);
-    }
-    if (application.tier === 1 && !corroboratesClaimDomain(application.upstreamPackument, application.domain)) {
-      throw new Error("Tier-1 claim lacks corroborating upstream metadata");
     }
     const claim = parseClaimCorpus(Buffer.from(JSON.stringify({
       schema: 1, version: "steward-approval", issuedAt: iso(this.now()), claims: [this.claimFrom(application)],
     }))).claims[0]!;
     if (application.tier === 2) {
-      if (!options.evidenceRef) throw new Error("Tier-2 claim requires adjudicated evidence");
+      if (!evidenceRef) throw new Error("Tier-2 claim requires adjudicated evidence");
       const announcedAt = iso(this.now());
       this.pendingGrants.set(application.namespace, {
-        claim, announcedAt, effectiveAt: iso(this.now() + 30 * DAY), evidenceRef: options.evidenceRef,
+        claim, announcedAt, effectiveAt: iso(this.now() + 30 * DAY), evidenceRef,
       });
       this.persist();
       return;
@@ -213,10 +227,13 @@ export class ClaimSteward {
 
   requestTransfer(namespace: string, targetChallengeId: string, oldClaimantSignature: string): void {
     const claim = this.claim(namespace);
+    if (claim.status !== "active" || claim.pending) throw new Error("transfer requires an active claim with no pending change");
     const target = this.application(targetChallengeId);
+    this.assertFresh(target);
     if (!target.verifiedAt) throw new Error("transfer target requires a passed challenge");
     if (target.namespace !== namespace) throw new Error("transfer challenge namespace mismatch");
-    const request = { namespace, targetDomain: target.domain, targetChallengeId, targetClaimantPublicKey: target.claimantPublicKey };
+    const request = { namespace, targetDomain: target.domain, targetChallengeId, targetClaimantPublicKey: target.claimantPublicKey,
+      currentChallengeId: claim.challenge.id };
     let authorized = false;
     try {
       authorized = edVerify(null, transferRequestBytes(request), createPublicKey(claim.claimantPublicKey), Buffer.from(oldClaimantSignature, "base64"));
@@ -235,13 +252,14 @@ export class ClaimSteward {
     this.persist();
   }
 
-  ruleDispute(namespace: string, targetChallengeId: string, evidenceRef: string): void {
+  ruleDispute(namespace: string, targetChallengeId: string, evidenceRef: unknown): void {
     const claim = this.claim(namespace);
     const target = this.application(targetChallengeId);
+    this.assertFresh(target);
     if (claim.status !== "disputed") throw new Error("claim is not disputed");
     if (!target.verifiedAt) throw new Error("ruling target requires a passed challenge");
     if (target.namespace !== namespace) throw new Error("ruling challenge namespace mismatch");
-    if (!evidenceRef) throw new Error("dispute ruling requires evidence");
+    if (typeof evidenceRef !== "string" || !evidenceRef) throw new Error("dispute ruling requires evidence");
     const announcedAt = iso(this.now());
     claim.pending = { kind: "dispute-ruling", announcedAt, effectiveAt: iso(this.now() + 30 * DAY),
       targetDomain: target.domain, targetClaimantPublicKey: target.claimantPublicKey,
@@ -252,8 +270,13 @@ export class ClaimSteward {
   renew(namespace: string, challengeId: string): void {
     const claim = this.claim(namespace);
     const application = this.application(challengeId);
+    if (claim.status === "disputed") throw new Error("claim is disputed: renewal cannot clear a dispute");
     if (application.namespace !== namespace) throw new Error("renewal challenge namespace mismatch");
+    this.assertFresh(application);
     if (!application.verifiedAt || application.domain !== claim.domain) throw new Error("renewal requires a passed challenge by the same domain");
+    if (Date.parse(application.verifiedAt) <= Date.parse(claim.challenge.verifiedAt)) {
+      throw new Error("renewal requires a fresh challenge verified after the claim's current proof");
+    }
     claim.challenge = this.proof(application);
     claim.renewalDueAt = renewalDue(application.verifiedAt);
     claim.status = "active";
@@ -265,8 +288,8 @@ export class ClaimSteward {
     this.persist();
   }
 
-  freezeForDomainChange(namespace: string, evidenceRef: string): void {
-    if (!evidenceRef) throw new Error("domain-change freeze requires evidence");
+  freezeForDomainChange(namespace: string, evidenceRef: unknown): void {
+    if (typeof evidenceRef !== "string" || !evidenceRef) throw new Error("domain-change freeze requires evidence");
     this.claim(namespace).status = "frozen";
     this.persist();
   }
@@ -338,6 +361,7 @@ export class ClaimSteward {
     for (const claim of this.claims.values()) {
       const pending = claim.pending;
       if (!pending || Date.parse(pending.effectiveAt) > this.now()) continue;
+      if (pending.kind === "transfer" && claim.status === "disputed") continue; // only a dispute ruling may move a disputed claim
       claim.domain = pending.targetDomain!;
       claim.claimantPublicKey = pending.targetClaimantPublicKey!;
       claim.challenge = pending.challenge!;
@@ -361,6 +385,10 @@ export class ClaimSteward {
 
   private proof(application: Application): DnsChallengeProof {
     return { method: "dns-txt", id: application.id, verifiedAt: application.verifiedAt! };
+  }
+
+  private assertFresh(application: Application): void {
+    if (this.now() - Date.parse(application.issuedAt) > CHALLENGE_TTL) throw new Error(`challenge ${application.id} expired`);
   }
 
   private application(id: string): Application {
