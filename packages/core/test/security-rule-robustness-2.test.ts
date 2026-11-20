@@ -166,9 +166,13 @@ describe("extract: backslash entry paths", () => {
   const EVIL = JSON.stringify({ name: "demo", version: "1.0.0", scripts: { postinstall: CURL_SH } });
   const meta = { name: "demo", version: "1.0.0", author: null, maintainers: [] as string[], license: null, hasInstallScripts: false };
 
-  test("`package\\package.json` is the root manifest", async () => {
+  // Round-1 review: POSIX node-tar keeps `\` as a filename character, so the retained path
+  // follows that reading; the Windows reading still counts toward the root manifest.
+  test("`package\\package.json` is counted as a root manifest (Windows reading) but not retained as one (POSIX reading)", async () => {
     const r = await extractTarball(tarBytes([{ name: "package\\package.json", data: EVIL }]));
-    assert.deepEqual(r.files.map((f) => f.path), ["package/package.json"]);
+    assert.deepEqual(r.files.map((f) => f.path), []);
+    assert.equal(r.packageManifestEntryCount, 1);
+    assert.ok(r.manifestConfusion.length > 0);
   });
 
   test("a backslash duplicate of the manifest triggers manifest-confusion", async () => {

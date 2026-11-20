@@ -13,7 +13,9 @@ export interface LoaderPrimitive {
   readTarget?: string;
 }
 export interface LoaderBoosters { tempOrHidden: boolean; chmod: boolean; detached: boolean; unref: boolean; moduleLoad: boolean }
-export interface LoaderAnalysis { primitives: LoaderPrimitive[]; correlated: boolean; boosters: LoaderBoosters; parseFailed: boolean }
+export interface LoaderAnalysis { primitives: LoaderPrimitive[]; correlated: boolean; boosters: LoaderBoosters; parseFailed: boolean;
+  /** Stack overflow while parsing or walking (hostile nesting), not a syntax error: the caller must not downgrade a regex chain hit. */
+  walkOverflow?: boolean }
 
 /** Bounded, deterministic taint tags a variable can carry. */
 type Tag = "read" | "decoded" | "written-path";
@@ -79,8 +81,8 @@ export function analyzeLoaderChain(source: string, opts: { moduleLoadReachable?:
   } catch {
     try {
       ast = acorn.parse(source, { ecmaVersion: "latest", sourceType: "script", allowReturnOutsideFunction: true, allowHashBang: true });
-    } catch {
-      return { primitives: [], correlated: false, boosters: { tempOrHidden: false, chmod: false, detached: false, unref: false, moduleLoad: false }, parseFailed: true };
+    } catch (e) {
+      return { primitives: [], correlated: false, boosters: { tempOrHidden: false, chmod: false, detached: false, unref: false, moduleLoad: false }, parseFailed: true, walkOverflow: e instanceof RangeError };
     }
   }
 
@@ -474,8 +476,8 @@ export function analyzeLoaderChain(source: string, opts: { moduleLoadReachable?:
     },
   });
   boosters.moduleLoad = Boolean(opts.moduleLoadReachable) && topLevelExecution(ast);
-  } catch {
-    return { primitives: [], correlated: false, boosters: { tempOrHidden: false, chmod: false, detached: false, unref: false, moduleLoad: false }, parseFailed: true };
+  } catch (e) {
+    return { primitives: [], correlated: false, boosters: { tempOrHidden: false, chmod: false, detached: false, unref: false, moduleLoad: false }, parseFailed: true, walkOverflow: e instanceof RangeError };
   }
 
   return { primitives, correlated, boosters, parseFailed: false };

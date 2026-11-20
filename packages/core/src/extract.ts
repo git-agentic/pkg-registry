@@ -119,8 +119,11 @@ export async function extractTarball(
       return;
     }
     // `null` ⇒ npm would not extract it (escapes the root / no name): never retained.
+    // The POSIX reading (`\` is a filename character, as node-tar does on Linux/macOS) is the retained path.
     const normalizedPath = npmPath(entry.path);
-    const isManifest = normalizedPath?.toLowerCase() === "package/package.json";
+    // Windows clients read `\` as a separator: an entry lands on the root manifest under EITHER reading.
+    const winPath = npmPath(entry.path.replace(/\\/g, "/"));
+    const isManifest = [normalizedPath, winPath].some((x) => x?.toLowerCase() === "package/package.json");
     if (isManifest) {
       packageManifestEntryCount += 1;
       if (normalizedPath !== "package/package.json") manifestVariant = true;
@@ -295,9 +298,9 @@ export function integrityOf(tgz: Buffer): string {
  */
 function npmPath(p: string): string | null {
   // Leading slashes left by `package//x` are stripped (node-tar's stripAbsolutePath).
-  // Windows npm clients treat `\` as a separator (`package\package.json` lands at package/package.json).
-  const rest = posix.normalize(p.replace(/\\/g, "/").split("/").slice(1).join("/").replace(/^\/+/, ""));
-  if (rest === "." || rest === ".." || rest.startsWith("../")) return null;
+  // Trailing separators are dropped by the destination resolution (`package.json/` installs as `package.json`).
+  const rest = posix.normalize(p.split("/").slice(1).join("/").replace(/^\/+/, "")).replace(/\/+$/, "");
+  if (rest === "" || rest === "." || rest === ".." || rest.startsWith("../")) return null;
   return `package/${rest}`;
 }
 
