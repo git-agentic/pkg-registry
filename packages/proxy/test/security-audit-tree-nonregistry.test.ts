@@ -168,4 +168,11 @@ describe("F19: audit-tree blocks non-registry coordinates without fetching anyth
     assert.equal(out.packages[0]!.status, "block");
     assert.ok(!/s3cr3t|codeload|tar\.gz/.test(JSON.stringify(out)), JSON.stringify(out));
   });
+
+  test("a non-string integrity is a 400, not a silently skipped check", async () => {
+    for (const integrity of [123, true, ["sha512-x"], { a: 1 }, null]) {
+      const res = await fetch(`${base}/-/audit-tree`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ packages: [{ name: "leftpad-lite", version: "1.0.0", integrity }] }) });
+      assert.equal(res.status, 400, JSON.stringify(integrity));
+    }
+  });
 });

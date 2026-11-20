@@ -223,6 +223,10 @@ function pnpmStripKey(key: string): string {
 function pnpmNameVersion(key: string, slashStyle: boolean): [string, string] | null {
   const k = pnpmStripKey(key);
   if (slashStyle) {
+    // `/name/1.0.0_peer@2.0.0`: cut the version at the first `_` (the peer suffix, which may itself hold `/`).
+    // A semver token has no `/` or `_`, so match name + `/x.y...` and ignore the rest; URL keys fall through.
+    const m = /^(.+?)\/(\d+\.[^/_]*)(?:_.*)?$/.exec(k);
+    if (m) return [m[1]!, m[2]!];
     const at = k.lastIndexOf("/");
     if (at <= 0) return null;
     return [k.slice(0, at), k.slice(at + 1)];

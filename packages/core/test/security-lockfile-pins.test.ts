@@ -163,4 +163,14 @@ describe("name and version are sanitized so source text never reaches the coordi
     assert.ok(cs[0]!.nonRegistry);
     assert.ok(!/other/.test(`${cs[0]!.name}@${cs[0]!.version}`));
   });
+
+  test("pnpm v5: peer-dependency suffix keys are normal registry coordinates (round 5, item 1)", () => {
+    const raw = `lockfileVersion: 5.4\n\npackages:\n\n  /p/1.0.0_peer@2.0.0:\n    resolution: {integrity: sha512-P==}\n\n  /@s/q/1.0.0_a@1+b@2:\n    resolution: {integrity: sha512-Q==}\n\n  /@s/2fa/3.1.0_@x/y@1:\n    resolution: {integrity: sha512-F==}\n\n  /my_pkg/1.2.3:\n    resolution: {integrity: sha512-M==}\n`;
+    const cs = parsePnpmLock(raw);
+    const by = Object.fromEntries(cs.map((c) => [`${c.name}@${c.version}`, c]));
+    assert.deepEqual(Object.keys(by).sort(), ["@s/2fa@3.1.0", "@s/q@1.0.0", "my_pkg@1.2.3", "p@1.0.0"]);
+    assert.equal(by["p@1.0.0"]!.integrity, "sha512-P==");
+    assert.equal(by["@s/q@1.0.0"]!.integrity, "sha512-Q==");
+    for (const c of cs) assert.equal(c.nonRegistry, undefined, `${c.name}@${c.version}`);
+  });
 });
