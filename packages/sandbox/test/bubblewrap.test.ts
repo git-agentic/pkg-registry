@@ -31,6 +31,14 @@ test("Linux CI must actually run bwrap enforcement (no silent skip)", {
   assert.ok(bwrapWorks, "bwrap cannot create user namespaces in CI — the Linux enforcement tests would silently skip. Check the ci.yml userns mitigation (kernel.apparmor_restrict_unprivileged_userns).");
 });
 
+// Diagnostics for an intermittent CI failure: print bwrap's own error whenever a run exits non-zero.
+const realRun = BubblewrapSandbox.prototype.run;
+BubblewrapSandbox.prototype.run = function (this: BubblewrapSandbox, ...a: Parameters<BubblewrapSandbox["run"]>) {
+  const r = realRun.apply(this, a);
+  if (r.exitCode !== 0 && /bwrap:/.test(r.stderr ?? "")) console.error(`[bwrap-diag] exit ${r.exitCode}: ${r.stderr}`);
+  return r;
+};
+
 describe("BubblewrapSandbox enforcement", { skip }, () => {
   test("a denied credential read leaves the secret unobtained (EFFECT)", () => {
     const home = realpathSync(mkdtempSync(join(tmpdir(), "bw-read-")));
