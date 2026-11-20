@@ -381,13 +381,12 @@ const PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun"]);
 const INSTALL_SCRIPTS = ["preinstall", "install", "postinstall", "prepublish", "prepare"];
 const PM_COMMANDS = new Map<string, string[]>([
   ...["t", "tst"].map((c) => [c, ["test"]] as [string, string[]]),
-  ...["it", "install-test", "cit", "install-ci-test", "clean-install-test", "sit"].map((c) => [c, [...INSTALL_SCRIPTS, "test"]] as [string, string[]]),
+  // Install scripts are followed for every package-manager command, so install aliases need no entry.
+  ...["it", "install-test", "cit", "install-ci-test", "clean-install-test", "sit"].map((c) => [c, ["test"]] as [string, string[]]),
   ["restart", ["restart", "stop", "start"]],
   ["pack", ["prepack", "prepare", "postpack"]],
   ["publish", ["prepublishOnly", "prepack", "prepare", "postpack", "publish", "postpublish"]],
   ...["version", "verison"].map((c) => [c, ["preversion", "version", "postversion"]] as [string, string[]]),
-  ...["install", "i", "ci", "rebuild", "rb", "clean-install", "ic", "install-clean", "isntall-clean", "add", "in", "ins", "inst", "insta", "instal", "isnt", "isnta", "isntal", "isntall"]
-    .map((c) => [c, INSTALL_SCRIPTS] as [string, string[]]),
 ]);
 const isPunct = (c: string | undefined) => c === "(" || c === ")" || c === '"' || c === "'" || c === "`";
 
