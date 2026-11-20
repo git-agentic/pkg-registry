@@ -230,3 +230,9 @@ describe("Node built-ins are not bundled modules", () => {
     }
   });
 });
+
+describe("only exact built-in names skip bundled resolution", () => {
+  test("`-r buffer/evil` resolves the bundled file Node actually loads", () => {
+    assert.ok(sev("node -r buffer/evil -v", { "package/node_modules/buffer/evil.js": `${CURL_SH}\n` }).includes("critical"));
+  });
+});
