@@ -71,20 +71,25 @@ test matrix, one clean-checkout build, pack, packed-artifact smoke test, and
 an uploaded artifact set: tarballs, `SHA256SUMS`, CycloneDX SBOM,
 `release-manifest.json`, smoke results. No publication.
 
-**Stage B — publish** (`publish` job): requires `publish=true` on the
-dispatch **and** approval of the protected `npm-release` GitHub environment.
-It downloads Stage A's exact artifacts, verifies checksums, verifies the tag
-points at the tested commit, verifies every tarball declares the release
-version, refuses to run if any target version already exists, publishes in
-dependency order with `--access public --tag alpha --provenance`, verifies
-each package via `npm view` (version + dist-tag), installs the published
-packages from the public registry in a clean project, and only then creates
-the GitHub prerelease with the artifacts attached.
+**Stage B — publish** (`publish`, `verify-registry-install` and `github-release`
+jobs): requires `publish=true` on the dispatch **and** approval of the protected
+`npm-release` GitHub environment. The `publish` job downloads Stage A's exact
+artifacts, verifies checksums, verifies the tag points at the tested commit,
+verifies every tarball declares the release version, refuses to run if any
+target version already exists, publishes in dependency order with
+`--access public --tag alpha --provenance`, and verifies each package via
+`npm view` (version + dist-tag). The `verify-registry-install` job then installs
+the published packages from the public registry in a clean project. Only after
+that does the `github-release` job create the GitHub prerelease with the
+artifacts attached.
 
-Least privilege: top-level `permissions: {}`; the publish job alone gets
-`contents: write` (release creation) and `id-token: write` (provenance).
-`pull_request_target` is never used and no publish credential is reachable
-from a PR-triggered workflow.
+Least privilege: top-level `permissions: {}`. The `publish` job has only
+`contents: read` and `id-token: write` (provenance). The
+`verify-registry-install` job has `permissions: {}`, because npm runs freshly
+resolved third-party code there with no lockfile. The `github-release` job alone
+has `contents: write`. Checkouts use `persist-credentials: false`, and `ci.yml`
+runs with a read-only token. `pull_request_target` is never used and no publish
+credential is reachable from a PR-triggered workflow.
 
 ## Trusted publishing
 

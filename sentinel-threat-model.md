@@ -229,7 +229,15 @@ cap returning 413 instead of silently truncating
 audits of the same coordinate share one pipeline; and an opt-in token-bucket
 rate limiter (429 + `Retry-After`) on the expensive endpoints, keyed by
 socket address, never `X-Forwarded-For`. Install-gate paths are never
-rate-limited (ADR-0037).
+rate-limited (ADR-0037). ADR-0056 adds: compatibility-route bodies are capped at
+8 MiB (was 128 MiB) and sit behind the same rate gate; the in-memory `AuditStore`
+keeps at most 20,000 entries and evicts the oldest; nested compression
+(gzip(gzip(tar)), raw zstd) is refused as `resource-abuse` instead of
+decompressing past the unpack cap; policy globs match in linear time; and rules
+bound or linearize their regexes, so a hostile file cannot stall the sync gate.
+The proxy and steward bind `127.0.0.1` unless `SENTINEL_HOST` /
+`SENTINEL_STEWARD_HOST` is set, so a default start is not reachable from the
+network.
 
 ### 3.8 An agent holding a control-plane token
 
@@ -250,7 +258,9 @@ bypass (ADR-0023).
 A script whose static audit passed (or was approved) attempts credential
 reads, persistence writes, or exfiltration at install time. Writes are
 deny-by-default: a blanket deny plus a fixed, non-operator-configurable write
-floor (cwd, temp dirs, `/dev`, node build caches); approved `filesystem:`
+floor (cwd, temp dirs, `/dev`, `~/.npm/_logs`); the node-gyp header caches are
+read-only, and with a `network` approval `npm_config_devdir` points at a per-run
+directory outside every write floor (ADR-0056); approved `filesystem:`
 Grants are directional — a Grant covers exactly its own subtree, never an
 ancestor — and pathological Grant targets (`*`, `/`, `..` segments) are
 fail-closed rejected (ADR-0038). `$HOME` reads are deny-by-default behind a
@@ -264,6 +274,27 @@ allowlist, so an escaped-detection script still does not see
 `SSH_AUTH_SOCK`, `AWS_*`, or `NODE_AUTH_TOKEN` (ADR-0017/0019). A confirmed
 runtime violation revokes any standing approval and quarantines the integrity
 at serve time (ADR-0023).
+
+ADR-0056 closes several escape paths. The Seatbelt profile is passed inline
+(`sandbox-exec -p`), so no profile file sits in the writable temp dir for a
+lingering process to rewrite. bwrap adds `--unshare-pid --die-with-parent
+--new-session` and masks local IPC whether or not network is approved, because
+`--unshare-net` does not cover pathname unix sockets: the session bus, the
+docker, containerd, podman and crio sockets, the system dbus socket, and
+`/tmp/.X11-unix` and `/tmp/ssh-*` when present. `launchctl`, `open`,
+`shortcuts`, `automator`, `systemd-run`, `busctl`, `dbus-send` and `gdbus`
+join the exec carve-out, since each hands work to a process outside the sandbox.
+A project root of `/` no longer widens read or exec rules, relative paths are
+resolved first, `npm_config_*` values with URL credentials are scrubbed, and
+violation text loses control characters before it is reported or printed.
+
+Enforced installs no longer trust package-declared identity. A dependency
+script runs only when `npm_package_integrity` matches the audited integrity,
+so a git, URL or file dependency cannot borrow another package's approvals by
+declaring its name and version. Root detection uses `SENTINEL_ROOT`, which
+`sentinel install --enforce` sets to the realpath of the install cwd and which
+fails closed when missing; `INIT_CWD` is not trusted because a nested npm (a git
+dependency's `prepare`) resets it.
 
 **Enforcement scope — process execution: macOS enforces the floor + carve-out;
 Linux enforces the floor where Landlock + the from-source helper are available
@@ -320,7 +351,8 @@ Stated plainly. Each is a deliberate, recorded trade-off, not an oversight.
   kernel-denied (ADR-0042), with a recorded residual: a package may exec a
   binary written into its own project tree (floor decision) — the same
   residual now applies on a Landlock-enforced Linux host. On Linux (Phase 29,
-  ADR-0043) the exfil-capable tools (curl, wget, nc, …) are individually
+  ADR-0043) the exfil-capable tools (curl, wget, nc, and the launchd and D-Bus
+  helpers added by ADR-0056, …) are individually
   exec-denied via `/dev/null` masking regardless of floor availability; Phase 2
   (Landlock, ADR-0044) additionally kernel-denies a dropped binary outside the
   floor on hosts where Landlock + a compiled `cc` toolchain are available
@@ -334,6 +366,30 @@ Stated plainly. Each is a deliberate, recorded trade-off, not an oversight.
   cross-platform floor now exists; see §3.9;
   [issue #8](https://github.com/git-agentic/pkg-registry/issues/8) is closed
   with the availability caveat documented above.
+- **Exec carve-outs match paths, not services (ADR-0056).** The carve-out denies
+  `launchctl`, `open`, `shortcuts`, `automator`, `systemd-run`, `busctl`,
+  `dbus-send` and `gdbus` by path. The Seatbelt profile does not deny
+  LaunchServices mach lookups, so a process that reaches those services without
+  one of the listed binaries is not stopped by the carve-out. macOS itself kills
+  a copied `launchctl`.
+- **A sandboxed process can outlive its script on macOS (ADR-0056).** There is
+  no process-group kill. Containment still holds while it runs, but it is no
+  longer tied to the install's lifetime. On Linux `--die-with-parent` covers it.
+- **Enforced installs reject sha1-only packages (ADR-0056).** The integrity
+  binding compares per algorithm. A package npm records only as sha1 cannot run
+  an enforced script, and npm older than 7, which does not set
+  `npm_package_integrity`, fails closed.
+- **A policy identity requirement on `builder` alone is weak (ADR-0056).**
+  `builder` is a signer-written predicate claim. A signed policy
+  `provenanceIdentities` entry that constrains only `builder` can be met by a
+  signer-written value. Constrain `repository` or `workflowRef`, which are
+  certificate-bound, as well.
+- **Registry-signature key expiry is not checked (ADR-0056).** It would need the
+  publish time, and the wall clock never enters scoring. Signatures whose keyids
+  match no trusted key count as `unsigned`, not `unknown`.
+- **Patch overlays are not audited (ADR-0056).** Yarn berry `patch:` entries are
+  skipped in `audit-tree`; the patched registry base is audited, the patch is
+  not.
 - **A swallowed denial evades telemetry, not containment.** The runtime
   violation sensor only sees denials that surface as process failure. A
   script that catches the sandbox's denial and exits 0 is invisible to
@@ -361,8 +417,8 @@ Stated plainly. Each is a deliberate, recorded trade-off, not an oversight.
   `unknown`), not a crash or a block (ADR-0022/0037); note the deliberate
   counterweight: a *present* bundle that fails verification is `invalid` and
   gates fail-closed (ADR-0022).
-- **Control-plane reads are open by design.** Auth gates only the six
-  mutating routes; every read — audits, manifests, history, metrics,
+- **Control-plane reads are open by design.** Auth gates only the
+  mutating routes (approvals, violations, retraction, import, publish); every read — audits, manifests, history, metrics,
   audit-tree — is unauthenticated in every mode, preserving the
   transparent-proxy posture. An org that considers its audit history
   sensitive must control network access to the proxy itself (ADR-0025/0028).
@@ -418,7 +474,11 @@ if the payload also scores clean, which is the same heuristics-are-signal
 residual as §4, not a new one. The implemented Phase 32 retraction window (ADR-0047)
 gives the legitimate owner an operator-side recovery path that does not
 require re-taking the compromised credential — retraction is an instance-side
-act, deliberately unlike Go's publish-a-new-version model. Residuals: a
+act, deliberately unlike Go's publish-a-new-version model. Trusted-publisher matching binds to what the Fulcio certificate
+attests: the source repository and ref come from the certificate extensions, not
+from the signer-written SLSA predicate, and an enrollment authorizes only when
+it constrains `repository` or `workflowRef` and those match; a builder match
+alone never authorizes (ADR-0056). Residuals: a
 clean-scoring backdoor published with valid credentials (unchanged from §4),
 and provenance that *validly* attests a compromised CI run — the TanStack
 May-2026 pattern; the design treats OIDC as publish-auth precisely because it
@@ -458,8 +518,12 @@ challenge trivially, so **domain control alone never grants a contested
 name**. The design's control is the three-tier grandfathering rule, derived
 from an authoritative upstream lookup owned by the steward rather than
 applicant input (ADR-0046): Tier-1 auto-grant requires the *upstream package's
-own metadata* to corroborate the claimant's domain — a pure function the
-attacker cannot satisfy without already controlling the upstream package; Tier-2 (an active
+own metadata* (a homepage or repository host at or under the claimed domain) to
+corroborate the claimant's domain — a pure function the attacker cannot satisfy
+without already controlling the upstream package. A same-named GitHub or GitLab
+organization no longer counts as evidence, since anyone can register one
+(ADR-0056); such claims fall to Tier 2. Challenges expire 30 days after issue and
+approval recomputes the tier from a fresh upstream lookup; Tier-2 (an active
 unlinked upstream publisher — the squatting-dispute tier) is refused by
 default and requires PEP-541-grade evidence plus the 30-day timelocked entry;
 brand-dispute adjudication is categorically refused, closing the

@@ -107,7 +107,8 @@ node packages/cli/dist/index.js install lodash
 | Var | Default | Meaning |
 |---|---|---|
 | `SENTINEL_UPSTREAM` | `npm` | `npm` (real registry) or `fixtures[:dir]` (local, hermetic) |
-| `SENTINEL_POLICY` | `observe` | `observe` = audit + serve + headers; `block` = `403` on a block verdict |
+| `SENTINEL_POLICY` | `observe` | exactly `observe` (audit + serve + headers) or `block` (`403` on a block verdict); any other value, including a case variant or an empty string, is FATAL at startup |
+| `SENTINEL_HOST` | `127.0.0.1` | bind address. The default is loopback only; set `0.0.0.0` (or a specific interface) for a network deployment, together with `SENTINEL_PUBLIC_BASE_URL`. An empty value is FATAL |
 | `SENTINEL_PORT` | `4873` | proxy port (verdaccio's conventional local-registry port) |
 | `SENTINEL_REGISTRY` | `https://registry.npmjs.org` | upstream registry when in npm mode |
 | `SENTINEL_STORE` | _(memory only)_ | path to a JSON file to persist the audit log |
@@ -178,7 +179,10 @@ Claim entries carry their namespace, organizational domain, claimant transfer
 key, passed DNS challenge, renewal deadline, lifecycle status, and optional
 trusted-publisher identities.
 Frozen/disputed claims keep serving stored bytes but reject new publishes;
-trusted-publisher claims require a matching offline-verified SLSA identity.
+trusted-publisher claims require a matching offline-verified SLSA identity. The
+repository and ref in that identity come from the Fulcio certificate, not from
+the signer-written SLSA predicate, and an enrollment must constrain `repository`
+or `workflowRef`; a builder match alone never authorizes.
 
 Run the separate steward control plane with durable state and a corpus-signing
 key (all four variables are required):
@@ -194,7 +198,12 @@ npm run steward
 The authenticated `/-/claims/*` API issues and verifies exact-apex DNS TXT
 challenges, derives the grandfather tier from steward-fetched upstream metadata,
 tracks renewal/freeze, and announces signed transfers or dispute rulings for 30
-days. The steward control plane is always rate-limited before authentication;
+days. Tier 1 auto-grant needs the upstream homepage or repository host to be at
+or under the claimed domain; a same-named GitHub or GitLab organization is not
+evidence, so such claims land in Tier 2 (evidence plus the 30-day timelock).
+Challenges expire 30 days after issue, and the tier is recomputed from a fresh
+upstream lookup at approval. The steward listens on `127.0.0.1:4874` by default;
+set `SENTINEL_STEWARD_HOST` (and `SENTINEL_STEWARD_PORT`) to expose it. The steward control plane is always rate-limited before authentication;
 the proxy publish route has a separate mandatory 60-requests/minute backstop.
 A release atomically publishes
 `<release-dir>/<release-id>/{claims.json,claims.json.sig,advisories.json,advisories.json.sig}` as one directory; the
@@ -211,7 +220,8 @@ source.
 Policy data `"retraction": { "maxAgeHours": 72, "maxDownloads": 1000 }`
 sets two exclusive bounds. `POST /-/retractions` accepts
 `{ "name", "version", "reason" }`, where reason is `security`, `withdrawn`,
-`broken`, or `legal`; with role auth enabled it requires an `operator` token.
+`broken`, or `legal`; with role auth enabled it requires an `operator` token, and in
+open mode it requires a publish token (always `401` when none are configured).
 Retraction succeeds only while both age and cumulative downloads are below
 their limits. A closed window returns 403 with the complete window state and
 distinct `retraction-age-limit-exceeded` /
@@ -241,12 +251,20 @@ Native packages expose full npm packuments (including `time` and `_rev`),
 abbreviated/corgi negotiation, dist-tags, legacy login/whoami, metadata-only
 deprecation, and npm/pnpm's revision-based unpublish flow. Unpublish maps to the
 same time/download-window retraction above; it never raw-deletes bytes.
+
+The selected read-only npm routes (search, advisories/bulk, keys, attestations,
+web login) are forwarded byte-for-byte, but without the client's `authorization`,
+`cookie` or `npm-otp` headers; only `POST /-/v1/login`, npm's own web login,
+keeps them. Request bodies are capped at 8 MiB and the routes honour the opt-in
+rate limit.
 The compatibility harness drives real npm, pnpm, Yarn Berry, and bun binaries.
 Mutation coverage follows the commands each client exposes (Berry has no
 unpublish command; bun has neither dist-tag nor unpublish), with shared routes
 covered independently by byte-preserving wire tests.
 
-To import public history after a claim, run against the configured proxy:
+To import public history after a claim, run against the configured proxy. The
+route needs an `operator` token when role auth is enabled and a publish token in
+open mode:
 
 ```bash
 sentinel-registry import --proxy http://localhost:4873 --package claimed-name
@@ -312,6 +330,11 @@ pass and exits non-zero if the aggregate verdict trips the policy's `treeGate`
 (default `block`). It auto-detects the format — `package-lock.json`/
 `npm-shrinkwrap.json` (npm v2/v3), `yarn.lock` (v1 text or berry YAML), and
 `pnpm-lock.yaml` (v5/v6/v9) — by filename first, falling back to a content sniff.
+An entry that does not resolve to a registry tarball (a git or `github:` spec, an
+arbitrary tarball URL) cannot be audited through the proxy: it is sent with
+`nonRegistry` set and comes back as a `block` row without any fetch. Yarn berry
+`workspace`/`patch`/`link`/`portal`/`file`/`exec` entries and pnpm directory
+entries are local sources and are skipped.
 
 - `--sbom <file>` writes the audited tree as a CycloneDX 1.6 JSON BOM: one
   `library` component per package (`purl: pkg:npm/<name>@<version>`) carrying
@@ -427,21 +450,22 @@ a true subcommand impractical). See
 
 `sentinel run-scripts <package-dir> [--approve network:host …]` runs the package's lifecycle scripts under a kernel sandbox generated from its approved capabilities — `createSandbox()` selects **Seatbelt** on macOS and **bubblewrap** on Linux, same capability model and fail-closed contract. As of Phase 25 the sandbox is **deny-by-default** (ADR-0038):
 
-- **Writes** are denied outside a fixed floor (the install dir, the OS temp dir, `/dev`, and the node build caches `~/.node-gyp` / `~/.cache/node-gyp` / `~/.npm/_logs`) plus operator-approved `filesystem:` grants — killing the persistence/tamper class, not an enumerated list.
+- **Writes** are denied outside a fixed floor (the install dir, the OS temp dir, `/dev`, and `~/.npm/_logs`) plus operator-approved `filesystem:` grants — killing the persistence/tamper class, not an enumerated list. The node-gyp header caches (`~/.node-gyp`, `~/.cache/node-gyp`) are readable but not writable; with a `network` approval `npm_config_devdir` points at a per-run directory outside every write floor, and without one a cold-cache native build fails.
 - **`$HOME` reads** are denied by default, re-allowing only what a lifecycle script needs: system paths, the node install prefix (so a node-under-`$HOME` nvm/fnm/volta runtime still loads its stdlib), the project root (so `require()` resolves), and the build caches — closing credential theft as a whole class. `/etc/passwd`/`/etc/shadow` stay denied via the `SENSITIVE_PATHS` carve-out.
-- **Network egress** is denied unless a `network` capability is approved.
+- **Network egress** is denied unless a `network` capability is approved. On Linux, bubblewrap also masks local IPC regardless of network approval, because `--unshare-net` does not cover pathname unix sockets: the session bus under `/run/user/<uid>`, the docker, containerd, podman and crio sockets, the system dbus socket, and `/tmp/.X11-unix` and `/tmp/ssh-*` when present. A mask lifts only with an explicit `filesystem:` grant. Each run also gets its own pid namespace, `--die-with-parent` and `--new-session`.
+- **Profile delivery** (macOS): the Seatbelt profile is passed inline (`sandbox-exec -p`); no profile file is written to the temp dir. A project root of `/` never widens read or exec rules, relative `cwd` and project root are resolved first, and `npm_config_*` values that carry URL credentials are scrubbed.
 - **Environment secrets** are fail-closed **scrubbed** (Phase 4): a credential-looking env var (`NPM_TOKEN`, `AWS_SECRET_ACCESS_KEY`, …) never reaches the script unless approved with an `env:NAME` capability. The `secret-exfil` audit rule additionally flags env reads at scoring time.
 - **Exec** (macOS, Phase 28) is denied outside a fixed floor — system dirs, the node
   prefix, the project tree, Apple/Homebrew toolchains — plus approved `process:`
   grants (`process:curl` lifts one tool's carve-out; `process:/path` opens a path;
   `process:*` lifts the carve-out only), and exfil-capable tools (`curl`, `wget`,
-  `nc`, …) are re-denied inside the floor unless granted. A dropped binary in `/tmp`
+  `nc`, `launchctl`, `open`, `shortcuts`, `automator`, …) are re-denied inside the floor unless granted. The carve-out is by path; LaunchServices mach lookups are not denied by the profile. A dropped binary in `/tmp`
   or a cache is kernel-denied; a binary the package writes into its *own* project
   tree can still exec there (the floor includes the project root), mitigated by the
   `unscanned-content` finding and `process` capability scoring, not kernel denial.
 - **Exec** (Linux, Phase 29 + Phase 2/Landlock) always exec-denies the
   exfil-capable tools (`curl`, `wget`, `nc`, …) by masking each with
-  `--ro-bind /dev/null <path>` unless a `process:` Grant lifts it (bwrap itself
+  `--ro-bind /dev/null <path>` (the list also covers `systemd-run`, `busctl`, `dbus-send` and `gdbus`) unless a `process:` Grant lifts it (bwrap itself
   cannot path-gate exec — no `noexec` mount option). As of Phase 2 the exec
   **floor** is also enforced where a from-source Landlock helper is available:
   `landlock-exec`, compiled by `npm run build` (Linux + `cc` only, a no-op
@@ -491,6 +515,17 @@ primary and independently-sufficient control — a package that should be
 blocked is blocked at audit time regardless of whether anything downstream is
 sandboxed. See [ADR-0051](./docs/adr/0051-sandboxed-exec.md).
 
+### Enforced-install identity
+
+`sentinel install --enforce` sets `SENTINEL_ROOT` to the realpath of the install
+directory (it is not user-configurable). A lifecycle script is the root's own
+only when its directory equals `SENTINEL_ROOT`; with the variable missing, no
+script is root. `INIT_CWD` is not trusted, because a nested npm resets it. A
+dependency script runs only when `npm_package_integrity` matches the integrity
+the proxy audited, compared per algorithm, so npm 7 or newer is required (older
+npm does not set it). A package npm records only as sha1 fails closed. On macOS a
+sandboxed process can outlive its script, because there is no process-group kill.
+
 ### Runtime violation telemetry (Phase 10)
 
 The sandbox has always **contained** a denied capability; it now also reports it. When
@@ -501,6 +536,8 @@ serve of the same bytes comes back `block`, on top of the deterministic score, w
 ever mutating the cached audit. This is best-effort: a denial the package's own code
 silently swallows (process exits `0`) leaves no signal for telemetry, but it is still
 denied at the kernel level exactly as before — containment is unaffected either way.
+Control characters are stripped from the reported `target`, `deniedResource` and
+`stderrExcerpt`.
 
 - `sentinel violations [--json]` — list recorded violations and their quarantine state.
 - `POST /-/violations` — report a violation `{ name, version, integrity, kind, target,
@@ -588,7 +625,9 @@ See [ADR-0033](./docs/adr/0033-policy-authoring-impact-preview.md).
 ## Control-plane authentication (Phase 12)
 
 The control plane's mutating endpoints — approvals, violation reports and
-clears, retraction, and publish — are **unauthenticated by default (open mode)**. Setting
+clears — are **unauthenticated by default (open mode)**. Publish, history import
+and retraction are not: in open mode they require a publish token
+(`SENTINEL_PUBLISH_TOKENS`) and always return `401` when none is configured. Setting
 `SENTINEL_AUTH_PUBKEY` on the proxy turns on signed-role-token auth for those
 routes; everything else (every `GET`, tarball fetches, packument resolution,
 and `POST /-/audit-tree`) stays open in either mode.
@@ -620,7 +659,8 @@ SENTINEL_AUTH_PUBKEY=./auth.pub.pem node packages/proxy/dist/index.js
 | `DELETE /-/violations/:integrity` | `operator` |
 | `POST /-/approval-requests` | `agent` |
 | `POST /-/violations` | `agent` |
-| `POST /-/retractions` | `operator` |
+| `POST /-/retractions` | `operator` (open mode: publish token) |
+| `POST /-/registry/import` | `operator` (open mode: publish token) |
 | `PUT /:pkg` (publish) | `publisher` |
 
 A missing/malformed/expired/badly-signed token is `401`; a well-formed token
@@ -738,7 +778,10 @@ Every run uploads the SBOM as a build artifact (`if: always()`, so it's
 attached even on a blocked run) and, on a `pull_request` event, posts or
 updates a single PR comment — found by a hidden `<!-- sentinel-report -->`
 marker so re-runs edit the same comment instead of piling up new ones — with
-the verdict, per-package findings table, and provenance summary.
+the verdict, per-package findings table, and provenance summary. Only a comment
+authored by `github-actions[bot]` is reused, and the comment list is paginated.
+Workflow-command data is escaped, and package-controlled text in the comment has
+its backticks, `<`, `[`, `]` and `@` neutralized.
 
 **Onboarding path:** start with `fail-on: none` — the audit runs, the SBOM
 uploads, and the PR comment appears, but nothing blocks a merge — then move

@@ -96,7 +96,9 @@ single-version publish PUT:
   buffering, strictly parsed, audited synchronously, policy-gated, and committed
   atomically only for a native source class.
 - `POST /-/retractions` → an operator retraction for a native version, accepted
-  only inside the signed-policy age/download window. `GET /-/retractions`
+  only inside the signed-policy age/download window. With auth enabled it needs
+  the `operator` role; in open mode it needs a publish token and is closed when
+  none is configured (ADR-0056). `GET /-/retractions`
   exposes the operator feed, active corpus identity, counting contract, and
   `windowHits: { age, downloads, both }` counters with or without SQLite.
 
@@ -184,7 +186,8 @@ trusted-publisher enrollments require a matching offline-verified Sigstore SLSA
 identity. Stored native versions snapshot the claim namespace, domain, and
 claimant key at publication, so an ownership change cannot re-attribute history.
 `@git-agentic/sentinel-steward` performs exact-apex DNS challenges, derives grandfather tiers
-from steward-fetched upstream evidence, verifies claimant-key transfer
+from steward-fetched upstream evidence (Tier 1 needs a homepage or repository host at or
+under the claimed domain; a same-named GitHub/GitLab organization no longer counts, ADR-0056), verifies claimant-key transfer
 signatures, applies renewal/domain-change freezes, and atomically publishes
 versioned directories after 30-day announced changes (ADR-0046). Mandatory
 per-source rate-limit middleware protects both the steward control plane and
@@ -245,7 +248,8 @@ never stored.
 `@git-agentic/sentinel-sandbox` turns an *approved* capability set into *enforced* runtime
 least-privilege on macOS and Linux: `generateProfile(approved, {homeDir})` emits an allow-default +
 deny-sensitive Seatbelt (SBPL) profile, each deny relaxed by an approved capability; the
-`SeatbeltSandbox` runs each lifecycle script under it via `sandbox-exec` (failing closed
+`SeatbeltSandbox` runs each lifecycle script under it via `sandbox-exec -p <profile>` (the
+profile is inline; no file is written to the temp dir, ADR-0056) (failing closed
 off-darwin). `sentinel run-scripts <dir>` ties it together and, on a loud failure, reports
 the detected-but-unapproved capabilities (inferred, best-effort). A child process inherits
 the *filesystem/network* confinement of the sandbox — and, as of Phase 28, the spawn itself
@@ -258,7 +262,8 @@ exfil-tool carve-out enforced on both; `native` advisory by decision.** The
 Seatbelt profile denies `process-exec*` by default, re-allows a fixed exec floor
 (`execAllowFloor`: system dirs, the node prefix, the project root, Apple/Homebrew
 toolchains) plus approved `process:` path-Grants, then re-denies a curated
-`SENSITIVE_EXECUTABLES` carve-out (curl, wget, nc, …) unless a command/wildcard
+`SENSITIVE_EXECUTABLES` carve-out (curl, wget, nc, launchctl, open, shortcuts, automator,
+systemd-run, busctl, dbus-send, gdbus, …) unless a command/wildcard
 Grant lifts it — so an unapproved exec of a dropped binary outside the project
 tree is kernel-denied (ADR-0042). On Linux, bwrap cannot path-gate exec at all
 (no `noexec` mount option), so Phase 29 shipped only the exfil-tool carve-out —
@@ -357,7 +362,12 @@ content sniff) across three formats — npm `package-lock.json`/`npm-shrinkwrap.
 by sniffing for `__metadata:`), and `pnpm-lock.yaml` (YAML across lockfile versions v5's
 `/name/version` and v6/v9's `name@version` keys, peer-dep suffix `(a@1)(b@2)` stripped) —
 into the same deduped, sorted `{name, version, integrity?}` `Coordinate[]` regardless of
-format (skipping the root entry and `link:`/`file:` deps). Berry checksums are not
+format (skipping the root entry and `link:`/`file:` deps). An entry whose resolution is not
+an http(s) `/-/<file>.tgz` registry tarball (git, `github:`, other URLs) carries
+`Coordinate.nonRegistry`, the raw spec, sticky across duplicate `name@version` merges;
+the proxy returns a `block` row for it without fetching and keeps it out of the
+registry row's dedupe key. Yarn berry `workspace`/`patch`/`link`/`portal`/`file`/`exec`
+entries and pnpm directory entries are skipped (ADR-0056). Berry checksums are not
 SRI-shaped, so berry-parsed coordinates carry no `integrity`. The `yaml` package
 (`^2.9.0`) backing the pnpm/berry parsers is a dependency of `@git-agentic/sentinel-core` only. The CLI
 POSTs the coordinates (plus an optional `failOnError` flag) to `POST /-/audit-tree`. The
@@ -394,7 +404,10 @@ alongside the other sync rules. A pure `provenance` rule turns the two fields in
 (`invalid` is `critical` and hard-blocks); it cannot see policy, so an optional
 `requireSignature`/`requireProvenance` pattern-list gate lives beside `deny` in `score.ts`,
 letting a policy require a verified signature or present provenance for matching package
-names without changing the rule itself.
+names without changing the rule itself. A signature list whose keyids match no
+trusted key counts as `unsigned` (weight 4, low), not `unknown`; key expiry is not
+checked because it would need the publish time and the wall clock never enters
+scoring (ADR-0056).
 
 ### 3.10 Provenance deep-verify (Phase 9, ADR-0022)
 
@@ -416,9 +429,16 @@ result is `invalid` — including bundles that throw partway through verificatio
 crash-bundle can't fail open past the identity gate). `unknown` is reserved for
 missing inputs (unfetchable bundle, empty list, no trust material configured).
 Identity (workflow SAN, issuer, source repository, ref, builder, commit) is
-extracted only from the verifier's authenticated result and the signed DSSE
-statement, never from unauthenticated packument fields, and attached as
-`provenanceIdentity`. Status and identity flow three ways: the `provenance` rule
+extracted only from the verifier's authenticated result, the verified leaf
+certificate and the signed DSSE statement, never from unauthenticated packument
+fields, and attached as `provenanceIdentity`. `sourceRepository` and `ref` come from
+the Fulcio certificate extensions (OID 1.3.6.1.4.1.57264.1.12 and .14, read by a small
+DER walker in `provenance.ts`), not from the SLSA predicate, which any Sigstore signer
+writes; they are `null` when the certificate lacks them. `builder` and `commit` remain
+signer-written predicate claims. A trusted-publisher enrollment authorizes only when it
+constrains `repository` or `workflowRef` and those match, so a builder match alone
+never authorizes. Residual: a signed policy `provenanceIdentities` entry that
+constrains only `builder` can be met by a signer-written builder (ADR-0056). Status and identity flow three ways: the `provenance` rule
 turns status into findings; `score.ts`'s `provenanceIdentities` gate enforces
 per-pattern identity requirements with fail-closed AND across matching entries
 (`unknown` is exempt from this gate but not from the upgraded
@@ -557,6 +577,10 @@ where `payload` is `{ role, sub, iat, exp }`. `verifyToken` is pure and total
 tampered payload fails at the signature check before anything downstream sees
 it. Three roles: `operator`, `agent`, `publisher`.
 
+**Bind address.** The proxy listens on `127.0.0.1` unless `SENTINEL_HOST` is set
+(an empty value is FATAL), so a bare start is not reachable from the network. The
+steward uses `SENTINEL_STEWARD_HOST` the same way (ADR-0056).
+
 **Opt-in, not on by default.** `makeAuthz(publicKeyPem)`
 (`packages/proxy/src/authz.ts`) is disabled (`enabled: false`, every
 `requireRole` a pass-through) unless `SENTINEL_AUTH_PUBKEY` (a path to a PEM
@@ -575,8 +599,16 @@ as before this phase.
 | `DELETE /-/violations/:integrity` | `operator` |
 | `POST /-/approval-requests` | `agent` |
 | `POST /-/violations` | `agent` |
-| `POST /-/retractions` | `operator` |
+| `POST /-/retractions` | `operator` (auth disabled: publish token) |
+| `POST /-/registry/import` | `operator` (auth disabled: publish token) |
 | `PUT /:pkg` (publish) | `publisher` (auth enabled) / legacy `requirePublishAuth` token (auth disabled) |
+
+In open mode, import and retraction use the same publish-token check as publish,
+so with no `SENTINEL_PUBLISH_TOKENS` they always answer `401` (ADR-0056). The
+compatibility routes (search, advisories/bulk, keys, attestations, web login) drop
+`authorization`, `cookie` and `npm-otp` before forwarding upstream, except
+`POST /-/v1/login`; their bodies are capped at 8 MiB and they sit behind the
+opt-in rate gate.
 
 **Reads stay open in every mode**: every `GET`, the tarball serve, packument
 resolution, and `POST /-/audit-tree` (a read-shaped fan-out audit, not a gate
@@ -1141,6 +1173,15 @@ throttle protects the expensive read endpoints. Phase 24 closes all four:
   `packages/proxy/src/index.ts` (`resolvePositiveInt`/`resolveRateLimiter`)
   and logged (`limits:` / `rate-limit:` lines); a malformed value is FATAL,
   the same posture as `SENTINEL_AUTH_PUBKEY`/`SENTINEL_TARBALL_ORIGINS`.
+- **Extraction hardening (ADR-0056).** Entry types ending in `File`, including
+  type-7 `ContiguousFile`, are scanned like regular files. Entry paths are normalized
+  like npm: first segment replaced by `package`, then posix normalize. Root manifests are counted case-insensitively; more than one, a
+  case-variant manifest, or a root manifest too large to scan yields the synthesized
+  critical `manifest-confusion` finding (category `metadata`; zero manifests add
+  nothing). A compressed signature in the first bytes the tar parser sees (gzip(gzip),
+  raw zstd) is refused as `resource-abuse`. Extension-less text files up to 2 MiB are
+  retained, and `install-scripts` scans any command token that names a retained package
+  file (docs and data names such as `README`, `.md`, `.json` are skipped).
 - **Bounded tarball extraction (Phase 26 Part A, `packages/core/src/
   extract.ts`, ADR-0039).** ADR-0037's byte caps bound only *compressed*
   fetch bytes; a small `.tgz` can still gzip-bomb into unbounded unpacked
@@ -1207,8 +1248,9 @@ writes and `$HOME` reads have sharply different risk profiles: Slice 1
   `writeAllowFloor({ cwd, tmpDir })` returns the baseline writable set every
   sandboxed script gets regardless of its approved capabilities: the Install
   directory (`cwd`), `os.tmpdir()`, `/tmp`, `/dev` (so `2>/dev/null` and
-  similar device writes keep working), and the node-gyp/npm build caches
-  (`~/.node-gyp`, `~/.cache/node-gyp`, `~/.npm/_logs`). The floor is pure and
+  similar device writes keep working), and `~/.npm/_logs`. The node-gyp header caches
+  (`~/.node-gyp`, `~/.cache/node-gyp`) are not writable since ADR-0056; with a
+  `network` approval `npm_config_devdir` points at a per-run directory instead. The floor is pure and
   deliberately **not** operator-configurable — a widenable floor would reopen
   the persistence class Phase 25 closes. Per-package needs beyond the floor
   are met by approved `filesystem:` Grants.
@@ -1252,15 +1294,16 @@ re-opened by a **read-allow list** (`packages/sandbox/src/read-allow.ts`,
 `readAllowList({ nodePrefix, projectRoot })`): the node runtime's install
 prefix (`nodeInstallPrefix(execPath)` — `dirname(dirname(execPath))`, so a
 node-under-`$HOME` runtime installed via nvm/fnm/volta can still load its own
-stdlib), the project root (`resolveProjectRoot(cwd, INIT_CWD)` — trusts npm's
-`INIT_CWD` when absolute, else walks up from `cwd` to the nearest ancestor
-`package.json`, else falls back to `cwd` — so a lifecycle script's `require()`
+stdlib), the project root (`resolveProjectRoot(cwd, SENTINEL_ROOT)` — uses the `SENTINEL_ROOT` that
+`sentinel install --enforce` pins to the realpath of the install cwd, else walks up from
+`cwd` to the nearest ancestor `package.json`, else falls back to `cwd`; `INIT_CWD` is
+no longer trusted because a nested npm resets it (ADR-0056) — so a lifecycle script's `require()`
 resolves across the whole project tree, not just its own install directory
 deep in `node_modules`), and the node build caches `~/.node-gyp` and
-`~/.cache`. System paths outside `$HOME` are unaffected — they stay readable
+`~/.cache` (readable only; ADR-0056). System paths outside `$HOME` are unaffected — they stay readable
 via each backend's existing allow-default / `--ro-bind / /`. Two new sandbox
 inputs feed this: `nodePrefix` (from `process.execPath`) and `projectRoot`
-(from `INIT_CWD`); `Sandbox.run` gained an optional `projectRoot` parameter
+(from `SENTINEL_ROOT`); `Sandbox.run` gained an optional `projectRoot` parameter
 (defaults to `cwd`).
 
 - **Seatbelt (`generateProfile`).** Three SBPL layers (SBPL is
@@ -1314,8 +1357,11 @@ it.
   `PE\0\0`, asserted only when the 4-byte read stays within the actual bytes
   read), and two explicitly **ambiguous** signatures (`cafebabe` — fat Mach-O
   vs. Java `.class` — and bare `mz`, a PE stub that didn't validate in-prefix).
-  A file whose sniff is non-`text` is never retained as a text `PackageFile`
-  even at ≤2 MB — closing the sub-2 MB disguise hole `unscanned-content`
+  A text-extension file whose sniff is non-`text` is always reported as
+  `content-mismatch`. It is retained as a text `PackageFile` only when its bytes decode
+  as valid UTF-8 with no NUL byte (`MZ:` and `BZh:` are valid JavaScript labels), so the
+  rules still scan it; real binaries are not retained (ADR-0056 supersedes the earlier
+  "never retained" rule). This closes the sub-2 MB disguise hole `unscanned-content`
   (ADR-0041) couldn't see, since that boundary only ever looked at declared
   extension and size.
 - **`content-mismatch` finding.** `ExtractResult` gains `contentMismatch`
@@ -1346,6 +1392,50 @@ untouched. See [ADR-0049](./docs/adr/0049-native-payload-loader-detection.md),
 which explicitly extends [ADR-0041](./docs/adr/0041-review-hardening.md).
 
 ---
+
+### 3.26 Security audit hardening (ADR-0056)
+
+An audit of the extractor, rules, proxy, sandbox, enforced installs, steward, Action and
+CLI produced the changes below. Extraction, provenance, lockfile, control-plane and
+sandbox-path changes are described where they live (3.9, 3.12, 3.23-3.25 and §4); the rest
+are collected here.
+
+- **Proxy memory.** `AuditStore` keeps at most 20,000 entries (`MAX_AUDIT_ENTRIES`),
+  evicting the oldest by insertion order. Approvals and violations for an evicted
+  coordinate answer "audit first". There is no env var.
+- **bwrap isolation.** Every run adds `--unshare-pid --die-with-parent --new-session`, so
+  the sandbox sees only its own processes, no orphan outlives the run, and a script cannot
+  inject keystrokes into the controlling tty. Local IPC masks apply whether or not network
+  is approved, because `--unshare-net` does not cover pathname unix sockets: the session bus
+  under `/run/user/<uid>`, the docker, containerd, podman and crio sockets, the system dbus
+  socket, and `/tmp/.X11-unix` and `/tmp/ssh-*` when present. Each mask is existence-guarded
+  and lifted only by an explicit `filesystem:` grant.
+- **Sandbox inputs.** A project root of `/` never widens read or exec rules. Relative `cwd`
+  and project root are resolved first. `npm_config_*` values that carry URL credentials are
+  scrubbed. Violation `target`, `deniedResource` and `stderrExcerpt` lose control
+  characters before they are reported. macOS has no process-group kill, so a sandboxed
+  process can outlive its script. The `SENSITIVE_EXECUTABLES` carve-out matches paths; the
+  Seatbelt profile does not deny LaunchServices mach lookups.
+- **Enforced-install identity.** `sentinel install --enforce` sets `SENTINEL_ROOT` (realpath
+  of the cwd, not user-configurable) in the enforced env. `isRootScript` compares against it
+  and fails closed when it is missing. A dependency script runs only when
+  `npm_package_integrity` equals the audited integrity (compared per algorithm), so npm 7 or
+  newer is required. A package npm records only as sha1 fails closed.
+- **Steward.** Challenges expire 30 days after issue (verify, approve, transfer, renew,
+  rule-dispute), and approval recomputes the tier from a fresh upstream lookup. A transfer
+  needs an active claim with no pending change and materializes only while the claim is
+  active. Disputes survive expiry and domain-change freezes; only a ruling clears them.
+  Renewal refuses a disputed claim and needs a challenge verified after the current proof.
+  Transfer signatures bind the claim's current challenge id. Request bodies are
+  type-validated, `evidenceRef` is a non-empty string, and application fields are copied
+  explicitly so a body-supplied `verifiedAt` cannot skip DNS. `ClaimSteward.approve` is
+  async; `signTransferRequest` and `transferRequestBytes` take `currentChallengeId`.
+- **Action and CLI.** The PR comment is reused only when the marker is on a
+  `github-actions[bot]` comment, and comment lists are paginated. Workflow-command data and
+  properties are escaped; PR comment Markdown neutralizes backticks, `<`, `[`, `]` and `@`.
+  CLI output passes untrusted text through `sanitizeTerminal()`, and `run-scripts` resolves
+  its directory argument.
+- **Startup validation.** `SENTINEL_POLICY` must be exactly `observe` or `block`.
 
 ## 4. The audit engine (`@git-agentic/sentinel-core`)
 
