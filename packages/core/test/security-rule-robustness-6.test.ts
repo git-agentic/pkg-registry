@@ -116,7 +116,8 @@ describe("install-scripts command parsing", () => {
       runRules(inputFor({ "package/setup": "x" }, { postinstall: cmd }));
       const ms = performance.now() - t;
       console.log(`[timing] trim ${ch}: ${ms.toFixed(0)} ms`);
-      assert.ok(ms < 1000, `${ch} took ${ms.toFixed(0)} ms`);
+      // Linear (about 150 ms per MiB of backticks locally, several times that on CI); quadratic would take minutes.
+      assert.ok(ms < 5000, `${ch} took ${ms.toFixed(0)} ms`);
     }
   });
 
