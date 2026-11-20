@@ -15,7 +15,10 @@ export interface LoaderPrimitive {
 export interface LoaderBoosters { tempOrHidden: boolean; chmod: boolean; detached: boolean; unref: boolean; moduleLoad: boolean }
 export interface LoaderAnalysis { primitives: LoaderPrimitive[]; correlated: boolean; boosters: LoaderBoosters; parseFailed: boolean;
   /** Stack overflow while parsing or walking (hostile nesting), not a syntax error: the caller must not downgrade a regex chain hit. */
-  walkOverflow?: boolean }
+  walkOverflow?: boolean;
+  /** The walk hit its node or scope bound: unreachable for real input, so it is a safety stop, not a stack overflow. The
+   *  caller uses the STRICT fallback (like a parse failure), never the loose overflow one. */
+  walkTruncated?: boolean }
 
 /** Bounded, deterministic taint tags a variable can carry. */
 type Tag = "read" | "decoded" | "written-path";
@@ -62,10 +65,13 @@ function isScope(n: any): boolean {
   return n.type === "Program" || n.type === "FunctionDeclaration" || n.type === "FunctionExpression" || n.type === "ArrowFunctionExpression";
 }
 
-/** Total nodes the walk may visit; past it the walk throws a RangeError, which callers map to the overflow path. */
-const MAX_WALK_NODES = 2_000_000;
-/** Scope nesting the walk follows (each analysis callback costs O(scope depth)); real code nests far less. */
+/**
+ * Safety bounds of the walk. A retained file is at most 2 MiB and yields at most about one node per byte, so the node
+ * bound is unreachable for real input; scope nesting costs O(depth) per callback and real code nests far less.
+ */
+const MAX_WALK_NODES = 4_194_304;
 const MAX_SCOPE_DEPTH = 1000;
+class WalkBoundError extends Error {}
 
 /** Hostile nesting defeated the parser or the walk: a RangeError, or acorn's own "Not enough stack space" SyntaxError. A genuine syntax error is neither. */
 function isStackOverflow(e: unknown): boolean {
@@ -84,30 +90,36 @@ type Visitor = (node: any, st: any, ancestors: any[], scopeChain: any[]) => void
 export function walkAncestor(root: any, visitors: Record<string, Visitor>): void {
   const ancestors: any[] = [];
   const scopes: any[] = []; // outermost → innermost
-  type Frame = { node: any; type: string; isNew: boolean; kids: [any, string | undefined][]; next: number };
+  // A frame holds its node's child list and an index into it: only the active path is held, never every child at once.
+  type Frame = { node: any; type: string; isNew: boolean; list: any[]; ov: string | (string | undefined)[] | undefined; next: number };
   const stack: Frame[] = [];
   let visited = 0;
   const enter = (node: any, override?: string): void => {
     const type = override || node.type;
     const isNew = node !== ancestors[ancestors.length - 1]; // an override re-enters the same node
     if (isNew) {
-      if (++visited > MAX_WALK_NODES) throw new RangeError("loader-chain: node bound exceeded");
+      if (++visited > MAX_WALK_NODES) throw new WalkBoundError("loader-chain: node bound exceeded");
       ancestors.push(node);
       if (isScope(node)) {
-        if (scopes.length >= MAX_SCOPE_DEPTH) throw new RangeError("loader-chain: scope depth bound exceeded");
+        if (scopes.length >= MAX_SCOPE_DEPTH) throw new WalkBoundError("loader-chain: scope depth bound exceeded");
         scopes.push(node);
       }
     }
     const visit = (walkBase as Record<string, any>)[type];
     if (visit == null) throw new Error(`No walker function defined for node type ${type}`);
-    const kids: Frame["kids"] = [];
-    visit(node, undefined, (child: any, _st: any, o?: string) => { kids.push([child, o]); });
-    stack.push({ node, type, isNew, kids, next: 0 });
+    if (type === "Program" || type === "BlockStatement" || type === "StaticBlock") { // acorn-walk: every statement of `body`, as "Statement"
+      stack.push({ node, type, isNew, list: node.body, ov: "Statement", next: 0 });
+      return;
+    }
+    const list: any[] = [];
+    const ov: (string | undefined)[] = [];
+    visit(node, undefined, (child: any, _st: any, o?: string) => { list.push(child); ov.push(o); });
+    stack.push({ node, type, isNew, list, ov, next: 0 });
   };
   enter(root);
   while (stack.length) {
     const f = stack[stack.length - 1]!;
-    if (f.next < f.kids.length) { const [child, o] = f.kids[f.next++]!; enter(child, o); continue; }
+    if (f.next < f.list.length) { const i = f.next++; enter(f.list[i], typeof f.ov === "string" ? f.ov : f.ov?.[i]); continue; }
     visitors[f.type]?.(f.node, ancestors, ancestors, scopes.slice().reverse());
     if (f.isNew) { ancestors.pop(); if (scopes[scopes.length - 1] === f.node) scopes.pop(); }
     stack.pop();
@@ -126,11 +138,12 @@ export function analyzeLoaderChain(source: string, opts: { moduleLoadReachable?:
   let ast: any;
   try {
     ast = acorn.parse(source, { ecmaVersion: "latest", sourceType: "module", allowReturnOutsideFunction: true, allowAwaitOutsideFunction: true, allowHashBang: true });
-  } catch {
+  } catch (moduleError) {
     try {
       ast = acorn.parse(source, { ecmaVersion: "latest", sourceType: "script", allowReturnOutsideFunction: true, allowHashBang: true });
     } catch (e) {
-      return { primitives: [], correlated: false, boosters: { tempOrHidden: false, chmod: false, detached: false, unref: false, moduleLoad: false }, parseFailed: true, walkOverflow: isStackOverflow(e) };
+      // Either attempt may have exhausted the stack (a module file with deep nesting then also fails the script retry on `export`).
+      return { primitives: [], correlated: false, boosters: { tempOrHidden: false, chmod: false, detached: false, unref: false, moduleLoad: false }, parseFailed: true, walkOverflow: isStackOverflow(moduleError) || isStackOverflow(e) };
     }
   }
 
@@ -522,7 +535,9 @@ export function analyzeLoaderChain(source: string, opts: { moduleLoadReachable?:
   });
   boosters.moduleLoad = Boolean(opts.moduleLoadReachable) && topLevelExecution(ast);
   } catch (e) {
-    return { primitives: [], correlated: false, boosters: { tempOrHidden: false, chmod: false, detached: false, unref: false, moduleLoad: false }, parseFailed: true, walkOverflow: isStackOverflow(e) };
+    const truncated = e instanceof WalkBoundError;
+    return { primitives: [], correlated: false, boosters: { tempOrHidden: false, chmod: false, detached: false, unref: false, moduleLoad: false }, parseFailed: true,
+      walkOverflow: !truncated && isStackOverflow(e), ...(truncated ? { walkTruncated: true } : {}) };
   }
 
   return { primitives, correlated, boosters, parseFailed: false };

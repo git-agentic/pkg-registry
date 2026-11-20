@@ -90,8 +90,8 @@ describe("a deep expression no longer defeats the dataflow analysis", () => {
     assert.notEqual(loaderChain.analyzeLoaderChain("const x = ;\n" + "(".repeat(5000)).walkOverflow, true);
   });
 
-  test("a chain padded with 700 nested parens stays critical (loose fallback), also with renamed primitives", () => {
-    const pad = `${"(".repeat(700)}x${")".repeat(700)};\n`;
+  test("a chain padded with deeply nested parens stays critical (loose fallback), also with renamed primitives", () => {
+    const pad = `${"(".repeat(100_000)}x${")".repeat(100_000)};\n`; // overflows acorn's parser on any supported Node
     const RENAMED_ZLIB = `
 const { readFileSync: r, writeFileSync: w } = require("fs"), { gunzipSync: g } = require("zlib"), { spawn: go } = require("child_process");
 const path = require("path"), os = require("os");
@@ -104,6 +104,20 @@ go(o, [], { detached: true });
     assert.deepEqual(loaderSeverities(pad + RENAMED_ZLIB), ["critical"]);
     // and a benign file that only mentions one name is still not critical
     assert.deepEqual(loaderSeverities(`${pad}const {readFileSync:r}=require("fs");module.exports=()=>r("a");`), []);
+  });
+
+  test("an atob chain padded to overflow the parser is critical (atob is a decode signal in the loose fallback)", () => {
+    const pad = `${"(".repeat(100_000)}x${")".repeat(100_000)};\n`;
+    assert.deepEqual(loaderSeverities(pad + CHAIN), ["critical"]);
+  });
+
+  test("a module-syntax file whose module parse overflows keeps the overflow classification across the script retry", () => {
+    const pad = `${"(".repeat(100_000)}x${")".repeat(100_000)};\n`;
+    const src = `export const marker = 1;\n${pad}${CHAIN}`; // `export` also fails the script retry
+    const a = loaderChain.analyzeLoaderChain(src);
+    assert.equal(a.parseFailed, true);
+    assert.equal(a.walkOverflow, true);
+    assert.deepEqual(loaderSeverities(src), ["critical"]);
   });
 
   test("a padded benign file that only mentions the four names is not critical", () => {
@@ -122,11 +136,15 @@ go(o, [], { detached: true });
     assert.ok(ms < 20_000, `took ${ms} ms`);
   });
 
-  test("the node bound is deterministic and still maps to the overflow path", () => {
-    const src = `var a = [${"0,".repeat(2_100_000)}];\n${CHAIN}`;
-    const a = loaderChain.analyzeLoaderChain(src);
+  test("crossing the node cap is a truncation with the strict fallback, never the loose overflow one", () => {
+    const flat = ";".repeat(4_194_305); // one node per byte: just over the cap (a retained file is at most 2 MiB)
+    const a = loaderChain.analyzeLoaderChain(flat + CHAIN);
     assert.equal(a.parseFailed, true);
-    assert.equal(a.walkOverflow, true);
+    assert.equal(a.walkTruncated, true);
+    assert.notEqual(a.walkOverflow, true);
+    // a benign flat file that crosses the cap is not critical, even though it mentions all four names
+    assert.equal(loaderSeverities(flat + BENIGN).includes("critical"), false);
+    assert.equal(loaderSeverities(flat + CHAIN).includes("critical"), false);
   });
 
   test("genuine parse failures still use the parse-failure path", () => {

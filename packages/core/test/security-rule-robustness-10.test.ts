@@ -65,7 +65,7 @@ describe("the suffix fallback does not match bare command words or module specif
 });
 
 describe("overflow decode signal needs a whole identifier", () => {
-  const PAD = `${";".repeat(2_000_001)}\n`;
+  const PAD = `${"(".repeat(100000)}x${")".repeat(100000)};\n`;
   const loader = (src: string) =>
     runRules(inputFor({ "package/index.js": src }, { name: "p", main: "index.js" })).filter((f) => f.ruleId === "native-payload-loader");
 

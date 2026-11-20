@@ -135,7 +135,7 @@ const c=fs.readFileSync(__dirname+'/intro.node');
 const b=zlib.gunzipSync(c);
 fs.writeFileSync(dir+'/p',b);
 require(\`\${dir}/p\`);`;
-    const pad = `${";".repeat(2_000_001)}\n`;
+    const pad = `${"(".repeat(100000)}x${")".repeat(100000)};\n`;
     const tarball = tarBytes([
       { name: "package/package.json", data: JSON.stringify({ name: "demo", version: "1.0.0", main: "index.js" }) },
       { name: "package/index.js", data: pad + chain },

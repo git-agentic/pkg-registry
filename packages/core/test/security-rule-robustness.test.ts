@@ -76,7 +76,7 @@ describe("F4: a malformed value must not disable a whole rule", () => {
   });
 
   test("an expression that overflows the AST walker does not disable the loader rule for other files", () => {
-    const deep = ";".repeat(2_000_001);
+    const deep = "(".repeat(100000) + "x" + ")".repeat(100000) + ";";
     const findings = runRules(
       inputFor({ "package/deep.js": deep, "package/index.js": CORRELATED }, { name: "p", main: "index.js" }),
     );
@@ -87,7 +87,7 @@ describe("F4: a malformed value must not disable a whole rule", () => {
   });
 
   test("analyzeLoaderChain maps a walker overflow to parseFailed instead of throwing", () => {
-    const a = analyzeLoaderChain(";".repeat(2_000_001));
+    const a = analyzeLoaderChain("(".repeat(100000) + "x" + ")".repeat(100000) + ";");
     assert.equal(a.parseFailed, true);
   });
 });

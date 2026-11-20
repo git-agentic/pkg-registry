@@ -116,7 +116,7 @@ const fs=require('fs'),zlib=require('zlib'),path=require('path');
 const c=fs.readFileSync(path.join(__dirname,'intro.bin'));
 fs.writeFileSync(path.join(__dirname,'output.node'),zlib.gunzipSync(c));
 require('./output');`;
-    const pad = `${";".repeat(2_000_001)}\n`;
+    const pad = `${"(".repeat(100000)}x${")".repeat(100000)};\n`;
     const report = await auditTarball({
       meta,
       tarball: tarBytes([
@@ -134,7 +134,7 @@ const fs=require('fs'),zlib=require('zlib'),path=require('path');
 const c=fs.readFileSync(path.join(__dirname,'intro.bin'));
 fs.writeFileSync(path.join(__dirname,'output.bin'),zlib.gunzipSync(c));
 require('./output');`;
-    const pad = `${";".repeat(2_000_001)}\n`;
+    const pad = `${"(".repeat(100000)}x${")".repeat(100000)};\n`;
     const report = await auditTarball({
       meta,
       tarball: tarBytes([
