@@ -175,4 +175,28 @@ describe("F19: audit-tree blocks non-registry coordinates without fetching anyth
       assert.equal(res.status, 400, JSON.stringify(integrity));
     }
   });
+
+  test("duplicate entries pinned in different algorithms merge, and audit-tree verifies every token (PR #84)", async () => {
+    const lock = (sha1: string) => JSON.stringify({ lockfileVersion: 3, packages: { "": {},
+      "node_modules/leftpad-lite": { version: "1.0.0", resolved: "https://r.example/leftpad-lite/-/leftpad-lite-1.0.0.tgz", integrity: sha1 },
+      "node_modules/a/node_modules/leftpad-lite": { version: "1.0.0", resolved: "https://r.example/leftpad-lite/-/leftpad-lite-1.0.0.tgz", integrity: REAL } } });
+    const good = parseLockfile(lock(integrityOfAlgo(TARBALL, "sha1")));
+    assert.equal(good.length, 1);
+    assert.equal(good[0]!.nonRegistry, undefined);
+    const ok = await post(good);
+    assert.equal(ok.packages[0]!.integrityMismatch, false);
+    assert.notEqual(ok.packages[0]!.status, "block");
+    const bad = await post(parseLockfile(lock("sha1-AAAAAAAAAAAAAAAAAAAAAAAAAAA=")));
+    assert.equal(bad.packages[0]!.integrityMismatch, true);
+    assert.equal(bad.packages[0]!.status, "block");
+  });
+
+  test("two different sha512 digests for the same name@version are non-registry", async () => {
+    const lock = JSON.stringify({ lockfileVersion: 3, packages: { "": {},
+      "node_modules/leftpad-lite": { version: "1.0.0", resolved: "https://r.example/leftpad-lite/-/leftpad-lite-1.0.0.tgz", integrity: REAL },
+      "node_modules/a/node_modules/leftpad-lite": { version: "1.0.0", resolved: "https://r.example/leftpad-lite/-/leftpad-lite-1.0.0.tgz", integrity: "sha512-" + Buffer.alloc(64, 8).toString("base64") } } });
+    const cs = parseLockfile(lock);
+    assert.ok(cs[0]!.nonRegistry);
+    assert.equal((await post(cs)).packages[0]!.status, "block");
+  });
 });
