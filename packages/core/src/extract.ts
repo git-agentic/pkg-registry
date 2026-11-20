@@ -148,7 +148,9 @@ export async function extractTarball(
     });
     entry.on("end", () => {
       if (truncated || !isFile) return;
-      const path = normalizedPath;
+      // A Windows client installs `package\setup.js` as setup.js while POSIX keeps a literal name (or
+      // drops it): when the readings differ, retain under both so rules see whatever either installs.
+      const path = normalizedPath ?? winPath;
       if (path === null) return;
       if (isManifest && bytes > MAX_FILE_BYTES) manifestOversized = true;
       const cls = classifyContent(Buffer.concat(prefixChunks));
@@ -173,6 +175,9 @@ export async function extractTarball(
         const content = buf.toString("utf8");
         const prev = baseline?.get(path);
         files.push({ path, content, size: bytes, changed: baseline ? prev !== content : false });
+        if (winPath !== null && winPath !== path) {
+          files.push({ path: winPath, content, size: bytes, changed: baseline ? baseline.get(winPath) !== content : false });
+        }
         return;
       }
       // Not scanned — record executable-looking content so the blind spot isn't silent (#11).
