@@ -230,44 +230,81 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
     }
     return hit ?? undefined;
   };
-  // A bare module name resolves inside the tarball only: node_modules/<spec> as a file, `.js`, then its package main / index.js.
-  const resolveModule = (spec: string): PackageFile | undefined => {
-    const m = `package/node_modules/${spec}`;
-    return exact(m) ?? exact(`${m}.js`) ?? entry(m);
+  let spill: PackageFile[] = []; // extra candidates a resolution found besides the one it returned
+  const spillAll = (hits: (PackageFile | undefined)[]): PackageFile | undefined => {
+    const [first, ...rest] = new Set(hits.filter((f): f is PackageFile => !!f));
+    for (const f of rest) spill.push(f);
+    return first;
   };
-  // Bins of bundled packages (`bin` is a string or an object), mapped to the files they point at; built once on first use.
-  let bins: Map<string, PackageFile> | undefined;
-  const bundledBin = (name: string): PackageFile | undefined => {
+  // Bare module names resolve inside the tarball only (never the host or network). Over-follow: the spec as a file
+  // (`.js`/`.mjs`/`.cjs`), the package main / index.js, and every string target of the package's `exports`.
+  const exportTargets = new Map<string, string[]>();
+  const targetsOf = (pkgDir: string): string[] => {
+    let t = exportTargets.get(pkgDir);
+    if (!t) {
+      t = [];
+      let exp: unknown;
+      try { exp = JSON.parse(exact(`${pkgDir}/package.json`)?.content ?? "null")?.exports; } catch { /* no exports */ }
+      for (let stack: unknown[] = [exp], seen = 0; stack.length && seen < 1000; seen++) { // node bound
+        const v = stack.pop();
+        if (typeof v === "string") { const n = normalizeRel(v); if (n) t.push(n); }
+        else if (v && typeof v === "object") for (const c of Object.values(v)) stack.push(c);
+      }
+      exportTargets.set(pkgDir, t);
+    }
+    return t;
+  };
+  const modules = new Map<string, (PackageFile | undefined)[]>();
+  const resolveModule = (spec: string): (PackageFile | undefined)[] => {
+    let hits = modules.get(spec);
+    if (!hits) {
+      const m = `package/node_modules/${spec}`;
+      const pkg = `package/node_modules/${spec.split("/").slice(0, spec.startsWith("@") ? 2 : 1).join("/")}`;
+      hits = [exact(m), exact(`${m}.js`), exact(`${m}.mjs`), exact(`${m}.cjs`), entry(m), ...targetsOf(pkg).map((t) => exact(`${pkg}/${t}`))];
+      modules.set(spec, hits);
+    }
+    return hits;
+  };
+  // Every file a bundled package's `bin` (a string or an object) points at, per command name, plus `node_modules/.bin/<name>`.
+  // The map is built once on first use; targets are exact normalized paths, in any tar order.
+  let bins: Map<string, Set<PackageFile>> | undefined;
+  const bundledBins = (name: string): (PackageFile | undefined)[] => {
     if (!bins) {
       bins = new Map();
       for (const f of files) {
         const pkg = /^package\/node_modules\/((?:@[^/]+\/)?[^/]+)\/package\.json$/.exec(f.path)?.[1];
-        if (!pkg) continue;
+        if (!pkg || pkg.split("/").some((c) => c.length > 214)) continue; // npm names are at most 214 chars
         let bin: unknown;
         try { bin = JSON.parse(f.content)?.bin; } catch { continue; }
         const map: Record<string, unknown> = typeof bin === "string" ? { [pkg.slice(pkg.lastIndexOf("/") + 1)]: bin } : bin && typeof bin === "object" ? (bin as Record<string, unknown>) : {};
         for (const [n, rel] of Object.entries(map)) {
-          const t = typeof rel === "string" ? `package/node_modules/${pkg}/${rel.replace(/^\.\//, "")}` : "";
-          const hit = t ? exact(t) ?? exact(`${t}.js`) : undefined;
-          if (hit && !bins.has(n)) bins.set(n, hit);
+          const r = typeof rel === "string" ? normalizeRel(rel) : undefined;
+          const hit = r ? exact(`package/node_modules/${pkg}/${r}`) : undefined;
+          if (hit) (bins.get(n) ?? bins.set(n, new Set()).get(n)!).add(hit);
         }
       }
     }
-    return bins.get(name) ?? exact(`package/node_modules/.bin/${name}`);
+    return [...(bins.get(name) ?? []), exact(`package/node_modules/.bin/${name}`)];
   };
-  // The file a preload flag value (`-r <value>`) loads: a local path, else a bundled module.
-  const preload = (value: string): PackageFile | undefined =>
-    value ? (LOCAL_PATH.test(value) ? resolveWord(value, "script") : resolveModule(value)) : undefined;
-  /** Tokens of a `VAR=value` assignment (`NODE_OPTIONS`): `-r <x>` / `--require <x>` preloads and relative code files. */
+  // The file a preload flag value (`-r <value>`) loads: a local path, else a bundled module. The `.js` retry applies
+  // even when the basename has a dot (`./hook.prod`).
+  const preload = (value: string): PackageFile | undefined => {
+    const v = trimPunct(value);
+    if (!v) return undefined;
+    return spillAll(LOCAL_PATH.test(v)
+      ? [resolveWord(v, "script"), v.startsWith("/") ? undefined : exact(`package/${v.replace(/^\.\//, "")}.js`)]
+      : resolveModule(v));
+  };
+  /** Tokens of a `VAR=value` assignment (`NODE_OPTIONS`): recognized preload flags (`-r x`, `--require=x`) and relative code files. */
   const scanOptionTokens = (tokens: string[], out: Set<PackageFile>): void => {
     for (let k = 0; k < tokens.length; k++) {
       const t = trimPunct(tokens[k]!);
-      const hit = CODE_VALUE_FLAG.test(t) ? preload(trimPunct(tokens[++k] ?? ""))
-        : CODE_WORD.test(t) && LOCAL_PATH.test(t) ? resolveWord(t, "script") : undefined;
+      const m = CODE_VALUE_FLAG.exec(t);
+      const hit = m ? preload(m[1] ?? tokens[++k] ?? "")
+        : spillAll(t.split("=").map((piece) => (CODE_WORD.test(piece) && LOCAL_PATH.test(piece) ? resolveWord(piece, "script") : undefined)));
       if (hit) out.add(hit);
     }
   };
-  let spill: PackageFile[] = []; // extra candidates a resolution found besides the one it returned
   const resolveRef = (raw: string, mode: Mode): PackageFile | undefined => {
     const ref = raw.replace(/^\.\//, "").replace(/\/$/, "") || (raw === "./" ? "." : "");
     if (!ref) return undefined;
@@ -300,14 +337,13 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
   // A command word is judged by its basename (`/usr/bin/env` is `env`). A relative path that names a package file
   // (`./bin/env`) is that file too: it is scanned (`localCommand`) and still plays the wrapper/interpreter role.
   // Path-qualified: exact, then suffix (after a `cd`). Bare: only a wrapper or interpreter name, exact (`tsx` may be `package/tsx`).
-  const localCommand = (w: string): PackageFile | undefined => {
+  const localCommand = (w: string, direct: boolean): PackageFile | undefined => {
     if (/^(?:[/-]|[A-Za-z_]\w*=)/.test(w)) return undefined; // not a flag, absolute path or `VAR=value`
     const t = trimPunct(w);
     if (w.includes("/")) return resolveWord(t, "path");
     const own = WRAPPERS.has(t) || Object.hasOwn(INLINE_FLAG, t) ? exact(`package/${t}`) : undefined;
-    const bin = bundledBin(t);
-    if (own && bin) spill.push(bin);
-    return own ?? bin;
+    // A shell builtin in direct command position never runs a bundled bin; behind `env`/`sudo`/... it does.
+    return spillAll([own, ...(direct && SHELL_BUILTINS.has(t) ? [] : bundledBins(t))]);
   };
   const isPrefix = (words: string[], i: number) =>
     /^[A-Za-z_]\w*=/.test(words[i]!) || WRAPPERS.has(base(trimPunct(words[i]!))) || (i > 0 && WRAPPERS.has(base(trimPunct(words[i - 1]!))) && words[i]!.startsWith("-"));
@@ -375,26 +411,28 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
         return list[lo];
       };
       let i = 0;
+      let viaWrapper = false; // after `env`/`sudo`/... the next word is an external command, never a builtin
+      let spanEnd = -1; // last word of the quoted assignment value being spanned: each word is spanned at most once
       for (; i < words.length && isPrefix(words, i); i++) {
-        const local = localCommand(words[i]!);
+        const local = localCommand(words[i]!, !viaWrapper);
         if (local) out.add(local);
+        if (EXTERNAL_WRAPPERS.has(base(trimPunct(words[i]!)))) viaWrapper = true;
         // `NODE_OPTIONS=--require=./hook node -v`: preload flags and code files inside an assignment value run too.
         const eq = words[i]!.indexOf("=");
         if (eq < 0) continue;
         let val = words[i]!.slice(eq + 1);
-        const q = val[0] === "'" || val[0] === '"' ? val[0] : "";
-        if (q && !(val.length > 1 && val.endsWith(q))) { // `NODE_OPTIONS='-r ./hook'`: the quote spans words (none closing: one word)
-          let e = i + 1;
-          while (e < rawWords.length && !rawWords[e]!.endsWith(q)) e++;
-          if (e < rawWords.length) { val += ` ${rawWords.slice(i + 1, e + 1).join(" ")}`; i = e; }
-        }
-        scanOptionTokens(unquote(val).split(/[\s=]+/), out);
+        // `NODE_OPTIONS='-r ./hook'`: a quote left open by the word spans to the next word that ends with it. The
+        // spanned words are also read as normal words (no skipping), so spanning only adds coverage.
+        const q = i > spanEnd ? openQuote(val) : "";
+        const e = q ? nextClose(q, i + 1) : undefined;
+        if (e !== undefined) { val += ` ${rawWords.slice(i + 1, e + 1).join(" ")}`; spanEnd = e; }
+        scanOptionTokens(unquote(val).split(/\s+/), out);
       }
       const command = words[i];
       if (!command) continue;
       const name = trimPunct(command);
       const interpreter = base(name);
-      const local = localCommand(command);
+      const local = localCommand(command, !viaWrapper);
       if (local) out.add(local);
       if (PACKAGE_MANAGERS.has(interpreter)) followScriptWords(words, i + 1, out);
       const inline = Object.hasOwn(INLINE_FLAG, interpreter) ? INLINE_FLAG[interpreter] : undefined;
@@ -482,6 +520,36 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
 
 const MAX_INLINE_DEPTH = 3;
 const LOCAL_PATH = /^(?:\.{1,2}\/|\/)/;
+// Wrappers that exec an external program: `env echo` runs a bundled `echo` bin, a bare `echo` is the builtin.
+const EXTERNAL_WRAPPERS = new Set(["env", "exec", "nohup", "sudo", "npx", "xargs"]);
+const SHELL_BUILTINS = new Set([
+  ":", ".", "[", "alias", "bg", "break", "cd", "command", "continue", "declare", "dirs", "echo", "eval", "exec", "exit", "export",
+  "false", "fg", "getopts", "hash", "help", "history", "jobs", "kill", "let", "local", "popd", "printf", "pushd", "pwd", "read",
+  "readonly", "return", "set", "shift", "source", "test", "time", "times", "trap", "true", "type", "typeset", "ulimit", "umask",
+  "unalias", "unset", "wait",
+]);
+
+/** The quote character a shell word leaves open (`'-r`), counting unescaped quotes; "" when balanced. */
+function openQuote(w: string): string {
+  let q = "";
+  for (let i = 0; i < w.length; i++) {
+    const c = w[i]!;
+    if (c === "\\" && q !== "'") i++;
+    else if (q) { if (c === q) q = ""; }
+    else if (c === "'" || c === '"') q = c;
+  }
+  return q;
+}
+
+/** A declared relative path as npm normalizes it (`./a/../b` -> `b`); undefined when empty or it climbs out (`..`). */
+function normalizeRel(rel: string): string | undefined {
+  const out: string[] = [];
+  for (const seg of rel.split("/")) {
+    if (seg === "" || seg === ".") continue;
+    if (seg === "..") { if (!out.pop()) return undefined; } else out.push(seg);
+  }
+  return out.join("/") || undefined;
+}
 const base = (w: string) => w.slice(w.lastIndexOf("/") + 1);
 const PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun"]);
 // Scripts a built-in package-manager command runs besides the script of its own name (npm lifecycle).
