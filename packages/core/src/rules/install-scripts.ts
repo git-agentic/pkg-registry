@@ -257,6 +257,17 @@ function makeResolver(files: PackageFile[]): (cmd: string) => PackageFile[] {
       let found = false;
       for (let j = i + 1; j < words.length; j++) {
         const w = words[j]!;
+        // Redirections are not operands. `<file` feeds file to the command (scan it, an interpreter
+        // runs it), but it never takes the place of the script operand; `>file` targets are outputs.
+        const redirect = /^(\d*)([<>])[<>&]*(.*)$/.exec(w);
+        if (redirect) {
+          const target = redirect[3] || words[++j] || "";
+          if (redirect[2] === "<") {
+            const hit = resolveWord(target, "script");
+            if (hit) out.add(hit);
+          }
+          continue;
+        }
         if (inline && w.startsWith("-")) {
           if (inline.test(w)) {
             found = true; // later extension-less operands are arguments to that inline code, not scripts

@@ -86,3 +86,12 @@ describe("input redirection attached to a script path", () => {
     assert.equal(crit({ "package/build.sh": `${CURL_SH}\n` }, "sh <build.sh").length, 1);
   });
 });
+
+describe("a redirect target never replaces the script operand", () => {
+  test("`node <README.md setup` still scans setup", () => {
+    assert.equal(crit({ "package/README.md": "docs\n", "package/setup": `${CURL_SH}\n` }, "node <README.md setup").length, 1);
+  });
+  test("`node build.js > out.js` does not scan the output target", () => {
+    assert.equal(crit({ "package/build.js": "console.log(1)\n", "package/out.js": `${CURL_SH}\n` }, "node build.js > out.js").length, 0);
+  });
+});
