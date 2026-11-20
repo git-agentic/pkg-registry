@@ -158,7 +158,7 @@ function makeResolver(files: PackageFile[]): (cmd: string) => PackageFile[] {
     return hit ?? (JS_REF.test(ref) ? suffix(ref) : undefined);
   };
   const resolveWord = (word: string): PackageFile | undefined => {
-    const w = word.replace(/^[("'`]+|[)"'`]+$/g, "");
+    const w = trimPunct(word);
     const direct = resolveRef(w);
     if (direct) return direct;
     for (const piece of w.split(WORD_PIECES)) {
@@ -170,15 +170,15 @@ function makeResolver(files: PackageFile[]): (cmd: string) => PackageFile[] {
   const isPrefix = (words: string[], i: number) =>
     /^[A-Za-z_]\w*=/.test(words[i]!) || WRAPPERS.has(words[i]!) || (i > 0 && WRAPPERS.has(words[i - 1]!) && words[i]!.startsWith("-"));
 
-  return (cmd) => {
-    const out = new Set<PackageFile>();
+  /** Scan one command line; `sh -c "<code>"` code is scanned again as a command line (depth-bounded, so linear). */
+  const scan = (cmd: string, out: Set<PackageFile>, depth: number): void => {
     for (const simple of cmd.split(SIMPLE_COMMAND_SPLIT)) {
-      const words = simple.split(/\s+/).filter(Boolean);
+      const words = simple.split(/\s+/).filter(Boolean).map(unquote);
       let i = 0;
       while (i < words.length && isPrefix(words, i)) i++;
       const command = words[i];
       if (!command) continue;
-      const name = command.replace(/^[("'`]+/, "");
+      const name = trimPunct(command);
       const interpreter = name.slice(name.lastIndexOf("/") + 1);
       const inline = Object.hasOwn(INLINE_FLAG, interpreter) ? INLINE_FLAG[interpreter] : undefined;
       // The command word itself may be a package script (`./setup`).
@@ -194,8 +194,20 @@ function makeResolver(files: PackageFile[]): (cmd: string) => PackageFile[] {
         const w = words[j]!;
         if (inline && w.startsWith("-")) {
           if (inline.test(w)) {
-            if (!w.includes("=")) j++; // skip the inline code word; code-extension operands still count
             found = true; // later extension-less operands are arguments to that inline code, not scripts
+            let code = w.includes("=") ? w.slice(w.indexOf("=") + 1) : "";
+            if (!w.includes("=")) {
+              // The code word may span several whitespace-split words when quoted.
+              const first = words[j + 1] ?? "";
+              const q = first[0] === "'" || first[0] === '"' ? first[0] : "";
+              const parts = [first];
+              j++;
+              if (q && !(first.length > 1 && first.endsWith(q))) {
+                while (j + 1 < words.length && !words[j]!.endsWith(q)) parts.push(words[++j]!);
+              }
+              code = parts.join(" ");
+            }
+            if (inline === SHELL_INLINE && depth < MAX_INLINE_DEPTH) scan(unquote(code), out, depth + 1);
             continue;
           }
           const m = CODE_VALUE_FLAG.exec(w);
@@ -213,6 +225,29 @@ function makeResolver(files: PackageFile[]): (cmd: string) => PackageFile[] {
         }
       }
     }
+  };
+
+  return (cmd) => {
+    const out = new Set<PackageFile>();
+    scan(cmd, out, 0);
     return [...out];
   };
+}
+
+const MAX_INLINE_DEPTH = 3;
+const isPunct = (c: string | undefined) => c === "(" || c === ")" || c === '"' || c === "'" || c === "`";
+
+/** Trim quote/paren punctuation from both ends with two pointers (a `)+$` regex is quadratic on `)))…x`). */
+function trimPunct(w: string): string {
+  let i = 0;
+  let j = w.length;
+  while (i < j && isPunct(w[i])) i++;
+  while (j > i && isPunct(w[j - 1])) j--;
+  return w.slice(i, j);
+}
+
+/** Strip one pair of matching surrounding quotes (`'node'` → `node`). */
+function unquote(w: string): string {
+  const q = w[0];
+  return w.length >= 2 && (q === "'" || q === '"' || q === "`") && w[w.length - 1] === q ? w.slice(1, -1) : w;
 }
