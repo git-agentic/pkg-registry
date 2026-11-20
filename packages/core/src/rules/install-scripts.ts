@@ -32,24 +32,30 @@ export const installScriptsRule: Rule = {
     }
 
     const findings: Finding[] = [];
-    const referencedFiles = makeResolver(input.files);
+    const referencedFiles = makeResolver(input.files, scripts);
 
     for (const hook of LIFECYCLE) {
       const cmd = scripts[hook];
       if (typeof cmd !== "string" || !cmd) continue; // npm ignores non-string hooks; one must not throw the rule away
 
-      // What does the lifecycle command itself do?
-      const inlineDangers = DANGER_IN_SCRIPT.filter((d) => d.re.test(cmd));
+      // If it runs a local script file or a package script, inspect those too.
+      const { files: referenced, scripts: followed } = referencedFiles(cmd);
 
-      // If it runs a local script file, inspect that file's contents too.
-      const referenced = referencedFiles(cmd);
+      // What does the lifecycle command itself do? Followed script bodies get the same check.
+      const inlineDangers = DANGER_IN_SCRIPT.filter((d) => d.re.test(cmd));
+      const followedDangers = followed.flatMap(([name, body]) =>
+        DANGER_IN_SCRIPT.filter((d) => d.re.test(body)).map((d) => ({
+          why: d.why,
+          ev: { file: "package/package.json", snippet: `"${name}": "${truncate(body, 120)}"` },
+        })),
+      );
       const fileDangers = referenced.flatMap((f) =>
         DANGER_IN_SCRIPT.flatMap((d) =>
           scanLines(f, d.re, 2).map((ev) => ({ why: d.why, ev })),
         ),
       );
 
-      if (inlineDangers.length === 0 && fileDangers.length === 0) {
+      if (inlineDangers.length === 0 && fileDangers.length === 0 && followedDangers.length === 0) {
         findings.push(
           mkFinding({
             ruleId: this.id,
@@ -64,10 +70,11 @@ export const installScriptsRule: Rule = {
       }
 
       const reasons = [
-        ...new Set([...inlineDangers.map((d) => d.why), ...fileDangers.map((d) => d.why)]),
+        ...new Set([...inlineDangers, ...followedDangers, ...fileDangers].map((d) => d.why)),
       ];
       const evidence = [
         { file: "package/package.json", snippet: `"${hook}": "${truncate(cmd, 120)}"` },
+        ...followedDangers.map((d) => d.ev),
         ...fileDangers.map((d) => d.ev),
       ];
       findings.push(
@@ -162,7 +169,7 @@ interface TrieNode {
  * nothing, and all work is linear in the command and total path length: exact paths
  * through a Map, JS suffixes through a reverse component trie (O(token components)).
  */
-function makeResolver(files: PackageFile[]): (cmd: string) => PackageFile[] {
+function makeResolver(files: PackageFile[], scripts: Record<string, string>): (cmd: string) => { files: PackageFile[]; scripts: [string, string][] } {
   let byPath: Map<string, PackageFile> | undefined;
   let trie: TrieNode | undefined;
   const exact = (p: string) => (byPath ??= new Map(files.map((f) => [f.path, f] as const))).get(p);
@@ -222,7 +229,41 @@ function makeResolver(files: PackageFile[]): (cmd: string) => PackageFile[] {
   const isPrefix = (words: string[], i: number) =>
     /^[A-Za-z_]\w*=/.test(words[i]!) || WRAPPERS.has(words[i]!) || (i > 0 && WRAPPERS.has(words[i - 1]!) && words[i]!.startsWith("-"));
 
-  /** Scan one command line; `sh -c "<code>"` code is scanned again as a command line (depth-bounded, so linear). */
+  // Package scripts reached from a command line, scanned from a worklist (not recursion): each name once, so
+  // the work is bounded by the number of scripts and a long chain cannot overflow the stack.
+  let visited = new Set<string>();
+  let queue: [string, string][] = [];
+  const enqueue = (n: string) => {
+    const body = Object.hasOwn(scripts, n) ? scripts[n] : undefined;
+    if (typeof body === "string" && !visited.has(n)) { visited.add(n); queue.push([n, body]); }
+  };
+  /**
+   * Deliberate over-following: after `npm`/`pnpm`/`yarn`/`bun`, every word is treated as a script name, and
+   * so is each script a built-in command of that name runs (`PM_COMMANDS`). Each gets its `pre`/`post` scripts.
+   * Undefined names are skipped by `enqueue`. A script that does not run costs a false positive only if it is
+   * itself dangerous; missing one that runs is a bypass.
+   */
+  const followScriptWords = (words: string[], from: number, out: Set<PackageFile>): void => {
+    // Any package-manager invocation may run the install lifecycle (`npm ci`, bare `yarn`, an alias nobody listed).
+    for (const n of INSTALL_SCRIPTS) { enqueue(`pre${n}`); enqueue(n); enqueue(`post${n}`); } // npm runs preprepare/postprepare too
+    for (let j = from; j < words.length; j++) {
+      const w = words[j]!;
+      for (const x of [w, ...(PM_COMMANDS.get(w) ?? [])]) {
+        enqueue(`pre${x}`);
+        enqueue(x);
+        enqueue(`post${x}`);
+      }
+      // `npm start` with no `start` script runs `node server.js`.
+      if ((w === "start" || w === "restart") && !(Object.hasOwn(scripts, "start") && typeof scripts.start === "string" && scripts.start !== "")) {
+        const hit = exact("package/server.js");
+        if (hit) out.add(hit);
+      }
+    }
+  };
+
+  /**
+   * Scan one command line; `sh -c "<code>"` code is scanned again as a command line (depth-bounded, so linear).
+   */
   const scan = (cmd: string, out: Set<PackageFile>, depth: number): void => {
     // Quote tracking can only ADD coverage: a stray apostrophe (`# it's`) must not hide later commands,
     // so the plain split is scanned too, and `$(...)` / backtick bodies are scanned as command lines.
@@ -253,6 +294,7 @@ function makeResolver(files: PackageFile[]): (cmd: string) => PackageFile[] {
       if (!command) continue;
       const name = trimPunct(command);
       const interpreter = name.slice(name.lastIndexOf("/") + 1);
+      if (PACKAGE_MANAGERS.has(interpreter)) followScriptWords(words, i + 1, out);
       const inline = Object.hasOwn(INLINE_FLAG, interpreter) ? INLINE_FLAG[interpreter] : undefined;
       // The command word itself may be a package script (`./setup`).
       if (!inline) {
@@ -325,12 +367,27 @@ function makeResolver(files: PackageFile[]): (cmd: string) => PackageFile[] {
 
   return (cmd) => {
     const out = new Set<PackageFile>();
+    visited = new Set();
+    queue = [];
     scan(cmd, out, 0);
-    return [...out];
+    for (let q = 0; q < queue.length; q++) scan(queue[q]![1], out, 0); // the queue grows while it is read
+    return { files: [...out], scripts: queue };
   };
 }
 
 const MAX_INLINE_DEPTH = 3;
+const PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun"]);
+// Scripts a built-in package-manager command runs besides the script of its own name (npm lifecycle).
+const INSTALL_SCRIPTS = ["preinstall", "install", "postinstall", "prepublish", "prepare"];
+const PM_COMMANDS = new Map<string, string[]>([
+  ...["t", "tst"].map((c) => [c, ["test"]] as [string, string[]]),
+  // Install scripts are followed for every package-manager command, so install aliases need no entry.
+  ...["it", "install-test", "cit", "install-ci-test", "clean-install-test", "sit"].map((c) => [c, ["test"]] as [string, string[]]),
+  ["restart", ["restart", "stop", "start"]],
+  ["pack", ["prepack", "prepare", "postpack"]],
+  ["publish", ["prepublishOnly", "prepack", "prepare", "postpack", "publish", "postpublish"]],
+  ...["version", "verison"].map((c) => [c, ["preversion", "version", "postversion"]] as [string, string[]]),
+]);
 const isPunct = (c: string | undefined) => c === "(" || c === ")" || c === '"' || c === "'" || c === "`";
 
 /** Trim quote/paren punctuation from both ends with two pointers (a `)+$` regex is quadratic on `)))…x`). */
