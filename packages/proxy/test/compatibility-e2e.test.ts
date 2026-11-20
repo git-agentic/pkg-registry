@@ -194,8 +194,8 @@ describe("Phase 33 npm compatibility surface", () => {
     }
     assert.deepEqual(seen.map((call) => call.path), routes.map((route) => route.path));
     for (const [index, call] of seen.entries()) {
-      // F17: client credentials reach the upstream only on npm's own web login.
-      assert.equal(call.headers.authorization, routes[index]!.path === "/-/v1/login" ? "Bearer upstream-token" : undefined);
+      // F17: the client's token is for Sentinel, never the upstream, on every compat route (login included).
+      assert.equal(call.headers.authorization, undefined);
       assert.equal(call.headers["if-none-match"], "old-etag");
       assert.equal(call.headers["x-probe"], "preserve");
       assert.equal(call.headers["content-encoding"], routes[index]!.encoding);

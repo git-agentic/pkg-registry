@@ -21,27 +21,45 @@ interface LockPackageEntry {
   dev?: boolean;
 }
 
+/** True when `integrity` carries at least one pin in an algorithm the proxy can recompute. */
+function hasKnownPin(integrity: string | undefined): boolean {
+  return typeof integrity === "string" && integrity.split(/\s+/).some((t) => /^(?:sha1|sha256|sha512)-\S/.test(t));
+}
+
 /**
- * True when `resolved` is an http(s) registry tarball URL: the path ends in
- * `/-/<file>.tgz` (npm, yarn and pnpm registries and mirrors all serve this
- * shape). Git specs, github shorthands, codeload tarballs and other schemes
- * fail. shortcut: the file name is not bound to name-version (hand-written
- * test lockfiles use `x.tgz`); the integrity check binds the bytes instead.
+ * True when `resolved` has the shape of an http(s) registry tarball: the path
+ * contains `/-/` and ends in `.tgz` (npm, yarn, pnpm, GitLab's `/-/@scope/n-1.0.0.tgz`).
+ * Shape alone proves nothing about the host, so a registry coordinate also needs
+ * an integrity pin (see `isRegistrySource`); the proxy then checks the pin against
+ * the bytes it audited. shortcut: the file name is not bound to name-version
+ * (hand-written test lockfiles use `x.tgz`).
  */
 function isRegistryTarball(resolved: string): boolean {
   try {
     const u = new URL(resolved);
-    return (u.protocol === "http:" || u.protocol === "https:") && /\/-\/[^/]+\.tgz$/.test(u.pathname);
+    return (u.protocol === "http:" || u.protocol === "https:") && u.pathname.includes("/-/") && u.pathname.endsWith(".tgz");
   } catch {
     return false;
   }
 }
 
-/** Dedupe on name@version; `nonRegistry` is sticky so a git row is never hidden by a registry twin. */
+/** A registry source: registry-shaped URL AND a known-algorithm pin. Otherwise npm fetches unverified bytes. */
+function isRegistrySource(resolved: string, integrity: string | undefined): boolean {
+  return isRegistryTarball(resolved) && hasKnownPin(integrity);
+}
+
+/**
+ * Dedupe on name@version. `nonRegistry` is sticky so a git row is never hidden by a
+ * registry twin, and two entries with different integrity pins conflict: npm would
+ * install one of them, so the coordinate cannot be verified against a single hash.
+ */
 function putCoord(byKey: Map<string, Coordinate>, coord: Coordinate): void {
   const key = `${coord.name}@${coord.version}`;
-  const prev = byKey.get(key)?.nonRegistry;
-  if (prev !== undefined && coord.nonRegistry === undefined) coord.nonRegistry = prev;
+  const prev = byKey.get(key);
+  if (prev?.nonRegistry !== undefined && coord.nonRegistry === undefined) coord.nonRegistry = prev.nonRegistry;
+  if (prev?.integrity && coord.integrity && prev.integrity !== coord.integrity && coord.nonRegistry === undefined) {
+    coord.nonRegistry = "conflicting integrity pins for the same name@version";
+  }
   byKey.set(key, coord);
 }
 
@@ -70,7 +88,7 @@ export function parseLockfile(raw: string, opts: { omitDev?: boolean } = {}): Co
     if (!name || !entry.version) continue;
     const coord: Coordinate = { name, version: entry.version };
     if (entry.integrity) coord.integrity = entry.integrity;
-    if (resolved && !isRegistryTarball(resolved)) coord.nonRegistry = resolved;
+    if (resolved && !isRegistrySource(resolved, entry.integrity)) coord.nonRegistry = resolved;
     putCoord(byKey, coord);
   }
   return [...byKey.values()].sort((a, b) => {
@@ -103,8 +121,11 @@ function parseYarnV1(raw: string): Coordinate[] {
   const flush = () => {
     if (headerName && version) {
       const coord: Coordinate = { name: headerName, version };
-      if (integrity) coord.integrity = integrity;
-      if (resolved && !resolved.startsWith("file:") && !resolved.startsWith("link:") && !isRegistryTarball(resolved)) coord.nonRegistry = resolved;
+      // A `#<40-hex>` fragment on `resolved` is yarn v1's sha1 pin; carry it as an SRI so the proxy verifies it.
+      const frag = resolved ? /#([0-9a-f]{40})$/i.exec(resolved)?.[1] : undefined;
+      const pin = integrity ?? (frag ? "sha1-" + Buffer.from(frag, "hex").toString("base64") : undefined);
+      if (pin) coord.integrity = pin;
+      if (resolved && !resolved.startsWith("file:") && !resolved.startsWith("link:") && !isRegistrySource(resolved, pin)) coord.nonRegistry = resolved;
       putCoord(byKey, coord);
     }
     headerName = null; version = null; integrity = undefined; resolved = undefined;
@@ -206,13 +227,14 @@ export function parsePnpmLock(raw: string, _opts: { omitDev?: boolean } = {}): C
     if (!name || !version) continue;
     const res = entry?.resolution;
     if (res?.directory !== undefined || res?.type === "directory") continue;
+    if (typeof res?.tarball === "string" && (res.tarball.startsWith("file:") || res.tarball.startsWith("link:"))) continue;
     // URL-keyed entries (`name@https://...`) carry the real version in the entry.
     if (/[:/]/.test(version) && typeof entry?.version === "string") version = entry.version;
     const coord: Coordinate = { name, version };
     const integrity = res?.integrity;
     if (integrity) coord.integrity = integrity;
     if (res?.type !== undefined && res.type !== "directory") coord.nonRegistry = `${res.type}:${res.repo ?? ""}#${res.commit ?? ""}`;
-    else if (typeof res?.tarball === "string" && !isRegistryTarball(res.tarball)) coord.nonRegistry = res.tarball;
+    else if (typeof res?.tarball === "string" && !isRegistrySource(res.tarball, integrity)) coord.nonRegistry = res.tarball;
     putCoord(byKey, coord);
   }
   return sortCoords([...byKey.values()]);

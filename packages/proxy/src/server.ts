@@ -4,6 +4,7 @@ import express, { type Request, type Response } from "express";
 import { rateLimit } from "express-rate-limit";
 import {
   runAudit,
+  ENGINE_VERSION,
   score,
   POLICY_SYNTHESIZED_RULE_IDS,
   policyHashOf,
@@ -250,25 +251,18 @@ export function createServer(opts: ServerOptions) {
       return;
     }
     const headers: Record<string, string> = {};
-    // Client credentials are for this proxy, not the upstream: only npm's own web login needs them.
-    const forwardsCredentials = req.method === "POST" && req.path === "/-/v1/login";
+    // Client credentials are for this proxy, not the upstream. npm attaches the token configured for the
+    // registry URL, which here is the Sentinel token, so no route (login included) may forward them.
     for (const [name, value] of Object.entries(req.headers)) {
       if (hopByHopHeaders.has(name) || value === undefined) continue;
-      if (!forwardsCredentials && clientCredentialHeaders.has(name)) continue;
+      if (clientCredentialHeaders.has(name)) continue;
       headers[name] = Array.isArray(value) ? value.join(", ") : value;
     }
     try {
       let body: Buffer | undefined;
       if (req.method !== "GET" && req.method !== "HEAD") {
-        const chunks: Buffer[] = [];
-        let size = 0;
-        for await (const chunk of req) {
-          const bytes = Buffer.from(chunk as Uint8Array);
-          size += bytes.length;
-          if (size > maxCompatibilityBodyBytes) throw new HttpError(413, "compatibility request exceeds 8 MiB");
-          chunks.push(bytes);
-        }
-        if (size) body = Buffer.concat(chunks);
+        const bytes = await readCapped(req, maxCompatibilityBodyBytes);
+        if (bytes.length) body = bytes;
       }
       const response = await upstream.proxyRegistryRequest(req.originalUrl, {
         method: req.method, headers, ...(body ? { body } : {}),
@@ -277,7 +271,12 @@ export function createServer(opts: ServerOptions) {
         if (!hopByHopHeaders.has(name.toLowerCase())) res.setHeader(name, value);
       }
       res.status(response.status).send(response.body);
-    } catch (error) { sendError(res, error); }
+    } catch (error) {
+      // A 413 must reach a client that is still uploading: close after the response, and keep the
+      // request flowing (discarded, never buffered) so the socket is not reset under the 413.
+      if (error instanceof HttpError && error.status === 413) res.setHeader("Connection", "close");
+      sendError(res, error);
+    }
   }
   app.get("/-/v1/search", rateGate, proxyCompatibility);
   app.post("/-/npm/v1/security/advisories/bulk", rateGate, proxyCompatibility);
@@ -340,6 +339,24 @@ export function createServer(opts: ServerOptions) {
   // overlapping-request window.
   const inFlight = new Map<string, Promise<{ report: AuditReport; tarball: Buffer }>>();
 
+  // Native audits recorded by an older engine are recomputed from the stored bytes (never upstream) and
+  // cached here, keyed by name, version and integrity. The stored publication record is never rewritten.
+  const reauditedNative = new Map<string, Audit>();
+  async function currentEngineAudit(pkg: string, version: string, stored: Audit, tarball: Buffer): Promise<Audit> {
+    if (stored.engine?.version === ENGINE_VERSION) return stored;
+    const key = `${pkg}\u0000${version}\u0000${stored.meta.integrity}`;
+    const cached = reauditedNative.get(key);
+    if (cached) return cached;
+    const attestations = privateStore.getAttestations(pkg, version);
+    const fresh = await runAudit({
+      meta: { ...stored.meta, integrity: integrityOf(tarball) }, tarball, signatures: null, hasProvenance: attestations !== undefined,
+      attestations: attestations ?? null, signingKeys, trustMaterial: opts.trustMaterial, extractLimits,
+      advisories: [...(advisories ?? []), ...retractionCorpus.advisories], vulnerabilities,
+    });
+    reauditedNative.set(key, fresh);
+    return fresh;
+  }
+
   /** Audit a specific version, using the coordinate-and-integrity-keyed verdict cache. */
   async function auditVersion(
     pkg: string,
@@ -352,7 +369,7 @@ export function createServer(opts: ServerOptions) {
       const cachedAudit = privateStore.getAudit(pkg, version);
       const tarball = privateStore.getTarball(pkg, version);
       if (!cachedAudit || !tarball) throw new HttpError(404, `private package not found ${pkg}@${version}`);
-      const report = scoreAudit(cachedAudit);
+      const report = scoreAudit(await currentEngineAudit(pkg, version, cachedAudit, tarball));
       store.put(report); // populate verdict store so /-/approvals can find the integrity
       return { report, tarball };
     }
@@ -702,7 +719,9 @@ export function createServer(opts: ServerOptions) {
     // (or a verdict) with a registry coordinate: the audited bytes are not its bytes.
     type TreeCoord = { name: string; version: string; integrity?: string; nonRegistry?: string };
     const validCoords = coords as TreeCoord[];
-    const keyOf = (co: TreeCoord) => co.nonRegistry === undefined ? `${co.name}@${co.version}` : `${co.name}@${co.version}\u0000non-registry:${co.nonRegistry}`;
+    // The key carries the non-registry marker and the integrity pin: each distinct pin is verified
+    // against the served bytes, and a git row never shares a registry row's verdict.
+    const keyOf = (co: TreeCoord) => `${co.name}@${co.version}\u0000${co.nonRegistry === undefined ? "" : `non-registry:${co.nonRegistry}`}\u0000${co.integrity ?? ""}`;
     const distinctKeys: string[] = [];
     const distinctByKey = new Map<string, TreeCoord>();
     for (const co of validCoords) {
@@ -719,10 +738,10 @@ export function createServer(opts: ServerOptions) {
       8,
       async (co) => {
         if (co.nonRegistry !== undefined) {
-          const spec = co.nonRegistry.replace(/[\u0000-\u001f\u007f-\u009f]/g, "?").slice(0, 200);
+          // Report the source kind, never the raw spec: it can carry credentials or signed query strings.
           return {
             name: co.name, version: co.version, status: "block" as const, score: null,
-            topFinding: `non-registry-source: ${co.name}@${co.version} resolves to ${spec}, which cannot be audited through the proxy`,
+            topFinding: `non-registry-source: ${co.name}@${co.version} resolves to a ${sourceKind(co.nonRegistry)} source, which cannot be audited through the proxy`,
             topFindingRuleId: null, error: null, provenance: null, integrityMismatch: false, vulnerabilities: 0,
           };
         }
@@ -731,16 +750,10 @@ export function createServer(opts: ServerOptions) {
           const quarantined = applyQuarantine(applyRetraction(audited).report);
           const cd = await cooldownFor(co.name, co.version);
           const report = applyCooldown(quarantined, cd);
-          const claimed = typeof co.integrity === "string" ? co.integrity : null;
-          // Verify same-algorithm: recompute the SERVED bytes' digest in the lockfile's
-          // own algorithm so a legacy sha1/sha256 pin is genuinely checked (not skipped —
-          // skipping would fail-open) and never false-flagged against our sha512 recompute.
-          // A truly-unknown algorithm can't be recomputed, so it's left unverified (skip).
-          const algo = claimed?.split("-", 1)[0];
-          const mismatch =
-            claimed !== null && (algo === "sha1" || algo === "sha256" || algo === "sha512")
-              ? claimed !== integrityOfAlgo(tarball, algo)
-              : false;
+          // Verify every known-algorithm token against the SERVED bytes in its own algorithm, so a
+          // legacy sha1/sha256 pin is genuinely checked. A claim with no known algorithm cannot be
+          // recomputed and is a mismatch: skipping it would fail open.
+          const mismatch = typeof co.integrity === "string" && co.integrity.trim() !== "" && integrityClaimMismatch(tarball, co.integrity);
           return {
             name: co.name, version: co.version,
             status: mismatch ? "block" as const : report.verdict,
@@ -1388,6 +1401,67 @@ function versionFromFilename(pkg: string, file: string): string | null {
 
 function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Buffer a request body up to `max` bytes. Past the cap it stops buffering and discards the rest, and
+ * rejects with 413 once the client has finished uploading, so the 413 is not lost to a socket reset
+ * while the client is still writing. The discard is bounded (extra bytes and time); past either bound
+ * the 413 is sent anyway and the connection closes.
+ */
+const DRAIN_EXTRA_BYTES = 16 * 1024 * 1024;
+const DRAIN_MAX_MS = 5_000;
+function readCapped(req: Request, max: number): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let over = false;
+    let done = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const tooBig = () => {
+      if (done) return;
+      done = true;
+      if (timer) clearTimeout(timer);
+      reject(new HttpError(413, `compatibility request exceeds ${max / (1024 * 1024)} MiB`));
+    };
+    req.on("data", (chunk: Buffer) => {
+      if (done) return; // keep consuming (discarding) so the socket is not reset under the response
+      size += chunk.length;
+      if (over) { if (size > max + DRAIN_EXTRA_BYTES) tooBig(); return; }
+      if (size > max) {
+        over = true;
+        chunks.length = 0;
+        timer = setTimeout(tooBig, DRAIN_MAX_MS);
+        timer.unref();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => {
+      if (done) return;
+      if (over) return tooBig();
+      done = true;
+      resolve(Buffer.concat(chunks));
+    });
+    req.on("error", (e) => { if (!done) { done = true; reject(e); } });
+  });
+}
+
+/** Coarse source kind for a non-registry lockfile spec: never echo the raw string (it can carry credentials). */
+function sourceKind(spec: string): "git" | "url" | "other" {
+  if (/(^|@)(git(\+[a-z]+)?|github|gitlab|bitbucket|gist):/i.test(spec) || /\.git(#|$)/i.test(spec)) return "git";
+  if (/(^|@)(https?|ftp):\/\//i.test(spec)) return "url";
+  return "other";
+}
+
+/**
+ * True when a lockfile-claimed SRI cannot be matched to the served bytes: some known-algorithm token
+ * differs, or there is no known-algorithm token to check (unknown algorithms must not fail open).
+ */
+function integrityClaimMismatch(tarball: Buffer, claimed: string): boolean {
+  const known = claimed.trim().split(/\s+/).filter((t) => /^(sha1|sha256|sha512)-/.test(t));
+  if (known.length === 0) return true;
+  return known.some((t) => t !== integrityOfAlgo(tarball, t.split("-", 1)[0] as "sha1" | "sha256" | "sha512"));
 }
 
 function sendError(res: Response, err: unknown): void {
