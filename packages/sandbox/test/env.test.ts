@@ -83,3 +83,16 @@ describe("scrubEnv npm narrowing + credential-screen", () => {
     for (const k of ["npm_config_cache","PATH","npm_package_name"]) assert.ok(!CREDENTIAL_ENV_RE.test(k), k);
   });
 });
+
+describe("scrubEnv drops the ambient local-IPC locators", () => {
+  // Abstract unix sockets stay reachable when network is approved (no netns); these are how a
+  // script finds the X server, the session bus, the ssh agent and the runtime dir.
+  test("DISPLAY, DBUS_SESSION_BUS_ADDRESS, SSH_AUTH_SOCK and XDG_RUNTIME_DIR never reach the script", () => {
+    const out = scrubEnv({
+      PATH: "/usr/bin", DISPLAY: ":0", WAYLAND_DISPLAY: "wayland-0", DBUS_SESSION_BUS_ADDRESS: "unix:abstract=/tmp/dbus-x",
+      SSH_AUTH_SOCK: "/tmp/ssh-x/agent.1", XDG_RUNTIME_DIR: "/run/user/1000",
+    }, []);
+    for (const k of ["DISPLAY", "WAYLAND_DISPLAY", "DBUS_SESSION_BUS_ADDRESS", "SSH_AUTH_SOCK", "XDG_RUNTIME_DIR"]) assert.equal(out[k], undefined, k);
+    assert.equal(out.PATH, "/usr/bin");
+  });
+});

@@ -65,10 +65,18 @@ describe("/tmp X11 and ssh-agent socket directories", () => {
   test("applies with network approved too", () => {
     assert.ok(joined(generateBwrapArgs([net], opts())).includes("--tmpfs /tmp/ssh-AbC123"));
   });
-  test("a mask that would hide the cwd or project root is skipped", () => {
-    const j = joined(generateBwrapArgs([], opts({ cwd: "/tmp/ssh-AbC123/pkg", projectRoot: "/tmp/ssh-AbC123/pkg" })));
-    assert.ok(!j.includes("--tmpfs /tmp/ssh-AbC123"));
-    assert.ok(j.includes("--tmpfs /tmp/ssh-Zz"));
+  test("a work dir under a directory that would be masked FAILS CLOSED (throws), never skips the mask", () => {
+    for (const dir of ["/tmp/ssh-AbC123/pkg", "/tmp/.X11-unix/x"]) {
+      assert.throws(() => generateBwrapArgs([], opts({ cwd: dir, projectRoot: "/work" })), /bubblewrap enforcement unavailable.*cwd or project root/s, dir);
+      assert.throws(() => generateBwrapArgs([], opts({ cwd: "/work/pkg", projectRoot: dir })), /bubblewrap enforcement unavailable/, dir);
+    }
+  });
+  test("same for a work dir under /run/user/<uid>", () => {
+    assert.throws(() => generateBwrapArgs([net], { ...OPTS, cwd: "/run/user/1000/app", projectRoot: "/run/user/1000/app", pathExists: exists(["/run/user/1000"]) }), /unavailable/);
+  });
+  test("an ABSENT directory or an explicit grant covering it does not throw", () => {
+    assert.doesNotThrow(() => generateBwrapArgs([], { ...OPTS, cwd: "/tmp/ssh-gone/pkg", projectRoot: "/tmp/ssh-gone/pkg", pathExists: exists([]) }));
+    assert.doesNotThrow(() => generateBwrapArgs([fsCap("/tmp/ssh-AbC123")], opts({ cwd: "/tmp/ssh-AbC123/pkg", projectRoot: "/tmp/ssh-AbC123/pkg" })));
   });
   test("a filesystem grant covering the directory lifts the mask", () => {
     assert.ok(!joined(generateBwrapArgs([fsCap("/tmp/.X11-unix")], opts())).includes("--tmpfs /tmp/.X11-unix"));
