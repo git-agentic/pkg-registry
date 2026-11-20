@@ -38,18 +38,24 @@ export const installScriptsRule: Rule = {
       const cmd = scripts[hook];
       if (typeof cmd !== "string" || !cmd) continue; // npm ignores non-string hooks; one must not throw the rule away
 
-      // What does the lifecycle command itself do?
-      const inlineDangers = DANGER_IN_SCRIPT.filter((d) => d.re.test(cmd));
+      // If it runs a local script file or a package script, inspect those too.
+      const { files: referenced, scripts: followed } = referencedFiles(cmd);
 
-      // If it runs a local script file, inspect that file's contents too.
-      const referenced = referencedFiles(cmd);
+      // What does the lifecycle command itself do? Followed script bodies get the same check.
+      const inlineDangers = DANGER_IN_SCRIPT.filter((d) => d.re.test(cmd));
+      const followedDangers = followed.flatMap(([name, body]) =>
+        DANGER_IN_SCRIPT.filter((d) => d.re.test(body)).map((d) => ({
+          why: d.why,
+          ev: { file: "package/package.json", snippet: `"${name}": "${truncate(body, 120)}"` },
+        })),
+      );
       const fileDangers = referenced.flatMap((f) =>
         DANGER_IN_SCRIPT.flatMap((d) =>
           scanLines(f, d.re, 2).map((ev) => ({ why: d.why, ev })),
         ),
       );
 
-      if (inlineDangers.length === 0 && fileDangers.length === 0) {
+      if (inlineDangers.length === 0 && fileDangers.length === 0 && followedDangers.length === 0) {
         findings.push(
           mkFinding({
             ruleId: this.id,
@@ -64,10 +70,11 @@ export const installScriptsRule: Rule = {
       }
 
       const reasons = [
-        ...new Set([...inlineDangers.map((d) => d.why), ...fileDangers.map((d) => d.why)]),
+        ...new Set([...inlineDangers, ...followedDangers, ...fileDangers].map((d) => d.why)),
       ];
       const evidence = [
         { file: "package/package.json", snippet: `"${hook}": "${truncate(cmd, 120)}"` },
+        ...followedDangers.map((d) => d.ev),
         ...fileDangers.map((d) => d.ev),
       ];
       findings.push(
@@ -162,7 +169,7 @@ interface TrieNode {
  * nothing, and all work is linear in the command and total path length: exact paths
  * through a Map, JS suffixes through a reverse component trie (O(token components)).
  */
-function makeResolver(files: PackageFile[], scripts: Record<string, string>): (cmd: string) => PackageFile[] {
+function makeResolver(files: PackageFile[], scripts: Record<string, string>): (cmd: string) => { files: PackageFile[]; scripts: [string, string][] } {
   let byPath: Map<string, PackageFile> | undefined;
   let trie: TrieNode | undefined;
   const exact = (p: string) => (byPath ??= new Map(files.map((f) => [f.path, f] as const))).get(p);
@@ -224,6 +231,7 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
 
   // Script names already followed in this resolution: a self-referencing script terminates and each runs once.
   let followed = new Set<string>();
+  let followedBodies: [string, string][] = [];
   /** The script a package-manager command runs (`npm run x`, `yarn x`), or undefined. `yarn x` counts only when `x` is defined. */
   const scriptRef = (words: string[], i: number): string | undefined => {
     const pm = trimPunct(words[i]!);
@@ -232,8 +240,9 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
     const args = words.slice(i + 1).filter((w) => !w.startsWith("-")); // `npm run --silent x`
     const explicit = pmName === "yarn" ? args[0] === "run" : args[0] === "run" || args[0] === "run-script";
     const name = args[explicit ? 1 : 0];
-    if (!name || (!explicit && pmName !== "yarn") || !Object.hasOwn(scripts, name) || typeof scripts[name] !== "string") return undefined;
-    return name;
+    if (!name || (!explicit && pmName !== "yarn")) return undefined;
+    // Bare `yarn x` is a script only when `x` is defined (`yarn install` is a builtin); `npm run x` follows pre/post even without `x`.
+    return explicit || Object.hasOwn(scripts, name) ? name : undefined;
   };
 
   /**
@@ -269,9 +278,15 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
       const command = words[i];
       if (!command) continue;
       const ref = scriptRef(words, i);
-      if (ref !== undefined && hops < MAX_SCRIPT_HOPS && !followed.has(ref)) {
-        followed.add(ref);
-        scan(scripts[ref]!, out, depth, hops + 1);
+      // npm, pnpm and yarn v1 also run a defined `pre<name>` and `post<name>` around `<name>`.
+      if (ref !== undefined && hops < MAX_SCRIPT_HOPS) {
+        for (const n of [`pre${ref}`, ref, `post${ref}`]) {
+          const body = Object.hasOwn(scripts, n) ? scripts[n] : undefined;
+          if (typeof body !== "string" || followed.has(n)) continue;
+          followed.add(n);
+          followedBodies.push([n, body]);
+          scan(body, out, depth, hops + 1);
+        }
       }
       const name = trimPunct(command);
       const interpreter = name.slice(name.lastIndexOf("/") + 1);
@@ -348,8 +363,9 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
   return (cmd) => {
     const out = new Set<PackageFile>();
     followed = new Set();
+    followedBodies = [];
     scan(cmd, out, 0);
-    return [...out];
+    return { files: [...out], scripts: followedBodies };
   };
 }
 

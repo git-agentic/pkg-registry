@@ -71,6 +71,33 @@ describe("install hooks follow package-manager script references", () => {
     assert.deepEqual(sev(files, scripts), ["low"]); // beyond the hop bound: no crash, no resolution
   });
 
+  test("an inline payload in the followed script body is critical, and the evidence names the script", () => {
+    const findings = runRules(inputFor({}, { scripts: { postinstall: "npm run setup", setup: CURL_SH } }))
+      .filter((x) => x.ruleId === "install-scripts");
+    assert.deepEqual(findings.map((x) => x.severity), ["critical"]);
+    assert.ok(findings[0]!.evidence.some((e) => e.snippet.startsWith('"setup":')));
+    for (const hook of ["pnpm run setup", "yarn run setup", "yarn setup", "npm run-script setup"]) {
+      assert.deepEqual(sev({}, { postinstall: hook, setup: CURL_SH }), ["critical"]);
+    }
+    // chained, and bounded like the file case
+    assert.deepEqual(sev({}, { postinstall: "npm run a", a: "npm run b", b: CURL_SH }), ["critical"]);
+  });
+
+  test("a payload in `prebuild` / `postbuild` reached through `npm run build` is critical", () => {
+    assert.deepEqual(sev({}, { postinstall: "npm run build", build: "tsc", prebuild: CURL_SH }), ["critical"]);
+    assert.deepEqual(sev({}, { postinstall: "pnpm run build", build: "tsc", postbuild: CURL_SH }), ["critical"]);
+    assert.deepEqual(sev({}, { postinstall: "yarn build", build: "tsc", prebuild: CURL_SH }), ["critical"]);
+    assert.deepEqual(sev({}, { postinstall: "yarn build", prebuild: CURL_SH }), ["low"]); // bare yarn needs `build` defined
+    assert.deepEqual(sev(files, { postinstall: "npm run build", build: "tsc", prebuild: "node setup.js" }), ["critical"]);
+    // pre/post of an undefined main script still run
+    assert.deepEqual(sev({}, { postinstall: "npm run build", prebuild: CURL_SH }), ["critical"]);
+  });
+
+  test("a benign `prebuild` stays clean; `pre<name>` is not run for an unrelated name", () => {
+    assert.deepEqual(sev({ "package/clean.js": "console.log(1)\n" }, { postinstall: "npm run build", build: "tsc", prebuild: "node clean.js" }), ["low"]);
+    assert.deepEqual(sev({}, { postinstall: "npm run build", build: "tsc", preother: CURL_SH }), ["low"]);
+  });
+
   test("inherited object keys are not scripts", () => {
     assert.deepEqual(sev(files, { postinstall: "npm run constructor" }), ["low"]);
     assert.deepEqual(sev(files, { postinstall: "yarn toString" }), ["low"]);
