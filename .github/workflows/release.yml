@@ -23,7 +23,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag, e.g. v0.1.0-alpha.2 (must already point at this commit for Stage B)"
+        description: "Release tag, e.g. v0.1.0-alpha.3 (must already point at this commit for Stage B)"
         required: true
       publish:
         description: "Run Stage B (publish to npm + GitHub prerelease)"
