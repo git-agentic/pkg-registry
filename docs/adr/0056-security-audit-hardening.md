@@ -35,9 +35,10 @@ decisions. Findings that stayed as documented trade-offs are listed at the end.
    check alone hid real code. Real binaries are still not retained. This
    replaces the "never retained" rule in ADR-0049.
 3. **Entry paths are normalized like npm.** The first path segment is replaced
-   by `package`, a backslash counts as a path separator (Windows clients extract
-   `package\\package.json` as the manifest), the rest is normalized as a posix
-   path, and `..` is rejected. Root manifests are counted
+   by `package`, trailing separators are dropped, the rest is normalized as a
+   posix path, and `..` is rejected. A backslash is a filename character on POSIX
+   and a separator on Windows, so the root-manifest count uses both readings,
+   while retained files keep the POSIX path. Root manifests are counted
    case-insensitively after normalization. A new synthesized finding,
    `manifest-confusion` (critical, category `metadata`), fires when there is
    more than one root manifest, a case-variant manifest, or a root manifest too
