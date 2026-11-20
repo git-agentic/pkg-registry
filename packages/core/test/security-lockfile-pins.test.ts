@@ -173,4 +173,15 @@ describe("name and version are sanitized so source text never reaches the coordi
     assert.equal(by["@s/q@1.0.0"]!.integrity, "sha512-Q==");
     for (const c of cs) assert.equal(c.nonRegistry, undefined, `${c.name}@${c.version}`);
   });
+
+  test("duplicates with pins in DIFFERENT algorithms merge into one SRI; the same algorithm with another digest conflicts (PR #84)", () => {
+    const base = { version: "1.0.0", resolved: "https://r.example/x/-/x-1.0.0.tgz" };
+    const merged = get(npm({ "node_modules/x": { ...base, integrity: "sha1-AAAA" }, "node_modules/a/node_modules/x": { ...base, integrity: "sha512-BBBB" } }), "x");
+    assert.equal(merged.nonRegistry, undefined);
+    assert.equal(merged.integrity, "sha1-AAAA sha512-BBBB");
+    const again = get(npm({ "node_modules/x": { ...base, integrity: "sha1-AAAA sha512-BBBB" }, "node_modules/a/node_modules/x": { ...base, integrity: "sha512-BBBB" } }), "x");
+    assert.equal(again.integrity, "sha1-AAAA sha512-BBBB", "tokens are deduped");
+    const conflict = get(npm({ "node_modules/x": { ...base, integrity: "sha1-AAAA sha512-BBBB" }, "node_modules/a/node_modules/x": { ...base, integrity: "sha512-CCCC" } }), "x");
+    assert.match(conflict.nonRegistry ?? "", /conflicting integrity pins/);
+  });
 });

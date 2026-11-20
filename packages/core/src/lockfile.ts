@@ -80,10 +80,29 @@ function putCoord(byKey: Map<string, Coordinate>, raw: Coordinate): void {
   const prev = byKey.get(key);
   if (prev?.nonRegistry !== undefined && coord.nonRegistry === undefined) coord.nonRegistry = prev.nonRegistry;
   if (prev?.integrity && !coord.integrity) coord.integrity = prev.integrity;
-  else if (prev?.integrity && coord.integrity && prev.integrity !== coord.integrity && coord.nonRegistry === undefined) {
-    coord.nonRegistry = "conflicting integrity pins for the same name@version";
+  else if (prev?.integrity && coord.integrity) {
+    const merged = mergePins(prev.integrity, coord.integrity);
+    if (merged === null) {
+      if (coord.nonRegistry === undefined) coord.nonRegistry = "conflicting integrity pins for the same name@version";
+    } else coord.integrity = merged;
   }
   byKey.set(key, coord);
+}
+
+/**
+ * Merge two SRI strings: tokens in different algorithms are all kept (space-separated, deduped; the proxy
+ * checks every token against the served bytes). The same algorithm with two different digests is a real
+ * conflict: null.
+ */
+function mergePins(a: string, b: string): string | null {
+  const byAlgo = new Map<string, string>();
+  for (const t of `${a} ${b}`.split(/\s+/).filter(Boolean)) {
+    const algo = t.split("-", 1)[0]!;
+    const seen = byAlgo.get(algo);
+    if (seen !== undefined && seen !== t) return null;
+    byAlgo.set(algo, t);
+  }
+  return [...byAlgo.values()].join(" ");
 }
 
 /**
