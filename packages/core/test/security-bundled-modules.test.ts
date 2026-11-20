@@ -162,6 +162,14 @@ describe("round 2 hardening", () => {
     const ms = performance.now() - t0;
     assert.ok(ms < 1000, `took ${ms} ms`);
   });
+  test("a span ends where the quote state is balanced, across words that reopen a quote", () => {
+    assert.deepEqual(sev("A='x y'z'w q' node setup", { "package/setup": PAYLOAD }), ["critical"]);
+    assert.deepEqual(sev("A='x y'z'w q' node setup", { "package/setup": BENIGN }), ["low"]);
+  });
+  test("NODE_OPTIONS is also scanned after shell quote removal", () => {
+    assert.deepEqual(sev("NODE_OPTIONS=--require=./a'b'.js node -v", { "package/ab.js": PAYLOAD }), ["critical"]);
+    assert.deepEqual(sev("NODE_OPTIONS=--require=./a'b'.js node -v", { "package/ab.js": BENIGN }), ["low"]);
+  });
   test("a closing quote followed by an unquoted suffix still ends the span", () => {
     assert.deepEqual(sev("A='x y'z NODE_OPTIONS=--require=./h node -v", { "package/h.js": PAYLOAD }), ["critical"]);
     assert.deepEqual(sev("A='x y'z NODE_OPTIONS=--require=./h node -v", { "package/h.js": BENIGN }), ["low"]);

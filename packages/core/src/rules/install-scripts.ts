@@ -427,14 +427,14 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
       // Indexes of words ending in each quote char, built once per command so repeated inline flags
       // do not rescan the remaining arguments.
       const closers: Record<string, number[] | undefined> = {};
-      const nextClose = (q: string, from: number, anywhere = false): number | undefined => {
-        const key = anywhere ? `${q}*` : q;
-        const list = (closers[key] ??= rawWords.flatMap((rw, k) => ((anywhere ? hasUnescaped(rw, q) : rw.endsWith(q)) ? [k] : [])));
+      const nextClose = (q: string, from: number): number | undefined => {
+        const list = (closers[q] ??= rawWords.flatMap((rw, k) => (rw.endsWith(q) ? [k] : [])));
         let lo = 0, hi = list.length;
         while (lo < hi) { const mid = (lo + hi) >> 1; if (list[mid]! < from) lo = mid + 1; else hi = mid; }
         return list[lo];
       };
       let i = 0;
+      let walkBudget = 2 * rawWords.length + 8; // total words the quote walks below may read in this command
       let viaWrapper = false; // after `env`/`sudo`/... the next word is an external command, never a builtin
       for (; i < words.length && isPrefix(words, i); i++) {
         const local = localCommand(words[i]!, !viaWrapper);
@@ -446,8 +446,14 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
         let val = words[i]!.slice(eq + 1);
         // `NODE_OPTIONS='-r ./hook'`: a quote left open by the word spans to the next word that ends with it. The
         // spanned words are also scanned as a command line of their own, then prefix parsing resumes after the span.
-        const q = openQuote(val);
-        const e = q ? nextClose(q, i + 1, true) : undefined;
+        let q = quoteStep("", val);
+        let e: number | undefined;
+        if (q && walkBudget > 0) { // the span ends at the first word after which the quote state is balanced
+          let k = i + 1;
+          for (; k < rawWords.length && q; k++) q = quoteStep(q, rawWords[k]!);
+          walkBudget -= k - i; // an unbalanced walk (to the end) consumes only its own word, and the budget keeps this linear
+          if (!q) e = k - 1;
+        }
         if (e !== undefined) {
           const spanned = rawWords.slice(i + 1, e + 1).join(" ");
           val += ` ${spanned}`;
@@ -457,6 +463,7 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
         // Node's tokenizer may differ from ours: scan the quote-aware and the plain split, so a difference only adds coverage.
         scanOptionTokens(splitUnquoted(unquote(val)), out);
         scanOptionTokens(unquote(val).split(/\s+/).filter(Boolean), out);
+        scanOptionTokens(removeQuotes(val).split(/\s+/).filter(Boolean), out); // `--require=./a'b'.js` is `./ab.js` to the shell
       }
       const command = words[i];
       if (!command) continue;
@@ -556,9 +563,8 @@ const EXTERNAL_WRAPPERS = new Set(["env", "exec", "nohup", "sudo", "npx", "xargs
 // Builtins of every shell npm may use (sh, bash, dash, zsh, cmd): in direct command position they never run a bundled bin.
 const SHELL_BUILTINS = new Set([":", "[", "cd", "echo", "exit", "export", "false", "printf", "pwd", "read", "set", "shift", "test", "true", "umask", "unset", "wait"]);
 
-/** The quote character a shell word leaves open (`'-r`), counting unescaped quotes; "" when balanced. */
-function openQuote(w: string): string {
-  let q = "";
+/** The quote state (`'`, `"` or "") after reading word `w` from state `q`; a backslash outside single quotes escapes. */
+function quoteStep(q: string, w: string): string {
   for (let i = 0; i < w.length; i++) {
     const c = w[i]!;
     if (c === "\\" && q !== "'") i++;
@@ -568,13 +574,18 @@ function openQuote(w: string): string {
   return q;
 }
 
-/** Whether a word holds an unescaped quote character `q` (it closes a span opened by `q`). */
-function hasUnescaped(w: string, q: string): boolean {
+/** A word after shell quote removal (`a'b'.js` -> `ab.js`). */
+function removeQuotes(w: string): string {
+  let out = "";
+  let q = "";
   for (let i = 0; i < w.length; i++) {
-    if (w[i] === "\\" && q !== "'") i++;
-    else if (w[i] === q) return true;
+    const c = w[i]!;
+    if (c === "\\" && q !== "'" && i + 1 < w.length) out += w[++i];
+    else if (q) { if (c === q) q = ""; else out += c; }
+    else if (c === "'" || c === '"') q = c;
+    else out += c;
   }
-  return false;
+  return out;
 }
 
 /** A declared relative path as npm normalizes it: `\` to `/`, then `path.posix.join("/", v).slice(1)` (clamps `..` at the root). */
