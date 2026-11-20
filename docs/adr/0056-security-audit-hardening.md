@@ -74,7 +74,9 @@ decisions. Findings that stayed as documented trade-offs are listed at the end.
    `.ts`, `.sh`, `.py`, `.pl`, `.rb`) is also scanned, so an unknown wrapper
    (`sudo`, `timeout`, `xargs`) cannot hide a script. Inline-code flags are per
    interpreter (`-c` for shells, `-e`/`-p` for node, and so on), so `sh -e x.sh`
-   still scans `x.sh`. Data arguments such as `README.md` are not scanned. There
+   still scans `x.sh`, and shell `-c` code is parsed as a command line (depth
+   3). Quoted command words are unquoted first. `.py`, `.pl` and `.rb` files
+   are retained. Data arguments such as `README.md` are not scanned. There
    is no token-count cap, so padding cannot hide `node evil`. Residual: the
    command split ignores shell quoting. Base64 markers match any case and `base64url`, since Node
    accepts both, in the obfuscation rule, the loader fallback and the
@@ -140,6 +142,10 @@ decisions. Findings that stayed as documented trade-offs are listed at the end.
     persisted reports whose engine version or revision differs, and the native
     serve path re-audits a stored publication with a stale audit from the stored
     bytes and retained signatures, without rewriting the publication record.
+    History import now stores the verified provenance bundles. An imported
+    version stored before that carries its import-time provenance result into
+    the re-audit (`runAudit` input `provenanceCarryOver`, set only by the proxy
+    and only for imported versions; it was verified against the same bytes).
     Writes to the store file are debounced (about 500 ms) and flushed on exit,
     `SIGTERM` and `SIGINT`.
 
