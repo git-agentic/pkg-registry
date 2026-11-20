@@ -24,6 +24,18 @@ const REQUIRE_OF_PATH = /\brequire\s*\(\s*(?:[^'"`\s)]|`[^`]*\$\{|(['"`])[^'"`\n
 // Node accepts any case and `base64url` as an encoding name.
 const BASE64 = /['"]base64(?:url)?['"]/gi;
 
+/**
+ * Under an overflow the file may use renamed destructured imports (`{readFileSync:r}=require("fs")`),
+ * so a primitive counts when its name merely appears; the pad that defeated the parser must not also
+ * hide a chain that is critical on its own.
+ */
+const LOOSE: Record<"read" | "decode" | "write" | "launch", RegExp> = {
+  read: /\b(?:readFileSync|readFile|createReadStream)\b/,
+  decode: /\b(?:gunzip|inflate|brotliDecompress|unzip)\w*/,
+  write: /\b(?:writeFileSync|writeFile|createWriteStream)\b/,
+  launch: /\b(?:spawn|spawnSync|exec|execSync|execFile|execFileSync)\b|process\.dlopen/,
+};
+
 /** Regex signals for the parse-failure fallback. Detect independently; NEVER claim dataflow. */
 const FALLBACK: Record<"read" | "decode" | "write" | "launch", (src: string) => boolean> = {
   read: (src) => /\b(readFileSync|readFile|createReadStream)\s*\(/.test(src),
@@ -80,7 +92,7 @@ export const nativePayloadLoaderRule: Rule = {
         // Regex fallback — independent signal only, capped below critical. Exception: an
         // overflow means hostile nesting defeated the parser, so a full read+decode+write+launch
         // chain is not downgraded (a pad of `x.b.b…` must not turn block into warn).
-        const hits = (Object.keys(FALLBACK) as (keyof typeof FALLBACK)[]).filter((k) => FALLBACK[k](file.content));
+        const hits = (Object.keys(FALLBACK) as (keyof typeof FALLBACK)[]).filter((k) => FALLBACK[k](file.content) || (a.walkOverflow === true && LOOSE[k].test(file.content)));
         // The AST rule counts `require(<written path>)` as a launch; on an overflowed file the
         // fallback must too, or that launch form downgrades the chain to high.
         if (a.walkOverflow && !hits.includes("launch")

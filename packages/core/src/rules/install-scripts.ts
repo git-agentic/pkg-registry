@@ -86,7 +86,6 @@ export const installScriptsRule: Rule = {
   },
 };
 
-const JS_REF = /\.(?:c?js|mjs|cjs|ts)$/;
 // Pieces of a shell word that may hide a path (`${VAR}setup`, `--require=./x.js`, `a\b`).
 const WORD_PIECES = /[${}\\=,'"`()]+/;
 const SIMPLE_COMMAND_SPLIT = /&&|\|\||[;|&\n]/;
@@ -199,7 +198,9 @@ function makeResolver(files: PackageFile[]): (cmd: string) => PackageFile[] {
     if (!hit && !ref.slice(ref.lastIndexOf("/") + 1).includes(".")) {
       hit = exact(`package/${ref}.js`) ?? exact(`package/${ref}/index.js`);
     }
-    return hit ?? (JS_REF.test(ref) ? suffix(ref) : undefined);
+    // After a `cd scripts &&` the file sits deeper than `package/<ref>`: fall back to the suffix trie
+    // for every operand (and `<ref>.js`, as Node would).
+    return hit ?? suffix(ref) ?? (ref.slice(ref.lastIndexOf("/") + 1).includes(".") ? undefined : suffix(`${ref}.js`));
   };
   const resolveWord = (word: string): PackageFile | undefined => {
     const w = trimPunct(word);
