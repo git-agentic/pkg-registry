@@ -24,7 +24,7 @@ import type {
 import type { Advisory } from "./advisory-corpus.js";
 import type { VulnAdvisory } from "./vuln-corpus.js";
 
-export const ENGINE_VERSION = "0.1.0-alpha.2";
+export const ENGINE_VERSION = "0.1.0-alpha.3";
 /** Bump whenever rule or extraction semantics change: cached and stored audits from another revision are recomputed. */
 export const AUDIT_REVISION = 6;
 
