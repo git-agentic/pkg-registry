@@ -43,7 +43,7 @@ export function generateProfile(
   const readAllow = readAllowList({ nodePrefix: opts.nodePrefix, projectRoot: opts.projectRoot }).map(canon);
   // Guard: never re-allow $HOME itself or an ancestor of $HOME (e.g. a projectRoot
   // that resolved to $HOME) — that would nullify the Slice 2 read-deny wholesale.
-  const readAllowSafe = readAllow.filter((e) => e !== homeCanon && !homeCanon.startsWith(e + "/"));
+  const readAllowSafe = readAllow.filter((e) => e !== "/" && e !== homeCanon &&!homeCanon.startsWith(e + "/"));
   // Approved filesystem Grants confer read+write (a Grant opens exactly that
   // resource), so they belong in the read-allow too — mirrors the write section
   // below, which reuses this same `grants` declaration.

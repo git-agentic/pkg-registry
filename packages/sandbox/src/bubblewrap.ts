@@ -9,6 +9,7 @@ import type { Capability } from "@git-agentic/sentinel-core";
 import { computeDenySet, landlockAllowPaths } from "./deny-set.js";
 import { classifyViolation } from "./violation.js";
 import { nodeInstallPrefix } from "./read-allow.js";
+import { normalizeRunPaths } from "./run-paths.js";
 
 /** bwrap's own errors when the kernel refuses unprivileged user namespaces (Ubuntu 24.04 AppArmor, etc.). */
 const NS_FAILURE = /Creating new namespace failed|No permissions to create new namespace|setting up uid map/i;
@@ -71,10 +72,11 @@ export class BubblewrapSandbox implements Sandbox {
   /** Shared by `run` and `runArgv`: build the bwrap mount/deny args, prepend the Landlock
    * helper when active, and invoke `bwrap` with the given argv tail (either `/bin/sh -c cmd`
    * or `file ...args`) as the final command run inside the sandbox. */
-  private execWithTail(tail: string[], opts: { cwd: string; approved: Capability[]; homeDir: string; env?: NodeJS.ProcessEnv; projectRoot?: string }): SandboxResult {
+  private execWithTail(tail: string[], rawOpts: { cwd: string; approved: Capability[]; homeDir: string; env?: NodeJS.ProcessEnv; projectRoot?: string }): SandboxResult {
     if (process.platform !== "linux") {
       throw new Error(`bubblewrap enforcement unavailable on ${process.platform} (Linux required)`);
     }
+    const opts = { ...rawOpts, ...normalizeRunPaths(rawOpts) };
     const useLandlock = landlockActive();
     const nodePrefix = nodeInstallPrefix(process.execPath);
     const projectRoot = opts.projectRoot ?? opts.cwd;

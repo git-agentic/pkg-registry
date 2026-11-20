@@ -30,10 +30,10 @@ describe("nodeInstallPrefix", () => {
 });
 
 describe("resolveProjectRoot", () => {
-  test("uses INIT_CWD when it is an absolute path", () => {
+  test("uses SENTINEL_ROOT when it is an absolute path", () => {
     assert.equal(resolveProjectRoot("/work/app/node_modules/pkg", "/work/app"), "/work/app");
   });
-  test("ignores a blank/relative INIT_CWD and walks up to the nearest package.json", () => {
+  test("ignores a blank/relative SENTINEL_ROOT and walks up to the nearest package.json", () => {
     const root = mkdtempSync(join(tmpdir(), "pr-"));
     writeFileSync(join(root, "package.json"), "{}");
     const deep = join(root, "node_modules", "pkg", "lib");
@@ -45,8 +45,8 @@ describe("resolveProjectRoot", () => {
     const bare = mkdtempSync(join(tmpdir(), "bare-"));
     assert.equal(resolveProjectRoot(bare, undefined), bare);
   });
-  test("does not require the caller to have created any file for the INIT_CWD path", () => {
-    assert.ok(!existsSync("/nonexistent-x")); // sanity; INIT_CWD is trusted as-is when absolute
+  test("does not require the caller to have created any file for the SENTINEL_ROOT path", () => {
+    assert.ok(!existsSync("/nonexistent-x")); // sanity; SENTINEL_ROOT is trusted as-is when absolute
     assert.equal(resolveProjectRoot("/a/b", "/nonexistent-x"), "/nonexistent-x");
   });
 });

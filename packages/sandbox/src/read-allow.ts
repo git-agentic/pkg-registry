@@ -20,12 +20,14 @@ export function nodeInstallPrefix(execPath: string): string {
 
 /**
  * The project root a lifecycle script resolves `require()` against — distinct from the
- * Install directory (`cwd`, deep in `node_modules`). npm sets `INIT_CWD` to the install's
- * originating dir (the project root); trust it when it's an absolute path. Otherwise walk
- * up from `cwd` to the nearest ancestor with a `package.json`; failing that, use `cwd`.
+ * Install directory (`cwd`, deep in `node_modules`). `sentinelRoot` is the `SENTINEL_ROOT`
+ * that `sentinel install --enforce` pins to the install root; trust it when it's an absolute
+ * path. (`INIT_CWD` is NOT used: a nested npm resets it to a dependency's own directory.)
+ * Otherwise walk up from `cwd` to the nearest ancestor with a `package.json`; failing that,
+ * use `cwd`.
  */
-export function resolveProjectRoot(cwd: string, initCwd: string | undefined): string {
-  if (initCwd && isAbsolute(initCwd)) return initCwd;
+export function resolveProjectRoot(cwd: string, sentinelRoot: string | undefined): string {
+  if (sentinelRoot && isAbsolute(sentinelRoot)) return sentinelRoot;
   let dir = cwd;
   for (;;) {
     if (existsSync(`${dir}/package.json`)) return dir;

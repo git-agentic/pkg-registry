@@ -30,6 +30,8 @@ export function generateBwrapArgs(
      * checkout and would otherwise be hidden by the `--tmpfs $HOME` deny even though
      * it's neither the node prefix nor the project root. */
     extraReadAllow?: string[];
+    /** uid whose `/run/user/<uid>` is emptied when there is no network approval; defaults to `process.getuid()`. */
+    uid?: number;
   },
 ): string[] {
   const approvedFs = approved.filter((c) => c.kind === "filesystem").map((c) => c.target);
@@ -42,7 +44,10 @@ export function generateBwrapArgs(
   // hermetic test's fake $HOME lives under os.tmpdir().
   const containsHome = (p: string) => p === home || home.startsWith(p + "/");
 
-  const args = ["--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc"];
+  // --unshare-pid: own pid namespace, so `--proc /proc` shows only the sandbox's processes (a host
+  // /proc leaks other users' env/cmdlines). --die-with-parent: no orphan outlives the run.
+  // --new-session: setsid, so a script cannot inject keystrokes into the controlling tty (TIOCSTI).
+  const args = ["--unshare-pid", "--die-with-parent", "--new-session", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc"];
 
   // Slice 1 rw set (write floor + guarded Grants), expanded; host /dev excluded (`--dev /dev`
   // already provides an isolated writable /dev — re-binding host /dev re-exposes the device tree).
@@ -63,7 +68,7 @@ export function generateBwrapArgs(
   // (e.g. a projectRoot that resolved to $HOME) — that would nullify the `--tmpfs $HOME`.
   const ro = [...readAllowList({ nodePrefix: opts.nodePrefix, projectRoot: opts.projectRoot }), ...(opts.extraReadAllow ?? [])]
     .map((p) => expandHome(p, home))
-    .filter((p) => p !== home && !home.startsWith(p + "/"));
+    .filter((p) => p !== "/" && p !== home && !home.startsWith(p + "/"));
 
   // issue #28: a process: path grant STRICTLY UNDER $HOME must be re-exposed inside
   // the tmpfs (read-only — exec permission is Landlock's job, and bwrap has no noexec)
@@ -135,6 +140,21 @@ export function generateBwrapArgs(
     }
   }
 
-  if (!hasNetwork) args.push("--unshare-net");
+  if (!hasNetwork) {
+    // --unshare-net isolates abstract and network sockets, NOT pathname unix sockets reachable
+    // through the ro root bind: the container runtime socket (host root via a privileged
+    // container) and the user session bus / agent sockets under /run/user/<uid>. Mask them,
+    // each only when present (bwrap cannot create a mount point under a ro parent).
+    const sockets = new Set<string>();
+    for (const sock of ["/var/run/docker.sock", "/run/docker.sock"]) {
+      if (approvedFs.some((t) => pathCovers(t, sock)) || !exists(sock)) continue;
+      sockets.add(resolve(sock)); // /var/run is usually a symlink to /run: mask the real node once
+    }
+    for (const real of sockets) args.push("--ro-bind", "/dev/null", real);
+    const uid = opts.uid ?? process.getuid?.();
+    const runUser = uid === undefined ? undefined : `/run/user/${uid}`;
+    if (runUser && exists(runUser) && !approvedFs.some((t) => pathCovers(t, runUser))) args.push("--tmpfs", runUser);
+    args.push("--unshare-net");
+  }
   return args;
 }
