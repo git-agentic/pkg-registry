@@ -124,7 +124,7 @@ export interface Audit {
   findings: Finding[];
   capabilities: Capability[];
   capabilityDelta: CapabilityDelta | null;
-  engine: { version: string; rules: string[]; mode: "full" | "diff" };
+  engine: { version: string; revision?: number; rules: string[]; mode: "full" | "diff" };
   auditedAt: string;
   durationMs: number;
 }
@@ -138,7 +138,7 @@ export interface AuditReport {
   findings: ScoredFinding[];
   capabilities: Capability[];
   capabilityDelta: CapabilityDelta | null;
-  engine: { version: string; rules: string[]; llm: string | null; mode: "full" | "diff" };
+  engine: { version: string; revision?: number; rules: string[]; llm: string | null; mode: "full" | "diff" };
   /** Human-readable summary from the LLM adapter, if one ran. */
   llmSummary: string | null;
   auditedAt: string;

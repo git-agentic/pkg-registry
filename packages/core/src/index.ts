@@ -22,6 +22,7 @@ export {
 } from "./policy.js";
 export {
   ENGINE_VERSION,
+  AUDIT_REVISION,
   auditTarball,
   buildAudit,
   runAudit,

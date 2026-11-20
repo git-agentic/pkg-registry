@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { execFile, execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { execFile, execFileSync, spawn } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -56,4 +57,25 @@ describe("proxy startup validation (F16, F18)", () => {
     assert.notEqual(code, 0);
     assert.match(output, /FATAL.*SENTINEL_HOST/);
   });
+
+  for (const [signal, code] of [["SIGTERM", 143], ["SIGINT", 130]] as const) {
+    test(`${signal} during the debounce window flushes the audit store and exits ${code}`, async () => {
+      const file = join(mkdtempSync(join(tmpdir(), "sentinel-sig-")), "audits.json");
+      const port = 41000 + Math.floor(Math.random() * 20000);
+      const child = spawn("node", ["--import", "tsx", ENTRY], { cwd: REPO_ROOT,
+        env: { ...process.env, SENTINEL_UPSTREAM: "fixtures", SENTINEL_PORT: String(port), SENTINEL_STORE: file } });
+      let out = "";
+      child.stdout.on("data", (d: Buffer) => { out += d.toString(); });
+      const exited = new Promise<number | null>((resolve) => child.on("exit", (c) => resolve(c)));
+      const deadline = Date.now() + 15_000;
+      while (!/listening on/.test(out) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
+      assert.match(out, /listening on/);
+      const res = await fetch(`http://127.0.0.1:${port}/-/audit/leftpad-lite/1.0.0`);
+      assert.equal(res.status, 200);
+      child.kill(signal); // well inside the 500 ms debounce window
+      assert.equal(await exited, code);
+      const rows = JSON.parse(readFileSync(file, "utf8")) as { name: string }[];
+      assert.ok(rows.some((r) => r.name === "leftpad-lite"));
+    });
+  }
 });

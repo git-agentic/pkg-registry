@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { ENGINE_VERSION, type AuditReport } from "@git-agentic/sentinel-core";
+import { AUDIT_REVISION, ENGINE_VERSION, type AuditReport } from "@git-agentic/sentinel-core";
 import type { HistoryDb } from "./history-db.js";
 
 export interface StoredAudit {
@@ -35,7 +35,8 @@ export class AuditStore {
         const rows = JSON.parse(readFileSync(file, "utf8")) as StoredAudit[];
         for (const r of rows) {
           if (r.report?.schema !== 3) continue; // re-audit anything older
-          if (r.report.engine?.version !== ENGINE_VERSION) continue; // scored by another engine: re-audit after an upgrade
+          // Scored by another engine version or audit revision (a missing revision is stale): re-audit.
+          if (r.report.engine?.version !== ENGINE_VERSION || r.report.engine.revision !== AUDIT_REVISION) continue;
           if (this.activePolicyHash && r.report.policy?.hash !== this.activePolicyHash) continue; // scored under a different policy
           const integrity = r.report.meta.integrity;
           if (!integrity) continue; // actual integrity is a mandatory cache-key dimension

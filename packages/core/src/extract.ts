@@ -278,7 +278,7 @@ export function baselineFrom(files: PackageFile[]): Map<string, string> {
 }
 
 /** SRI algorithms Sentinel can recompute for a lockfile-integrity cross-check. */
-export type SriAlgorithm = "sha1" | "sha256" | "sha512";
+export type SriAlgorithm = "sha1" | "sha256" | "sha384" | "sha512";
 
 /** Compute the SRI integrity string (`<algo>-<base64>`) for a tarball in `algo`. */
 export function integrityOfAlgo(tgz: Buffer, algo: SriAlgorithm): string {

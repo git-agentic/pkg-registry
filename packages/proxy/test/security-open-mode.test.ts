@@ -3,7 +3,7 @@ import { Buffer } from "node:buffer";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, test } from "node:test";
-import { DEFAULT_POLICY, ENGINE_VERSION, integrityOf, type Audit, type EnterprisePolicy } from "@git-agentic/sentinel-core";
+import { AUDIT_REVISION, DEFAULT_POLICY, ENGINE_VERSION, integrityOf, type Audit, type EnterprisePolicy } from "@git-agentic/sentinel-core";
 import { createServer } from "../src/server.js";
 import { AuditStore } from "../src/store.js";
 import { ApprovalStore } from "../src/approvals.js";
@@ -30,7 +30,7 @@ function audit(name: string, version: string, tarball: Buffer): Audit {
     meta: { name, version, integrity: integrityOf(tarball), author: null, maintainers: [], license: null, hasInstallScripts: false,
       signature: "unsigned", provenance: "absent", unpackedSize: tarball.length, fileCount: 1 },
     findings: [], capabilities: [], capabilityDelta: null,
-    engine: { version: ENGINE_VERSION, rules: [], mode: "full" }, auditedAt: "2026-07-13T00:00:00.000Z", durationMs: 1,
+    engine: { version: ENGINE_VERSION, revision: AUDIT_REVISION, rules: [], mode: "full" }, auditedAt: "2026-07-13T00:00:00.000Z", durationMs: 1,
   };
 }
 

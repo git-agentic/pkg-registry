@@ -6,8 +6,8 @@ import { fileURLToPath } from "node:url";
 import { after, before, describe, test } from "node:test";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
-import { DEFAULT_POLICY, integrityOf, type TreeAuditResult } from "@git-agentic/sentinel-core";
-import { createServer } from "../src/server.js";
+import { DEFAULT_POLICY, integrityOf, integrityOfAlgo, parseAnyLockfile, type TreeAuditResult } from "@git-agentic/sentinel-core";
+import { createServer, integrityClaimMismatch } from "../src/server.js";
 import { AuditStore } from "../src/store.js";
 import { LocalFixtureUpstream, type Upstream } from "../src/upstream.js";
 import { ApprovalStore } from "../src/approvals.js";
@@ -111,8 +111,42 @@ describe("F19: audit-tree blocks non-registry coordinates without fetching anyth
     assert.equal(out.packages[0]!.status, "block");
   });
 
-  test("a multi-token SRI passes when every known-algorithm token matches", async () => {
-    const out = await post([{ name: "leftpad-lite", version: "1.0.0", integrity: `${REAL} md5-ignored` }]);
-    assert.equal(out.packages[0]!.integrityMismatch, false);
+  const TARBALL = readFileSync(join(FIXTURES, ".tarballs", "leftpad-lite-1.0.0.tgz"));
+  const mismatch = async (integrity: string) => (await post([{ name: "leftpad-lite", version: "1.0.0", integrity }])).packages[0]!.integrityMismatch;
+
+  test("a multi-token SRI passes only when EVERY known-algorithm token matches", async () => {
+    assert.equal(await mismatch(`${REAL} ${integrityOfAlgo(TARBALL, "sha1")}`), false);
+    assert.equal(await mismatch(`${integrityOfAlgo(TARBALL, "sha384")} ${REAL}`), false);
+    assert.equal(await mismatch(`${REAL} sha1-AAAAAAAAAAAAAAAAAAAAAAAAAAA=`), true, "a wrong weaker token must still block");
+    assert.equal(await mismatch(`${integrityOfAlgo(TARBALL, "sha384")} sha512-${Buffer.alloc(64, 2).toString("base64")}`), true);
+  });
+
+  test("sha384 is verified, not ignored", async () => {
+    assert.equal(await mismatch(integrityOfAlgo(TARBALL, "sha384")), false);
+    assert.equal(await mismatch("sha384-" + Buffer.alloc(48, 3).toString("base64")), true);
+  });
+
+  test("any unknown-algorithm token blocks, even next to a matching known one", async () => {
+    assert.equal(await mismatch(`${REAL} md5-ignored`), true);
+    assert.equal(await mismatch(`${REAL} garbage`), true);
+  });
+
+  test("each algorithm's digest is computed at most once per claim (1,000 repeated tokens on a big tarball)", () => {
+    const big = Buffer.alloc(24 * 1024 * 1024, 5);
+    const tok = integrityOfAlgo(big, "sha512");
+    const t0 = Date.now();
+    assert.equal(integrityClaimMismatch(big, Array(1000).fill(tok).join(" ")), false);
+    assert.ok(Date.now() - t0 < 2000, `took ${Date.now() - t0} ms`);
+  });
+
+  test("no URL, userinfo or query string from a hostile lockfile reaches the audit-tree response", async () => {
+    const yarn = `# yarn lockfile v1\n\n"https://user:pw@evil.example/x.tgz?sig=abc":\n  version "1.0.0"\n  resolved "https://user:pw@evil.example/x.tgz?sig=abc"\n`;
+    const pnpm = `lockfileVersion: '9.0'\n\npackages:\n\n  evil@https://user:pw@cdn.example/x.tgz?sig=abc:\n    resolution: {tarball: 'https://user:pw@cdn.example/x.tgz?sig=abc'}\n`;
+    for (const [raw, filename] of [[yarn, "yarn.lock"], [pnpm, "pnpm-lock.yaml"]] as const) {
+      const coords = parseAnyLockfile(raw, { filename });
+      const out = await post(coords);
+      assert.equal(out.packages[0]!.status, "block");
+      assert.ok(!/pw|sig=abc|evil\.example|cdn\.example/.test(JSON.stringify(out)), JSON.stringify(out));
+    }
   });
 });

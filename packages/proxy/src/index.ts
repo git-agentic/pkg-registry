@@ -329,7 +329,10 @@ function main(): void {
   const vulnerabilities = resolveVulnerabilities();
   const autoQuarantine = resolveAutoQuarantine(Boolean(authPublicKey));
 
-  process.on("exit", () => store.flush()); // the debounced write must not be lost on a clean exit
+  // The debounced write must survive a stop: `exit` does not fire on a default SIGTERM/SIGINT, so flush
+  // and exit with the conventional 128 + signal code. Registered here, never at import.
+  process.on("exit", () => store.flush());
+  for (const [signal, code] of [["SIGTERM", 143], ["SIGINT", 130]] as const) process.on(signal, () => { store.flush(); process.exit(code); });
   const app = createServer({ upstream, store, approvals, enterprisePolicy, policyHash, policy, publicDir, privateStore, claimCorpus, claimCorpusHash, retractionCorpus, retractionCorpusHash, publishTokens, trustMaterial, violations, approvalRequests, authPublicKey, history, advisories, vulnerabilities, publicBaseUrl, maxTreePackages, rateLimiter, extractLimits, autoQuarantine, registryMode });
   app.listen(port, host, () => {
     const shown = host === "0.0.0.0" || host === "::" ? "localhost" : host.includes(":") ? `[${host}]` : host;
