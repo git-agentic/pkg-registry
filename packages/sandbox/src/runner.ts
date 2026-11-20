@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Sandbox } from "./types.js";
 import { scrubEnv } from "./env.js";
+import { withPerRunDevdir } from "./devdir.js";
 import type { Capability } from "@git-agentic/sentinel-core";
 
 export interface ScriptResult {
@@ -34,7 +35,13 @@ export function runLifecycleScripts(opts: {
   for (const hook of LIFECYCLE) {
     const command = scripts[hook];
     if (!command) continue;
-    const r = opts.sandbox.run(command, { cwd: opts.packageDir, approved, homeDir: opts.homeDir, env, projectRoot: opts.projectRoot });
+    const gyp = withPerRunDevdir(env, approved);
+    let r;
+    try {
+      r = opts.sandbox.run(command, { cwd: opts.packageDir, approved, homeDir: opts.homeDir, env: gyp.env, projectRoot: opts.projectRoot });
+    } finally {
+      gyp.cleanup();
+    }
     results.push({ hook, command, exitCode: r.exitCode, stderr: r.stderr });
   }
   return { results, failed: results.some((r) => r.exitCode !== 0) };
