@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { test, describe } from "node:test";
 import { gzipSync } from "node:zlib";
-import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { auditTarball, runRules } from "../src/index.js";
 import type { AuditInput, PackageFile } from "../src/types.js";
@@ -46,7 +45,7 @@ describe("backslash readings survive a win32 audit host", () => {
       { name: "package/package.json", data: pkg() },
       { name: "a\\b/package.json", data: pkg({ scripts: { postinstall: CURL_SH } }) },
     ]);
-    const code = `import { extractTarball } from ${JSON.stringify(pathToFileURL(new URL("../src/index.ts", import.meta.url).pathname).href)};
+    const code = `import { extractTarball } from ${JSON.stringify(new URL("../src/index.ts", import.meta.url).href)};
 const r = await extractTarball(Buffer.from(process.argv[1], "base64"));
 console.log(JSON.stringify(r.manifestConfusion));`;
     const env = { ...process.env } as Record<string, string>;
@@ -129,9 +128,22 @@ require('./output');`;
     assert.equal(report.verdict, "block");
   });
 
-  test("without a .node write, an extension-less relative require is not a launch signal", () => {
-    const src = `try{x${".b".repeat(50000)}}catch(e){}\nconst fs=require('fs');fs.readFileSync('a');fs.writeFileSync('b','c');require('./util');`;
-    const f = runRules({ ...inputFor({ "package/index.js": src }, "node setup"), mode: "full" }).filter((x) => x.ruleId === "native-payload-loader");
-    assert.ok(!f.some((x) => x.severity === "critical"));
+  test("same fixture with only the write target changed (not .node) is not critical", async () => {
+    const chain = `
+const fs=require('fs'),zlib=require('zlib'),path=require('path');
+const c=fs.readFileSync(path.join(__dirname,'intro.bin'));
+fs.writeFileSync(path.join(__dirname,'output.bin'),zlib.gunzipSync(c));
+require('./output');`;
+    const pad = `try{x${".b".repeat(50000)}}catch(e){}\n`;
+    const report = await auditTarball({
+      meta,
+      tarball: tarBytes([
+        { name: "package/package.json", data: pkg({ main: "index.js" }) },
+        { name: "package/index.js", data: pad + chain },
+      ]),
+    });
+    const hits = report.findings.filter((f) => f.ruleId === "native-payload-loader");
+    assert.ok(hits.some((f) => f.severity === "high"), "the fallback still fires (read + decode + write)");
+    assert.ok(!hits.some((f) => f.severity === "critical"), "an extension-less require without a .node write must not count as a launch");
   });
 });

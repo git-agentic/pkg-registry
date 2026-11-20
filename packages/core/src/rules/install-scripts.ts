@@ -111,6 +111,29 @@ function splitSimpleCommands(cmd: string): string[] {
   out.push(cmd.slice(start));
   return out;
 }
+/**
+ * Bodies of the outermost `$(...)` and backtick spans, in one pass (nested ones are reached by the
+ * recursive scan). Quotes are ignored on purpose: this only adds coverage.
+ */
+function substitutionBodies(cmd: string): string[] {
+  const bodies: string[] = [];
+  let depth = 0;
+  let start = 0;
+  let tick = -1;
+  for (let i = 0; i < cmd.length; i++) {
+    const c = cmd[i];
+    if (c === "\\") { i++; continue; }
+    if (c === "`" && depth === 0) {
+      if (tick < 0) tick = i + 1;
+      else { bodies.push(cmd.slice(tick, i)); tick = -1; }
+    } else if (c === "$" && cmd[i + 1] === "(") {
+      if (depth++ === 0) start = i + 2;
+      i++;
+    } else if (c === "(" && depth > 0) depth++;
+    else if (c === ")" && depth > 0 && --depth === 0) bodies.push(cmd.slice(start, i));
+  }
+  return bodies;
+}
 const WRAPPERS = new Set(["env", "exec", "nohup", "time", "command", "npx"]);
 // Inline-code flags differ per interpreter (`sh -e` is errexit, not inline code).
 const SHELL_INLINE = /^-[a-z]*c[a-z]*$/i; // `-c`, `-ec`, `-lc`
@@ -193,9 +216,21 @@ function makeResolver(files: PackageFile[]): (cmd: string) => PackageFile[] {
 
   /** Scan one command line; `sh -c "<code>"` code is scanned again as a command line (depth-bounded, so linear). */
   const scan = (cmd: string, out: Set<PackageFile>, depth: number): void => {
-    for (const simple of splitSimpleCommands(cmd)) {
+    // Quote tracking can only ADD coverage: a stray apostrophe (`# it's`) must not hide later commands,
+    // so the plain split is scanned too, and `$(...)` / backtick bodies are scanned as command lines.
+    if (depth < MAX_INLINE_DEPTH) for (const body of substitutionBodies(cmd)) scan(body, out, depth + 1);
+    for (const simple of new Set([...splitSimpleCommands(cmd), ...cmd.split(SIMPLE_COMMAND_SPLIT)])) {
       const rawWords = simple.split(/\s+/).filter(Boolean);
       const words = rawWords.map(unquote);
+      // Indexes of words ending in each quote char, built once per command so repeated inline flags
+      // do not rescan the remaining arguments.
+      const closers: Record<string, number[] | undefined> = {};
+      const nextClose = (q: string, from: number): number | undefined => {
+        const list = (closers[q] ??= rawWords.flatMap((rw, k) => (rw.endsWith(q) ? [k] : [])));
+        let lo = 0, hi = list.length;
+        while (lo < hi) { const mid = (lo + hi) >> 1; if (list[mid]! < from) lo = mid + 1; else hi = mid; }
+        return list[lo];
+      };
       let i = 0;
       while (i < words.length && isPrefix(words, i)) i++;
       const command = words[i];
@@ -224,11 +259,7 @@ function makeResolver(files: PackageFile[]): (cmd: string) => PackageFile[] {
               const first = rawWords[j + 1] ?? "";
               const q = first[0] === "'" || first[0] === '"' ? first[0] : "";
               let end = j + 1;
-              if (q && !(first.length > 1 && first.endsWith(q))) {
-                for (let k = j + 2; k < rawWords.length; k++) {
-                  if (rawWords[k]!.endsWith(q)) { end = k; break; }
-                }
-              }
+              if (q && !(first.length > 1 && first.endsWith(q))) end = nextClose(q, j + 2) ?? end;
               code = rawWords.slice(j + 1, end + 1).join(" ");
               j = end;
             }

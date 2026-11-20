@@ -128,7 +128,11 @@ export async function extractTarball(
     // The POSIX reading (`\` is a filename character, as node-tar does on Linux/macOS) is the retained path.
     // node-tar on a win32 audit host already turned `\` into `/` in `entry.path`; the header path (which
     // includes a PAX `path`) is still raw, so both readings are derived from it on every host.
-    const rawPath = entry.header?.path ?? entry.path;
+    let rawPath = entry.path;
+    // header.path is `prefix/PAXpath` when a PAX path and a ustar prefix are combined, while entry.path is the
+    // effective PAX path: use the raw header path only when it is the same name before win32 normalization.
+    // Residual: win32 host + PAX path + ustar prefix still sees the backslash-normalized entry.path.
+    if (entry.header?.path && entry.header.path.replace(/\\/g, "/") === entry.path) rawPath = entry.header.path;
     const normalizedPath = npmPath(rawPath);
     // Windows clients read `\` as a separator: an entry lands on the root manifest under EITHER reading.
     const winPath = npmPath(rawPath.replace(/\\/g, "/"));
