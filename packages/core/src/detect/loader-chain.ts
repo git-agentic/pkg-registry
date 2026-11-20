@@ -1,5 +1,5 @@
 import * as acorn from "acorn";
-import * as walk from "acorn-walk";
+import { base as walkBase } from "acorn-walk";
 import { lineLocator } from "../rules/util.js";
 
 export interface LoaderPrimitive {
@@ -61,9 +61,52 @@ function snip(src: string, node: any): string {
 function isScope(n: any): boolean {
   return n.type === "Program" || n.type === "FunctionDeclaration" || n.type === "FunctionExpression" || n.type === "ArrowFunctionExpression";
 }
-/** Scope chain innermost → outermost (Program) from an acorn-walk ancestor list. */
-function scopeChain(ancestors: any[]): any[] {
-  return ancestors.filter(isScope).reverse();
+
+/** Total nodes the walk may visit; past it the walk throws a RangeError, which callers map to the overflow path. */
+const MAX_WALK_NODES = 2_000_000;
+/** Scope nesting the walk follows (each analysis callback costs O(scope depth)); real code nests far less. */
+const MAX_SCOPE_DEPTH = 1000;
+
+type Visitor = (node: any, st: any, ancestors: any[], scopeChain: any[]) => void;
+
+/**
+ * acorn-walk's `ancestor` without recursion: the same nodes, in the same order (a node's visitor runs after its
+ * children), with the same ancestor list. acorn-walk's base visitors only call back for children, so each node's
+ * children are collected first and then walked from an explicit stack. The visitor also receives the scope chain
+ * (innermost → outermost), kept incrementally so a deep expression does not make every callback O(depth).
+ * Deterministic bounds: MAX_WALK_NODES and MAX_SCOPE_DEPTH (a RangeError).
+ */
+export function walkAncestor(root: any, visitors: Record<string, Visitor>): void {
+  const ancestors: any[] = [];
+  const scopes: any[] = []; // outermost → innermost
+  type Frame = { node: any; type: string; isNew: boolean; kids: [any, string | undefined][]; next: number };
+  const stack: Frame[] = [];
+  let visited = 0;
+  const enter = (node: any, override?: string): void => {
+    const type = override || node.type;
+    const isNew = node !== ancestors[ancestors.length - 1]; // an override re-enters the same node
+    if (isNew) {
+      if (++visited > MAX_WALK_NODES) throw new RangeError("loader-chain: node bound exceeded");
+      ancestors.push(node);
+      if (isScope(node)) {
+        if (scopes.length >= MAX_SCOPE_DEPTH) throw new RangeError("loader-chain: scope depth bound exceeded");
+        scopes.push(node);
+      }
+    }
+    const visit = (walkBase as Record<string, any>)[type];
+    if (visit == null) throw new Error(`No walker function defined for node type ${type}`);
+    const kids: Frame["kids"] = [];
+    visit(node, undefined, (child: any, _st: any, o?: string) => { kids.push([child, o]); });
+    stack.push({ node, type, isNew, kids, next: 0 });
+  };
+  enter(root);
+  while (stack.length) {
+    const f = stack[stack.length - 1]!;
+    if (f.next < f.kids.length) { const [child, o] = f.kids[f.next++]!; enter(child, o); continue; }
+    visitors[f.type]?.(f.node, ancestors, ancestors, scopes.slice().reverse());
+    if (f.isNew) { ancestors.pop(); if (scopes[scopes.length - 1] === f.node) scopes.pop(); }
+    stack.pop();
+  }
 }
 
 /**
@@ -341,7 +384,7 @@ export function analyzeLoaderChain(source: string, opts: { moduleLoadReachable?:
   function isTempOrHidden(node: any): boolean {
     const resolved = node?.type === "Identifier" ? (declInit.get(node.name) ?? node) : node;
     if (!resolved) return false;
-    const txt = source.slice(resolved.start, resolved.end);
+    const txt = source.slice(resolved.start, Math.min(resolved.end, resolved.start + SNIP_SOURCE_CAP));
     return /tmpdir\s*\(\s*\)|['"`]\/tmp\b|['"`]\.[A-Za-z0-9_]/.test(txt) || /\.tmpdir/.test(txt);
   }
 
@@ -367,10 +410,10 @@ export function analyzeLoaderChain(source: string, opts: { moduleLoadReachable?:
     }
   }
 
-  // A hostile file (50k chained members, absurd nesting) can overflow the walker's
-  // recursion; that must degrade to the parse-failure path, never throw out of the rule.
+  // The walk is iterative, so a deep expression costs time, not a stack overflow. Exceeding the node or scope bound
+  // (a RangeError) degrades to the parse-failure path, never throws out of the rule.
   try {
-  walk.ancestor(ast, {
+  walkAncestor(ast, {
     ImportDeclaration(node: any) {
       if (node.source?.type !== "Literal" || typeof node.source.value !== "string") return;
       const mod = stripNode(node.source.value);
@@ -383,26 +426,23 @@ export function analyzeLoaderChain(source: string, opts: { moduleLoadReachable?:
         }
       }
     },
-    VariableDeclarator(node: any, _st: any, ancestors: any[]) {
+    VariableDeclarator(node: any, _st: any, _ancestors: any[], chain: any[]) {
       if (!node.init) { if (node.id?.type === "Identifier") declInit.delete(node.id.name); return; }
       bindFromInit(node.id, node.init);
       if (node.id?.type !== "Identifier") return;
       const name = node.id.name;
       declInit.set(name, node.init);
-      const chain = scopeChain(ancestors);
       const relevant = new Set<Tag>([...payloadTags(node.init, chain)].filter((t) => t === "read" || t === "decoded"));
       scopeTaint(chain[0]).set(name, relevant);   // declaration REPLACES
     },
-    AssignmentExpression(node: any, _st: any, ancestors: any[]) {
+    AssignmentExpression(node: any, _st: any, _ancestors: any[], chain: any[]) {
       if (node.operator !== "=" || node.left.type !== "Identifier") return;
       const name = node.left.name;
       declInit.set(name, node.right);
-      const chain = scopeChain(ancestors);
       const relevant = new Set<Tag>([...payloadTags(node.right, chain)].filter((t) => t === "read" || t === "decoded"));
       scopeTaint(declaringScope(chain, name)).set(name, relevant);   // reassignment REPLACES (kill-on-reassign, S2)
     },
-    CallExpression(node: any, _st: any, ancestors: any[]) {
-      const chain = scopeChain(ancestors);
+    CallExpression(node: any, _st: any, _ancestors: any[], chain: any[]) {
       const cat = classifyCall(node);
       const args = node.arguments ?? [];
 

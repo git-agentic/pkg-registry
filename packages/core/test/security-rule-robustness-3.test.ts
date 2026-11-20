@@ -116,7 +116,7 @@ const fs=require('fs'),zlib=require('zlib'),cp=require('child_process'),os=requi
 })();`;
 
   test("`try{x.b.b...}catch{}` prepended to the chain stays critical and blocks", async () => {
-    const pad = `try{x${".b".repeat(50000)}}catch(e){}\n`;
+    const pad = `${";".repeat(2_000_001)}\n`;
     const tarball = tarBytes([
       { name: "package/package.json", data: JSON.stringify({ name: "demo", version: "1.0.0", main: "index.js" }) },
       { name: "package/index.js", data: pad + CORRELATED },

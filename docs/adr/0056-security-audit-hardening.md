@@ -286,7 +286,8 @@ and `transferRequestBytes` take `currentChallengeId`.
   check; #86 closed `.`/`source` as interpreters, pipes into an interpreter, pathed wrappers,
   `tsx`/`ts-node`/`.ts` operands and `node <dir>`; #87 closed bare `-r`/`NODE_OPTIONS` specifiers,
   extension-less preload paths and bundled `node_modules/.bin` / `bin` commands, all resolved against the
-  tarball only; `AUDIT_REVISION` is 5). The overflow fallback stays regex-based. Other rules still scan those
+  tarball only; `AUDIT_REVISION` is 6). #88 closed the walker overflow: the loader-chain walk is iterative (2,000,000-node bound,
+  1,000 nested scopes), so the regex fallback now serves only genuine parse failures and that bound. Other rules still scan those
   files; only the lifecycle-script escalation is lost.
 
 ## Not changed

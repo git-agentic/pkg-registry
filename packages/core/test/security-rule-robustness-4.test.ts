@@ -111,7 +111,7 @@ const b=zlib.gunzipSync(c);
 const out=path.join(os.tmpdir(),'.x.node');
 fs.writeFileSync(out,b);
 require(out);`;
-    const pad = `try{x${".b".repeat(50000)}}catch(e){}\n`;
+    const pad = `${";".repeat(2_000_001)}\n`;
     const tarball = tarBytes([
       { name: "package/package.json", data: JSON.stringify({ name: "demo", version: "1.0.0", main: "index.js" }) },
       { name: "package/index.js", data: pad + chain },
