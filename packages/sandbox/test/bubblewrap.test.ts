@@ -85,8 +85,8 @@ describe("BubblewrapSandbox enforcement", { skip }, () => {
     assert.ok(existsSync(out), "positive control: node must have written the output file in the first (no-approval) run");
     assert.ok(!(existsSync(out) ? readFileSync(out, "utf8") : "").includes("TOPSECRET-ENV"), "the credential env-var must not have reached the script");
     const approved: Capability[] = [{ kind: "env", target: "SECRET_API_KEY", evidence: [] }];
-    new BubblewrapSandbox().run(cmd, { cwd: work, approved, homeDir: home, env: scrubEnv({ ...process.env, SECRET_API_KEY: "TOPSECRET-ENV" }, approved) });
-    assert.ok(readFileSync(out, "utf8").includes("TOPSECRET-ENV"), "an approved env var is passed through");
+    const r2 = new BubblewrapSandbox().run(cmd, { cwd: work, approved, homeDir: home, env: scrubEnv({ ...process.env, SECRET_API_KEY: "TOPSECRET-ENV" }, approved) });
+    assert.ok(readFileSync(out, "utf8").includes("TOPSECRET-ENV"), `an approved env var is passed through (exit ${r2.exitCode}, stderr: ${r2.stderr})`);
   });
 
   test("a filesystem approval relaxes the credential read deny (EFFECT)", () => {
@@ -96,8 +96,8 @@ describe("BubblewrapSandbox enforcement", { skip }, () => {
     writeFileSync(join(home, ".ssh", "id_rsa"), "APPROVED-SECRET");
     const out = join(work, "out.txt"); // cwd (persists); the approved read of $HOME/.ssh is re-allowed
     const approved: Capability[] = [{ kind: "filesystem", target: ".ssh", evidence: [] }];
-    new BubblewrapSandbox().run(`cat ${join(home, ".ssh", "id_rsa")} > ${out} 2>/dev/null || true`, { cwd: work, approved, homeDir: home });
-    assert.ok(readFileSync(out, "utf8").includes("APPROVED-SECRET"), "an approved filesystem read must succeed");
+    const r = new BubblewrapSandbox().run(`cat ${join(home, ".ssh", "id_rsa")} > ${out} 2>/dev/null || true`, { cwd: work, approved, homeDir: home });
+    assert.ok(existsSync(out) && readFileSync(out, "utf8").includes("APPROVED-SECRET"), `an approved filesystem read must succeed (exit ${r.exitCode}, stderr: ${r.stderr})`);
   });
 
   test("a non-denied path (the Install dir) stays readable and writable inside the sandbox (positive control)", () => {
