@@ -90,14 +90,21 @@ function canonicalJSON(v: unknown): string {
   return JSON.stringify(v);
 }
 
-/** Anchored full-name glob: `*` is the only metacharacter; everything else is literal. */
+/**
+ * Anchored full-name glob: `*` is the only metacharacter; everything else is literal.
+ * Iterative two-pointer match (backtracks only to the last `*`), so a hostile name
+ * cannot trigger regex catastrophic backtracking.
+ */
 export function matchPackage(pattern: string, name: string): boolean {
-  const re = new RegExp("^" + pattern.split("*").map(escapeRe).join(".*") + "$");
-  return re.test(name);
-}
-
-function escapeRe(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  let p = 0, n = 0, star = -1, mark = 0;
+  while (n < name.length) {
+    if (pattern[p] === "*") { star = p++; mark = n; }
+    else if (p < pattern.length && pattern[p] === name[n]) { p++; n++; }
+    else if (star >= 0) { p = star + 1; n = ++mark; }
+    else return false;
+  }
+  while (pattern[p] === "*") p++;
+  return p === pattern.length;
 }
 
 export function policyHashOfBytes(raw: Buffer): string {
