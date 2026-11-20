@@ -1430,7 +1430,8 @@ are collected here.
   active. Disputes survive expiry and domain-change freezes; only a ruling clears them.
   Renewal refuses a disputed claim and needs a challenge verified after the current proof.
   Proofs are single use (a consumed challenge is refused by approve, transfer, ruling and
-  renewal), and state from before proof tracking spends every verified challenge on load.
+  renewal), and state from before proof tracking spends every verified challenge on load, so
+  pending approvals and in-flight changes need a fresh challenge after an upgrade.
   Transfer signatures bind the claim's current challenge id. Request bodies are
   type-validated, `evidenceRef` is a non-empty string, and application fields are copied
   explicitly so a body-supplied `verifiedAt` cannot skip DNS. `ClaimSteward.approve` is

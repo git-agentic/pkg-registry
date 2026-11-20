@@ -218,8 +218,8 @@ decisions. Findings that stayed as documented trade-offs are listed at the end.
     use: `verifiedAt` never changes once set, and a challenge adopted by an
     approval, transfer, ruling or renewal is consumed and refused afterwards.
     State written before proof tracking spends every verified challenge on
-    load, so in-flight transfers, renewals and rulings need a fresh challenge
-    after the upgrade.
+    load, so in-flight approvals, transfers, renewals and rulings need a fresh
+    challenge after the upgrade.
 26. **Request bodies are validated.** `evidenceRef` must be a non-empty string.
     Application fields are copied explicitly, so a body-supplied `verifiedAt`
     can no longer skip DNS.
@@ -266,9 +266,10 @@ and `transferRequestBytes` take `currentChallengeId`.
   cache.
 - The `Coordinate` shape, `ClaimSteward.approve` and the transfer-signing
   helpers changed. Callers must update.
-- A lockfile without integrity pins gates `audit-tree`, including yarn v1
-  files from private registries that record neither `integrity` nor a
-  `#sha1` fragment.
+- A resolved registry entry without an integrity pin gates `audit-tree`,
+  including yarn v1 files from private registries that record neither
+  `integrity` nor a `#sha1` fragment. Yarn berry entries carry no SRI and are
+  judged by their locator only.
 - A version imported before this change keeps its verified provenance but
   loses the predicate-sourced `sourceRepository` and `ref`. Under a signed
   policy whose `provenanceIdentities` constrain `repository`, it now gets a

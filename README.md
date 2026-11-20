@@ -334,9 +334,9 @@ arbitrary tarball URL, or a registry-shaped URL with no integrity pin) cannot be
 audited through the proxy: it is sent with
 `nonRegistry` set and comes back as a `block` row without any fetch. Yarn berry
 `workspace`/`patch`/`link`/`portal`/`file`/`exec` entries and pnpm directory
-entries are local sources and are skipped. A lockfile without integrity pins
-(an old yarn v1 file with neither `integrity` lines nor `#<sha1>` fragments)
-therefore gates.
+entries are local sources and are skipped. A resolved registry entry without an
+integrity pin (for example an old yarn v1 file with neither `integrity` lines
+nor `#<sha1>` fragments) therefore gates.
 
 - `--sbom <file>` writes the audited tree as a CycloneDX 1.6 JSON BOM: one
   `library` component per package (`purl: pkg:npm/<name>@<version>`) carrying
