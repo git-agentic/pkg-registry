@@ -351,8 +351,10 @@ export function createServer(opts: ServerOptions) {
     const attestations = privateStore.getAttestations(pkg, version);
     const fresh = await runAudit({
       meta: { ...stored.meta, integrity: integrityOf(tarball) }, tarball,
-      // An imported version keeps its registry signatures in the stored manifest; a native publish has none.
-      signatures: retainedSignatures(privateStore.getVersion(pkg, version)?.manifest), hasProvenance: attestations !== undefined,
+      // Only an IMPORTED version's manifest is the upstream registry's. A publisher controls its own
+      // manifest, so it must never supply signatures: null, exactly as the publish-time audit used.
+      signatures: privateStore.getVersion(pkg, version)?.actor === "imported" ? retainedSignatures(privateStore.getVersion(pkg, version)?.manifest) : null,
+      hasProvenance: attestations !== undefined,
       attestations: attestations ?? null, signingKeys, trustMaterial: opts.trustMaterial, extractLimits,
       advisories: [...(advisories ?? []), ...retractionCorpus.advisories], vulnerabilities,
     });

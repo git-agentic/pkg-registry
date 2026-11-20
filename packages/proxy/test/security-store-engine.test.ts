@@ -144,21 +144,32 @@ describe("native serve path re-audits stored bytes after an engine upgrade", () 
     assert.equal(body.engine.revision, AUDIT_REVISION);
   });
 
-  test("re-audit keeps the retained registry signatures, so an imported version still satisfies requireSignature", async () => {
+  const signedFixture = async (name: string, actor: string) => {
     const tarball = readFileSync(join(FIXTURES, ".tarballs", "leftpad-lite-1.0.0.tgz"));
     const integrity = integrityOf(tarball);
     const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
-    const sig = createSign("sha256").update(`@acme/signed@1.0.0:${integrity}`).sign(privateKey, "base64");
+    const sig = createSign("sha256").update(`${name}@1.0.0:${integrity}`).sign(privateKey, "base64");
     const signingKeys = [{ keyid: "test-key", spkiPem: publicKey.export({ type: "spki", format: "pem" }).toString(), expires: null }];
-    const stale = await runAudit({ meta: { name: "@acme/signed", version: "1.0.0", author: null, maintainers: [], license: null, hasInstallScripts: false, integrity }, tarball, signatures: [{ keyid: "test-key", sig }], signingKeys });
+    const stale = await runAudit({ meta: { name, version: "1.0.0", author: null, maintainers: [], license: null, hasInstallScripts: false, integrity }, tarball, signatures: null, signingKeys });
     const { revision: _r, ...engine } = stale.engine;
     const privateStore = new PrivatePackageStore();
-    privateStore.publish({ name: "@acme/signed", version: "1.0.0", integrity, tarball, actor: "t", audit: { ...stale, engine },
-      manifest: { name: "@acme/signed", version: "1.0.0", dist: { integrity, signatures: [{ keyid: "test-key", sig }] } } });
+    privateStore.publish({ name, version: "1.0.0", integrity, tarball, actor, audit: { ...stale, engine },
+      manifest: { name, version: "1.0.0", dist: { integrity, signatures: [{ keyid: "test-key", sig }] } } });
     const base = await mkServer(privateStore, { signingKeys, enterprisePolicy: { ...policy, requireSignature: ["@acme/*"] } });
-    const body = (await (await fetch(`${base}/-/audit/@acme%2fsigned/1.0.0`)).json()) as AuditReport;
+    return (await (await fetch(`${base}/-/audit/${encodeURIComponent(name)}/1.0.0`)).json()) as AuditReport;
+  };
+
+  test("re-audit keeps the retained registry signatures of an IMPORTED version (still satisfies requireSignature)", async () => {
+    const body = await signedFixture("@acme/signed", "imported");
     assert.equal(body.engine.revision, AUDIT_REVISION, "must have been re-audited");
     assert.equal(body.meta.signature, "verified");
     assert.equal(body.verdict, "allow");
+  });
+
+  test("a PUBLISHER-published version never gets signatures from its publisher-controlled manifest", async () => {
+    const body = await signedFixture("@acme/planted", "publisher");
+    assert.equal(body.engine.revision, AUDIT_REVISION, "must have been re-audited");
+    assert.equal(body.meta.signature, "unsigned", "a planted dist.signatures must not verify");
+    assert.notEqual(body.verdict, "allow", "requireSignature still fails for the publisher version");
   });
 });
