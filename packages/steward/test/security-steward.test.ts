@@ -239,6 +239,47 @@ describe("transfer signatures bind the claim's current challenge", () => {
   });
 });
 
+describe("freezes and pending changes (review follow-ups)", () => {
+  async function claimed() {
+    const c = clock();
+    const oldKey = generateKeypair();
+    const newKey = generateKeypair();
+    const steward = new ClaimSteward({ ...c.options, lookupUpstream: absent });
+    const original = await verified(steward, { namespace: "pkg", domain: "old.example", claimantPublicKey: oldKey.publicKey });
+    await steward.approve(original.id);
+    return { ...c, steward, original, oldKey, newKey };
+  }
+
+  test("a pending transfer is not materialized while the claim is frozen", async () => {
+    const { steward, original, oldKey, newKey, state } = await claimed();
+    const target = await verified(steward, { namespace: "pkg", domain: "new.example", claimantPublicKey: newKey.publicKey });
+    steward.requestTransfer("pkg", target.id, signTransferRequest({ namespace: "pkg", targetDomain: "new.example",
+      targetChallengeId: target.id, targetClaimantPublicKey: newKey.publicKey, currentChallengeId: original.id }, oldKey.privateKey));
+    steward.freezeForDomainChange("pkg", "monitor/domain-change-1");
+    state.now += 31 * DAY;
+    const claim = steward.release("frozen-with-transfer").corpus.claims[0]!;
+    assert.equal(claim.domain, "old.example");
+    assert.equal(claim.status, "frozen");
+  });
+
+  test("a dispute survives expiry: only a ruling clears it, renewal cannot", async () => {
+    const { steward, state } = await claimed();
+    steward.contest("pkg");
+    state.now += 366 * DAY;
+    assert.equal(steward.release("expired-while-disputed").corpus.claims[0]?.status, "disputed");
+    const fresh = await verified(steward, { namespace: "pkg", domain: "old.example", claimantPublicKey: claimant.publicKey });
+    assert.throws(() => steward.renew("pkg", fresh.id), /disputed/);
+    assert.equal(steward.release("still-disputed").corpus.claims[0]?.status, "disputed");
+  });
+
+  test("a domain-change freeze does not overwrite a dispute", async () => {
+    const { steward } = await claimed();
+    steward.contest("pkg");
+    steward.freezeForDomainChange("pkg", "monitor/domain-change-2");
+    assert.equal(steward.release("disputed-then-frozen").corpus.claims[0]?.status, "disputed");
+  });
+});
+
 describe("steward bind address", () => {
   const CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "dist", "index.js");
 

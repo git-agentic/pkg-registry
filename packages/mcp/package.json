@@ -44,7 +44,7 @@
   "dependencies": {
     "@git-agentic/sentinel-core": "0.1.0-alpha.2",
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "zod": "^3.23.8"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^24.13.2"

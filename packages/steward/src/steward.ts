@@ -290,7 +290,8 @@ export class ClaimSteward {
 
   freezeForDomainChange(namespace: string, evidenceRef: unknown): void {
     if (typeof evidenceRef !== "string" || !evidenceRef) throw new Error("domain-change freeze requires evidence");
-    this.claim(namespace).status = "frozen";
+    const claim = this.claim(namespace);
+    if (claim.status !== "disputed") claim.status = "frozen";
     this.persist();
   }
 
@@ -361,7 +362,7 @@ export class ClaimSteward {
     for (const claim of this.claims.values()) {
       const pending = claim.pending;
       if (!pending || Date.parse(pending.effectiveAt) > this.now()) continue;
-      if (pending.kind === "transfer" && claim.status === "disputed") continue; // only a dispute ruling may move a disputed claim
+      if (pending.kind === "transfer" && claim.status !== "active") continue; // a frozen or disputed claim only moves by dispute ruling
       claim.domain = pending.targetDomain!;
       claim.claimantPublicKey = pending.targetClaimantPublicKey!;
       claim.challenge = pending.challenge!;
@@ -372,7 +373,8 @@ export class ClaimSteward {
   }
 
   private applyExpiryFreeze(): void {
-    for (const claim of this.claims.values()) if (Date.parse(claim.renewalDueAt) <= this.now()) claim.status = "frozen";
+    // A dispute outlives expiry: only a ruling clears it.
+    for (const claim of this.claims.values()) if (claim.status !== "disputed" && Date.parse(claim.renewalDueAt) <= this.now()) claim.status = "frozen";
   }
 
   private claimFrom(application: Application): VerifiedClaim {

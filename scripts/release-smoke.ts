@@ -209,7 +209,7 @@ check("sentinel-steward fail-closed on missing config", () => {
 const proxyPort = 40000 + Math.floor(Math.random() * 20000);
 await checkAsync("sentinel-proxy boots, serves dashboard, exits cleanly", async () => {
   return withServer(bin("sentinel-proxy"), [], { ...process.env, SENTINEL_PORT: String(proxyPort) }, proj, /listening on/, 20000, async () => {
-    const res = await fetch(`http://localhost:${proxyPort}/`);
+    const res = await fetch(`http://127.0.0.1:${proxyPort}/`);
     if (res.status !== 200) throw new Error(`GET / → ${res.status}`);
     const body = await res.text();
     if (!/sentinel/i.test(body)) throw new Error("dashboard body missing 'sentinel'");
