@@ -1431,8 +1431,8 @@ are collected here.
   explicitly so a body-supplied `verifiedAt` cannot skip DNS. `ClaimSteward.approve` is
   async; `signTransferRequest` and `transferRequestBytes` take `currentChallengeId`.
 - **Action and CLI.** The PR comment is reused only when the marker is on a
-  `github-actions[bot]` comment, and comment lists are paginated. Workflow-command data and
-  properties are escaped; PR comment Markdown neutralizes backticks, `<`, `[`, `]` and `@`.
+  `github-actions[bot]` comment, and comment lists are paginated. Workflow-command data is
+  escaped; PR comment Markdown neutralizes backticks, `<`, `[`, `]` and `@`.
   CLI output passes untrusted text through `sanitizeTerminal()`, and `run-scripts` resolves
   its directory argument.
 - **Startup validation.** `SENTINEL_POLICY` must be exactly `observe` or `block`.

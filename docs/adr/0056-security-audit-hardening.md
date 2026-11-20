@@ -125,7 +125,11 @@ decisions. Findings that stayed as documented trade-offs are listed at the end.
     pathname unix sockets: the user session bus under `/run/user/<uid>`, the
     docker, containerd, podman and crio sockets, the system dbus socket, and
     `/tmp/.X11-unix` and `/tmp/ssh-*` when present. Each mask is
-    existence-guarded and is lifted only by an explicit filesystem grant.
+    existence-guarded and is lifted only by an explicit filesystem grant. When
+    the working directory, project root or `$HOME` sits under a directory that
+    would be masked, the run is refused rather than left unmasked. Residual:
+    abstract unix sockets stay reachable when `network` is approved, because
+    there is no network namespace then.
 18. **More exec carve-outs.** `SENSITIVE_EXECUTABLES` adds `launchctl`, `open`,
     `shortcuts` and `automator` (hand work to a process outside the sandbox on
     macOS) and `systemd-run`, `busctl`, `dbus-send` and `gdbus` (the Linux
@@ -150,7 +154,9 @@ decisions. Findings that stayed as documented trade-offs are listed at the end.
     compared per algorithm, and `npm_config_user_agent` names npm 7 or newer.
     npm 7 and later set that variable from the lockfile node and export only
     name, version, config, engines and bin from package.json (npm RFC 183);
-    npm 6 exports every field, so the package could set its own integrity. Residual: a package npm records only as sha1 fails closed.
+    npm 6 exports every field, so the package could set its own integrity. Residual: a package npm records only as sha1 fails closed. A git
+    dependency with a `prepare` script fails closed too: npm prepares it in a
+    nested install whose scripts are neither the root nor integrity-bound.
     Residual: on macOS a sandboxed process can outlive its script, because there
     is no process-group kill.
 
@@ -183,7 +189,8 @@ and `transferRequestBytes` take `currentChallengeId`.
 
 28. The PR comment is reused only when the marker is on a comment authored by
     `github-actions[bot]`, and comment lists are paginated.
-29. Workflow-command data and properties are escaped. PR comment Markdown
+29. Workflow-command data (`%`, CR, LF) is escaped, including fatal errors.
+    No annotation properties are emitted. PR comment Markdown
     neutralizes backticks, `<`, `[`, `]` and `@`.
 30. The CLI passes package-controlled text through `sanitizeTerminal()`, and
     `run-scripts` resolves its directory argument.

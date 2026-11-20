@@ -452,7 +452,7 @@ a true subcommand impractical). See
 
 - **Writes** are denied outside a fixed floor (the install dir, the OS temp dir, `/dev`, and `~/.npm/_logs`) plus operator-approved `filesystem:` grants — killing the persistence/tamper class, not an enumerated list. The node-gyp header caches (`~/.node-gyp`, `~/.cache/node-gyp`) are readable but not writable; with a `network` approval `npm_config_devdir` points at a per-run directory outside every write floor, and without one a cold-cache native build fails.
 - **`$HOME` reads** are denied by default, re-allowing only what a lifecycle script needs: system paths, the node install prefix (so a node-under-`$HOME` nvm/fnm/volta runtime still loads its stdlib), the project root (so `require()` resolves), and the build caches — closing credential theft as a whole class. `/etc/passwd`/`/etc/shadow` stay denied via the `SENSITIVE_PATHS` carve-out.
-- **Network egress** is denied unless a `network` capability is approved. On Linux, bubblewrap also masks local IPC regardless of network approval, because `--unshare-net` does not cover pathname unix sockets: the session bus under `/run/user/<uid>`, the docker, containerd, podman and crio sockets, the system dbus socket, and `/tmp/.X11-unix` and `/tmp/ssh-*` when present. A mask lifts only with an explicit `filesystem:` grant. Each run also gets its own pid namespace, `--die-with-parent` and `--new-session`.
+- **Network egress** is denied unless a `network` capability is approved. On Linux, bubblewrap also masks local IPC regardless of network approval, because `--unshare-net` does not cover pathname unix sockets: the session bus under `/run/user/<uid>`, the docker, containerd, podman and crio sockets, the system dbus socket, and `/tmp/.X11-unix` and `/tmp/ssh-*` when present. A mask lifts only with an explicit `filesystem:` grant, and a run whose working directory sits under a masked directory is refused. Each run also gets its own pid namespace, `--die-with-parent` and `--new-session`.
 - **Profile delivery** (macOS): the Seatbelt profile is passed inline (`sandbox-exec -p`); no profile file is written to the temp dir. A project root of `/` never widens read or exec rules, relative `cwd` and project root are resolved first, and `npm_config_*` values that carry URL credentials are scrubbed.
 - **Environment secrets** are fail-closed **scrubbed** (Phase 4): a credential-looking env var (`NPM_TOKEN`, `AWS_SECRET_ACCESS_KEY`, …) never reaches the script unless approved with an `env:NAME` capability. The `secret-exfil` audit rule additionally flags env reads at scoring time.
 - **Exec** (macOS, Phase 28) is denied outside a fixed floor — system dirs, the node
@@ -524,7 +524,9 @@ script is root. `INIT_CWD` is not trusted, because a nested npm resets it. A
 dependency script runs only when `npm_package_integrity` matches the integrity
 the proxy audited, compared per algorithm, and the script refuses to run unless
 `npm_config_user_agent` names npm 7 or newer (npm 6 exports every package.json
-field as `npm_package_*`, so the package could set its own integrity). A package npm records only as sha1 fails closed. On macOS a
+field as `npm_package_*`, so the package could set its own integrity). A package npm records only as sha1 fails closed, and so does a git
+dependency with a `prepare` script (npm prepares it in a nested install that
+is neither the root nor integrity-bound). On macOS a
 sandboxed process can outlive its script, because there is no process-group kill.
 
 ### Runtime violation telemetry (Phase 10)
