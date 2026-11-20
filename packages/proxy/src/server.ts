@@ -150,8 +150,8 @@ function integrityMatches(tarball: Buffer, declared: string): boolean {
   const tokens = declared.trim().split(/\s+/).filter(Boolean);
   if (tokens.length === 0) return false;
   return tokens.every((token) => {
-    const match = /^(sha1|sha256|sha512)-/.exec(token);
-    return match !== null && integrityOfAlgo(tarball, match[1] as "sha1" | "sha256" | "sha512") === token;
+    const algo = token.split("-", 1)[0]!;
+    return (SRI_ALGORITHMS as readonly string[]).includes(algo) && integrityOfAlgo(tarball, algo as SriAlgorithm) === token;
   });
 }
 
@@ -732,6 +732,9 @@ export function createServer(opts: ServerOptions) {
       }
       if (cc.nonRegistry !== undefined && typeof cc.nonRegistry !== "string") {
         return res.status(400).json({ error: "nonRegistry must be a string when present" });
+      }
+      if (cc.integrity !== undefined && typeof cc.integrity !== "string") {
+        return res.status(400).json({ error: "integrity must be a string when present" });
       }
     }
     const failOnError = body.failOnError === true;
