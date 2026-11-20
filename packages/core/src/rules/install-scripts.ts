@@ -240,7 +240,15 @@ function makeResolver(files: PackageFile[]): (cmd: string) => PackageFile[] {
         return list[lo];
       };
       let i = 0;
-      while (i < words.length && isPrefix(words, i)) i++;
+      for (; i < words.length && isPrefix(words, i); i++) {
+        // `NODE_OPTIONS=--require=./hook.js node -v`: a code file inside an assignment value runs too.
+        const eq = words[i]!.indexOf("=");
+        if (eq < 0) continue;
+        for (const piece of words[i]!.slice(eq + 1).split(/[\s=]+/)) {
+          const hit = CODE_WORD.test(piece) && /^(?:\.{1,2}\/|\/)/.test(piece) ? resolveWord(piece, "script") : undefined;
+          if (hit) out.add(hit);
+        }
+      }
       const command = words[i];
       if (!command) continue;
       const name = trimPunct(command);

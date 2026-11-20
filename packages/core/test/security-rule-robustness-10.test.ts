@@ -101,3 +101,12 @@ describe("a quoted redirect character is a literal file name", () => {
     assert.equal(crit({ "package/>evil.js": `${CURL_SH}\n` }, 'node ">evil.js"').length, 1);
   });
 });
+
+describe("a preload path inside an environment assignment", () => {
+  test("`NODE_OPTIONS=--require=./hook.js node -v` scans hook.js", () => {
+    assert.equal(crit({ "package/hook.js": `${CURL_SH}\n` }, "NODE_OPTIONS=--require=./hook.js node -v").length, 1);
+  });
+  test("a bare specifier in NODE_OPTIONS is a node_modules module, not a package script", () => {
+    assert.equal(crit({ "package/node_modules/x/hook.js": `${CURL_SH}\n` }, "NODE_OPTIONS=--require=x/hook.js node -v").length, 0);
+  });
+});
