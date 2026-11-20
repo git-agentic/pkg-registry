@@ -229,20 +229,36 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
   const isPrefix = (words: string[], i: number) =>
     /^[A-Za-z_]\w*=/.test(words[i]!) || WRAPPERS.has(words[i]!) || (i > 0 && WRAPPERS.has(words[i - 1]!) && words[i]!.startsWith("-"));
 
-  // Script names already followed in this resolution: a self-referencing script terminates and each runs once.
-  let followed = new Set<string>();
+  // Fewest script hops at which each name was scanned: a self-referencing script terminates, and a name first
+  // reached at the hop limit (children out of reach) is rescanned when a shorter path reaches it.
+  let followed = new Map<string, number>();
   let followedBodies: [string, string][] = [];
-  /** The script a package-manager command runs (`npm run x`, `yarn x`), or undefined. `yarn x` counts only when `x` is defined. */
+  /**
+   * The script a package-manager command runs (`npm run x`, `pnpm -C . x`, `yarn test`), or undefined.
+   * Bare `yarn x` / `pnpm x` and `bun run x` count only when `x` is defined (`yarn install` is a builtin).
+   */
   const scriptRef = (words: string[], i: number): string | undefined => {
     const pm = trimPunct(words[i]!);
     const pmName = pm.slice(pm.lastIndexOf("/") + 1);
-    if (pmName !== "npm" && pmName !== "pnpm" && pmName !== "yarn") return undefined;
-    const args = words.slice(i + 1).filter((w) => !w.startsWith("-")); // `npm run --silent x`
-    const explicit = pmName === "yarn" ? args[0] === "run" : args[0] === "run" || args[0] === "run-script";
-    const name = args[explicit ? 1 : 0];
-    if (!name || (!explicit && pmName !== "yarn")) return undefined;
-    // Bare `yarn x` is a script only when `x` is defined (`yarn install` is a builtin); `npm run x` follows pre/post even without `x`.
-    return explicit || Object.hasOwn(scripts, name) ? name : undefined;
+    if (pmName !== "npm" && pmName !== "pnpm" && pmName !== "yarn" && pmName !== "bun") return undefined;
+    const args: string[] = [];
+    for (let k = i + 1; k < words.length && args.length < 2 && words[k] !== "--"; k++) {
+      const w = words[k]!;
+      if (!w.startsWith("-")) args.push(w);
+      else if (PM_VALUE_OPTS.has(w) && !(w === "-w" && pmName !== "npm")) k++; // pnpm's `-w` is a boolean
+    }
+    const [a0, a1] = args;
+    if (!a0) return undefined;
+    let name: string | undefined;
+    let explicit = false; // explicit: `pre`/`post` run even when `<name>` itself is undefined
+    if (pmName === "npm" ? NPM_RUN.has(a0) : a0 === "run" || a0 === "run-script") {
+      name = a1;
+      explicit = pmName !== "bun";
+    } else if (pmName === "npm" || pmName === "pnpm") {
+      if (LIFECYCLE_CMDS.has(a0)) { name = a0; explicit = true; }
+      else if (pmName === "pnpm") name = a0;
+    } else if (pmName === "yarn") name = a0;
+    return name && (explicit || Object.hasOwn(scripts, name)) ? name : undefined;
   };
 
   /**
@@ -282,9 +298,10 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
       if (ref !== undefined && hops < MAX_SCRIPT_HOPS) {
         for (const n of [`pre${ref}`, ref, `post${ref}`]) {
           const body = Object.hasOwn(scripts, n) ? scripts[n] : undefined;
-          if (typeof body !== "string" || followed.has(n)) continue;
-          followed.add(n);
-          followedBodies.push([n, body]);
+          const seen = followed.get(n);
+          if (typeof body !== "string" || (seen !== undefined && seen <= hops + 1)) continue;
+          followed.set(n, hops + 1);
+          if (seen === undefined) followedBodies.push([n, body]);
           scan(body, out, depth, hops + 1);
         }
       }
@@ -362,7 +379,7 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
 
   return (cmd) => {
     const out = new Set<PackageFile>();
-    followed = new Set();
+    followed = new Map();
     followedBodies = [];
     scan(cmd, out, 0);
     return { files: [...out], scripts: followedBodies };
@@ -370,6 +387,10 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
 }
 
 const MAX_INLINE_DEPTH = 3;
+// Options that take a separate value word, skipped with it (`npm --prefix . run x`).
+const PM_VALUE_OPTS = new Set(["--prefix", "-C", "--dir", "--cwd", "--workspace", "-w", "--filter", "-F", "--loglevel"]);
+const NPM_RUN = new Set(["run", "run-script", "rum", "urn"]);
+const LIFECYCLE_CMDS = new Set(["test", "start", "stop", "restart"]); // `npm test` runs scripts.test
 const MAX_SCRIPT_HOPS = 8; // `npm run a` -> `npm run b` -> ... : a chain deeper than this is not followed
 const isPunct = (c: string | undefined) => c === "(" || c === ")" || c === '"' || c === "'" || c === "`";
 

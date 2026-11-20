@@ -54,8 +54,15 @@ describe("install hooks follow package-manager script references", () => {
     assert.deepEqual(sev(f, { postinstall: "yarn install", install: "node setup.js" }), ["critical", "critical"]);
   });
 
-  test("`pnpm <name>` is not followed (only `pnpm run`)", () => {
-    assert.deepEqual(sev(files, { postinstall: "pnpm setup", setup: "node setup.js" }), ["low"]);
+  test("bare `pnpm <name>` and `bun run <name>` are followed only when the script is defined", () => {
+    assert.deepEqual(sev(files, { postinstall: "pnpm setup", setup: "node setup.js" }), ["critical"]);
+    assert.deepEqual(sev(files, { postinstall: "bun run setup", setup: "node setup.js" }), ["critical"]);
+    assert.deepEqual(sev(files, { postinstall: "pnpm setup" }), ["low"]);
+    assert.deepEqual(sev(files, { postinstall: "pnpm install" }), ["low"]);
+    // `bun` is also an interpreter, so use inline payloads (no setup.js file) to isolate script lookup
+    assert.deepEqual(sev({}, { postinstall: "bun run setup", setup: CURL_SH }), ["critical"]);
+    assert.deepEqual(sev({}, { postinstall: "bun run setup" }), ["low"]);
+    assert.deepEqual(sev({}, { postinstall: "bun setup", setup: CURL_SH }), ["low"]);
   });
 
   test("a self-referencing script terminates", () => {
@@ -96,6 +103,41 @@ describe("install hooks follow package-manager script references", () => {
   test("a benign `prebuild` stays clean; `pre<name>` is not run for an unrelated name", () => {
     assert.deepEqual(sev({ "package/clean.js": "console.log(1)\n" }, { postinstall: "npm run build", build: "tsc", prebuild: "node clean.js" }), ["low"]);
     assert.deepEqual(sev({}, { postinstall: "npm run build", build: "tsc", preother: CURL_SH }), ["low"]);
+  });
+
+  test("a script first reached at the hop limit is rescanned when a shorter path reaches it", () => {
+    const scripts: Record<string, string> = { postinstall: "npm run c1 && npm run p", p: "npm run q", q: CURL_SH };
+    for (let i = 1; i < 7; i++) scripts[`c${i}`] = `npm run c${i + 1}`;
+    scripts.c7 = "npm run p"; // long path: p sits at the hop limit, so its child q is out of reach
+    assert.deepEqual(sev({}, { ...scripts, postinstall: "npm run c1" }), ["low"]);
+    assert.deepEqual(sev({}, scripts), ["critical"]); // the short path reaches q
+  });
+
+  test("options with values are skipped before the subcommand", () => {
+    for (const hook of [
+      "npm --prefix . run setup", "npm --prefix=. run setup", "npm -w pkg run setup", "npm --workspace pkg run setup",
+      "npm --loglevel silent run setup", "pnpm -C . run setup", "pnpm --dir . run setup", "pnpm --filter foo run setup",
+      "pnpm -F foo setup", "pnpm -w run setup", "yarn --cwd . setup", "yarn --cwd . run setup",
+    ]) {
+      assert.deepEqual(sev(files, { postinstall: hook, setup: "node setup.js" }), ["critical"], hook);
+    }
+  });
+
+  test("test / start / stop / restart are script references", () => {
+    for (const name of ["test", "start", "stop", "restart"]) {
+      for (const pm of ["npm", "pnpm"]) {
+        assert.deepEqual(sev(files, { postinstall: `${pm} ${name}`, [name]: "node setup.js" }), ["critical"], `${pm} ${name}`);
+      }
+      assert.deepEqual(sev(files, { postinstall: `yarn ${name}`, [name]: "node setup.js" }), ["critical"], `yarn ${name}`);
+      assert.deepEqual(sev(files, { postinstall: `npm ${name}` }), ["low"], `undefined ${name}`);
+    }
+    assert.deepEqual(sev({}, { postinstall: "npm test", pretest: CURL_SH }), ["critical"]);
+  });
+
+  test("npm aliases `rum` and `urn` are `run`", () => {
+    for (const alias of ["rum", "urn"]) {
+      assert.deepEqual(sev(files, { postinstall: `npm ${alias} setup`, setup: "node setup.js" }), ["critical"], alias);
+    }
   });
 
   test("inherited object keys are not scripts", () => {
