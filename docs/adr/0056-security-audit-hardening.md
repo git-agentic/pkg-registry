@@ -98,8 +98,11 @@ decisions. Findings that stayed as documented trade-offs are listed at the end.
     with a known algorithm (yarn v1 `#<sha1>` fragments count): without one, npm
     would install unverified bytes from whatever host the lockfile names, so the
     entry is flagged. Conflicting pins for one `name@version` are flagged.
-    `audit-tree` checks each distinct pin against the served bytes, and a claim
-    with no known-algorithm token blocks instead of being skipped. The block row
+    `audit-tree` checks each distinct pin against the served bytes (sha1,
+    sha256, sha384, sha512, every token must match), and a claim with an
+    unknown algorithm blocks instead of being skipped. A lockfile name outside
+    the npm grammar is reported as `<unparsed>` and a non-plain version as
+    `0.0.0`, both flagged, so no URL text reaches the output. The block row
     names only the source kind (git, url, other), never the raw resolution,
     which can carry credentials.
 
@@ -125,11 +128,13 @@ decisions. Findings that stayed as documented trade-offs are listed at the end.
 15. **`AuditStore` is bounded.** It keeps at most 20,000 entries in memory and
     evicts the oldest first. Approvals and violations for an evicted coordinate
     answer "audit first", which is the existing behavior for an unknown
-    coordinate. There is no env var. The store skips persisted reports from
-    another engine version, and the native serve path re-audits a stored
-    publication whose audit predates the running engine, from the stored
-    bytes, without rewriting the publication record. Writes to the store file
-    are debounced (about 500 ms) and flushed on exit.
+    coordinate. There is no env var. Reports carry `engine.revision`
+    (`AUDIT_REVISION`, bumped whenever rule semantics change). The store skips
+    persisted reports whose engine version or revision differs, and the native
+    serve path re-audits a stored publication with a stale audit from the stored
+    bytes and retained signatures, without rewriting the publication record.
+    Writes to the store file are debounced (about 500 ms) and flushed on exit,
+    `SIGTERM` and `SIGINT`.
 
 ### Sandbox and enforced installs
 
