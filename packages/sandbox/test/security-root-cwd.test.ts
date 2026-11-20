@@ -92,6 +92,7 @@ describe("a symlink to / or to a project dir is followed at the entry points", (
     // The Seatbelt generator canonicalizes /tmp to /private/tmp, which on Linux is not the realpath.
     const inProfile = (path: string) => p.includes(`(subpath "${path}")`) || p.includes(`(subpath "/private${path}")`);
     assert.ok(inProfile(real) && !inProfile(link));
-    assert.ok(generateProfile([], { ...o, cwd: link, projectRoot: link }).includes(`(subpath "${link}")`));
+    const lexical = generateProfile([], { ...o, cwd: link, projectRoot: link });
+    assert.ok(lexical.includes(`(subpath "${link}")`) || lexical.includes(`(subpath "/private${link}")`));
   });
 });
