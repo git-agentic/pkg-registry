@@ -238,18 +238,23 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
     if (typeof body === "string" && !visited.has(n)) { visited.add(n); queue.push([n, body]); }
   };
   /**
-   * Deliberate over-following: after `npm`/`pnpm`/`yarn`/`bun`, every word that names a script is followed,
-   * wherever it sits (after `--` or an unknown option too), with its `pre`/`post` scripts. Following a script
-   * that does not run costs a false positive only if that script is itself dangerous; missing one that runs is a bypass.
+   * Deliberate over-following: after `npm`/`pnpm`/`yarn`/`bun`, every word is treated as a script name, and
+   * so is each script a built-in command of that name runs (`PM_COMMANDS`). Each gets its `pre`/`post` scripts.
+   * Undefined names are skipped by `enqueue`. A script that does not run costs a false positive only if it is
+   * itself dangerous; missing one that runs is a bypass.
    */
-  const followScriptWords = (words: string[], from: number): void => {
+  const followScriptWords = (words: string[], from: number, out: Set<PackageFile>): void => {
     for (let j = from; j < words.length; j++) {
-      const w = PM_ALIAS[words[j]!] ?? words[j]!;
-      for (const n of w === "restart" ? ["restart", "stop", "start"] : [w]) {
-        if (!Object.hasOwn(scripts, n)) continue;
-        enqueue(`pre${n}`);
-        enqueue(n);
-        enqueue(`post${n}`);
+      const w = words[j]!;
+      for (const x of [w, ...(PM_COMMANDS.get(w) ?? [])]) {
+        enqueue(`pre${x}`);
+        enqueue(x);
+        enqueue(`post${x}`);
+      }
+      // `npm start` with no `start` script runs `node server.js`.
+      if ((w === "start" || w === "restart") && !Object.hasOwn(scripts, "start")) {
+        const hit = exact("package/server.js");
+        if (hit) out.add(hit);
       }
     }
   };
@@ -287,7 +292,7 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
       if (!command) continue;
       const name = trimPunct(command);
       const interpreter = name.slice(name.lastIndexOf("/") + 1);
-      if (PACKAGE_MANAGERS.has(interpreter)) followScriptWords(words, i + 1);
+      if (PACKAGE_MANAGERS.has(interpreter)) followScriptWords(words, i + 1, out);
       const inline = Object.hasOwn(INLINE_FLAG, interpreter) ? INLINE_FLAG[interpreter] : undefined;
       // The command word itself may be a package script (`./setup`).
       if (!inline) {
@@ -370,7 +375,15 @@ function makeResolver(files: PackageFile[], scripts: Record<string, string>): (c
 
 const MAX_INLINE_DEPTH = 3;
 const PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun"]);
-const PM_ALIAS: Record<string, string> = Object.assign(Object.create(null), { t: "test", tst: "test", it: "test", "install-test": "test" });
+// Scripts a built-in package-manager command runs besides the script of its own name (npm lifecycle).
+const PM_COMMANDS = new Map<string, string[]>([
+  ...["t", "tst", "it", "install-test", "cit", "install-ci-test"].map((c) => [c, ["test"]] as [string, string[]]),
+  ["restart", ["restart", "stop", "start"]],
+  ["pack", ["prepack", "prepare", "postpack"]],
+  ["publish", ["prepublishOnly", "prepack", "prepare", "postpack", "publish", "postpublish"]],
+  ["version", ["preversion", "version", "postversion"]],
+  ...["install", "i", "ci", "rebuild"].map((c) => [c, ["preinstall", "install", "postinstall", "prepare"]] as [string, string[]]),
+]);
 const isPunct = (c: string | undefined) => c === "(" || c === ")" || c === '"' || c === "'" || c === "`";
 
 /** Trim quote/paren punctuation from both ends with two pointers (a `)+$` regex is quadratic on `)))…x`). */

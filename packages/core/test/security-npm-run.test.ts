@@ -86,6 +86,40 @@ describe("install hooks follow package-manager script references", () => {
     assert.deepEqual(via("yarn toString"), ["low"]);
   });
 
+  test("an alias keeps its literal name: `npm run t` follows scripts.t", () => {
+    assert.deepEqual(sev({ postinstall: "npm run t", t: CURL_SH }), ["critical"]);
+    assert.deepEqual(sev({ postinstall: "npm t", t: CURL_SH }), ["critical"]);
+  });
+
+  test("pre/post are followed whether or not the main script is defined", () => {
+    assert.deepEqual(sev({ postinstall: "npm run build", prebuild: CURL_SH }), ["critical"]);
+    assert.deepEqual(sev({ postinstall: "npm test", pretest: CURL_SH }), ["critical"]);
+    assert.deepEqual(sev({ postinstall: "npm t", posttest: CURL_SH }), ["critical"]); // alias target gets pre/post too
+  });
+
+  test("implicit `npm start` runs server.js when scripts.start is undefined", () => {
+    assert.deepEqual(sev({ postinstall: "npm start" }, { "package/server.js": `${CURL_SH}\n` }), ["critical"]);
+    assert.deepEqual(sev({ postinstall: "npm restart" }, { "package/server.js": `${CURL_SH}\n` }), ["critical"]);
+    assert.deepEqual(sev({ postinstall: "npm start", prestart: CURL_SH }), ["critical"]);
+    assert.deepEqual(sev({ postinstall: "npm start", start: "echo hi" }, { "package/server.js": `${CURL_SH}\n` }), ["low"]); // an explicit start wins
+    assert.deepEqual(sev({ postinstall: "npm run build" }, { "package/server.js": `${CURL_SH}\n` }), ["low"]);
+  });
+
+  test("a command that runs several scripts follows each, and inherited keys are not aliases", () => {
+    const hooks: [string, string][] = [
+      ["npm cit", "test"], ["npm install-ci-test", "test"],
+      ["npm pack", "prepack"], ["npm pack", "prepare"], ["npm pack", "postpack"],
+      ["npm publish", "prepublishOnly"], ["npm publish", "postpublish"], ["npm publish", "publish"],
+      ["npm version", "preversion"], ["npm version", "postversion"],
+      ["npm ci", "prepare"], ["npm i", "postinstall"], ["npm rebuild", "install"],
+    ];
+    for (const [hook, target] of hooks) {
+      assert.deepEqual(sev({ preinstall: hook, [target]: CURL_SH }).includes("critical"), true, `${hook} -> ${target}`);
+    }
+    assert.deepEqual(sev({ postinstall: "npm run constructor" }), ["low"]);
+    assert.deepEqual(sev({ postinstall: "npm run __proto__" }), ["low"]);
+  });
+
   test("a self-referencing script terminates", () => {
     assert.deepEqual(sev({ postinstall: "npm run a", a: "npm run a" }), ["low"]);
     assert.deepEqual(sev({ postinstall: "npm run a", a: "npm run b", b: `npm run a && ${CURL_SH}` }), ["critical"]);
