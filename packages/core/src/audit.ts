@@ -174,7 +174,15 @@ export async function runAudit(input: AuditTarballInput): Promise<Audit> {
   if (extracted.truncated) {
     audit.findings.push({
       ruleId: "resource-abuse", category: "resource", severity: "critical",
-      message: "tarball exceeded extraction limits (unpacked size or file count) — possible decompression bomb; audit truncated",
+      message: "tarball exceeded extraction limits (unpacked size, file count or nested compression) — possible decompression bomb; audit truncated",
+      onChangedFile: false, evidence: [],
+    });
+  }
+  if (extracted.manifestConfusion.length > 0) {
+    // npm installs the LAST root package.json entry; Sentinel cannot tell which one reaches disk, so fail closed.
+    audit.findings.push({
+      ruleId: "manifest-confusion", category: "metadata", severity: "critical",
+      message: `package.json cannot be trusted to be the scanned one: ${extracted.manifestConfusion.join("; ")}`,
       onChangedFile: false, evidence: [],
     });
   }
