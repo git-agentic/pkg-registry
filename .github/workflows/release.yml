@@ -9,8 +9,9 @@
 # Stage B (publish): runs only on workflow_dispatch with publish=true AND the
 # protected `npm-release` environment's approval. Downloads Stage A's exact
 # artifacts, verifies checksums / tag / declared versions, refuses to overwrite
-# any existing version, publishes in dependency order with provenance, verifies
-# via `npm view` + a clean registry install, and only then creates the GitHub
+# any existing version, publishes in dependency order with provenance under the
+# `latest` dist-tag, verifies via `npm view` (version + dist-tag) + a clean
+# registry install, and only then creates the GitHub
 # prerelease.
 #
 # Auth: npm trusted publishing (GitHub Actions OIDC) — configured on
@@ -187,7 +188,9 @@ jobs:
             fi
           done
           echo "no target version exists — safe to publish"
-      - name: Publish in dependency order (--access public --tag alpha --provenance)
+      # --tag latest even for prereleases: OIDC trusted publishing cannot run
+      # dist-tag mutations, so the publish itself must set the tag installs use.
+      - name: Publish in dependency order (--access public --tag latest --provenance)
         run: |
           set -euo pipefail
           VERSION="${RELEASE_TAG#v}"
@@ -198,34 +201,34 @@ jobs:
             # of a file path and tries git ls-remote (run 29307312478).
             t="./release-artifacts/git-agentic-sentinel-$p-$VERSION.tgz"
             echo "publishing @git-agentic/sentinel-$p@$VERSION"
-            if ! npm publish "$t" --access public --tag alpha --provenance; then
+            if ! npm publish "$t" --access public --tag latest --provenance; then
               echo "::error::publish of @git-agentic/sentinel-$p failed. Already published (immutable): ${published:-none}. Do NOT unpublish; fix forward."; exit 1
             fi
             published="$published @git-agentic/sentinel-$p"
             echo "- @git-agentic/sentinel-$p@$VERSION published" >> "$GITHUB_STEP_SUMMARY"
           done
       - name: Verify every published package via npm view
+        # Hard cap: the loop's deadline is checked between polls, and a hung
+        # `npm view` could otherwise outlast it.
+        timeout-minutes: 12
         run: |
           set -euo pipefail
           VERSION="${RELEASE_TAG#v}"
+          # The registry can take minutes to show a fresh publish (run
+          # 44750832298 gave up after 75 s although every package was out).
+          # One shared 10-minute deadline covers all seven packages.
+          deadline=$(( $(date +%s) + 600 ))
           for p in core proxy sandbox mcp steward cli action; do
-            for i in 1 2 3 4 5; do
-              got="$(npm view "@git-agentic/sentinel-$p@$VERSION" version 2>/dev/null || true)"
-              [ "$got" = "$VERSION" ] && break
+            while :; do
+              got="$(npm view "@git-agentic/sentinel-$p@$VERSION" version --prefer-online 2>/dev/null || true)"
+              latest="$(npm view "@git-agentic/sentinel-$p" dist-tags.latest --prefer-online 2>/dev/null || true)"
+              [ "$got" = "$VERSION" ] && [ "$latest" = "$VERSION" ] && break
+              if [ "$(date +%s)" -ge "$deadline" ]; then
+                echo "::error::@git-agentic/sentinel-$p: version ${got:-missing}, dist-tag latest ${latest:-missing}; expected $VERSION after 10 minutes"; exit 1
+              fi
               sleep 15
             done
-            [ "$got" = "$VERSION" ] || { echo "::error::@git-agentic/sentinel-$p@$VERSION not visible after publish"; exit 1; }
-            tag_alpha="$(npm view "@git-agentic/sentinel-$p" dist-tags.alpha)"
-            [ "$tag_alpha" = "$VERSION" ] || { echo "::error::@git-agentic/sentinel-$p dist-tag alpha is $tag_alpha, expected $VERSION"; exit 1; }
-            # npm auto-creates `latest` on a package's first publish (even with
-            # --tag alpha) and never moves it. OIDC trusted publishing cannot
-            # run dist-tag mutations, so drift is surfaced here, not fixed here.
-            tag_latest="$(npm view "@git-agentic/sentinel-$p" dist-tags.latest 2>/dev/null || true)"
-            if [ -n "$tag_latest" ] && [ "$tag_latest" != "$VERSION" ]; then
-              echo "::warning::@git-agentic/sentinel-$p dist-tag latest is $tag_latest (stale). Until a stable release exists, retarget it: npm dist-tag add @git-agentic/sentinel-$p@$VERSION latest"
-              echo "- ⚠ sentinel-$p latest→$tag_latest is stale; run: \`npm dist-tag add @git-agentic/sentinel-$p@$VERSION latest\`" >> "$GITHUB_STEP_SUMMARY"
-            fi
-            echo "@git-agentic/sentinel-$p@$VERSION visible, dist-tag alpha OK"
+            echo "@git-agentic/sentinel-$p@$VERSION visible, dist-tag latest OK"
           done
 
   verify-registry-install:

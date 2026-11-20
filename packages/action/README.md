@@ -9,7 +9,7 @@ idempotent PR comment body — no separately-running proxy needed.
 > without notice. Not production-ready.
 
 ```bash
-npm install @git-agentic/sentinel-action@alpha
+npm install @git-agentic/sentinel-action
 ```
 
 This package is the engine behind the composite GitHub Action defined at the

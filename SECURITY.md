@@ -6,7 +6,7 @@ sandbox for the npm ecosystem. We treat reports against it accordingly.
 ## Supported versions
 
 Sentinel is pre-1.0. Only the tip of `main` and the most recent published
-prerelease (`@git-agentic/sentinel-*@alpha`) are supported;
+prerelease (the `latest` dist-tag of `@git-agentic/sentinel-*`) are supported;
 there are no maintained release branches. Prereleases are snapshots of
 `main` — fixes ship as the next prerelease, never as patches to an old one.
 

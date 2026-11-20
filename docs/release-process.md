@@ -21,17 +21,14 @@ failure without unpublishing anything already released.
 
 ## Prerelease versioning
 
-- Pre-1.0 releases use `0.1.0-alpha.N` (then `-beta.N`, `-rc.N`) with the
-  npm dist-tag matching the prerelease channel (`alpha`, `beta`, `rc`).
-- **The `latest` dist-tag, pre-stable:** npm force-creates `latest` on a
-  package's first publish (even with `--tag alpha`) and never moves it; it
-  also cannot be deleted. Until a stable release exists, `latest` is
-  therefore kept pointing at the **newest prerelease** — retargeted manually
-  after each release (`npm dist-tag add @git-agentic/sentinel-<p>@<version>
-  latest`, one per package; needs an interactive npm login — OIDC trusted
-  publishing covers publish only, not dist-tag mutations). Stage B warns in
-  the run summary when `latest` is stale. Once `0.1.0` stable ships with
-  `--tag latest`, this manual step disappears.
+- Pre-1.0 releases use `0.1.0-alpha.N` (then `-beta.N`, `-rc.N`).
+- **Every release is published with `--tag latest`**, prereleases included.
+  OIDC trusted publishing covers `npm publish` only, not `npm dist-tag`, and
+  a manual retarget needs one browser 2FA approval per package. So the
+  publish itself sets the tag that a plain `npm install` resolves, and no
+  release needs a manual dist-tag step.
+- The `alpha` dist-tag is no longer moved. It stays on `0.1.0-alpha.3`, the
+  last release published with `--tag alpha`; install without a tag.
 - All seven packages version in lockstep — one release version across the
   workspace, even for packages with no changes. Lockstep keeps the internal
   dependency pins trivially correct and the support matrix one-dimensional.
@@ -77,8 +74,9 @@ jobs): requires `publish=true` on the dispatch **and** approval of the protected
 artifacts, verifies checksums, verifies the tag points at the tested commit,
 verifies every tarball declares the release version, refuses to run if any
 target version already exists, publishes in dependency order with
-`--access public --tag alpha --provenance`, and verifies each package via
-`npm view` (version + dist-tag). The `verify-registry-install` job then installs
+`--access public --tag latest --provenance`, and verifies each package via
+`npm view` (version + `latest` dist-tag), waiting up to 10 minutes in total for
+the registry to show them. The `verify-registry-install` job then installs
 the published packages from the public registry in a clean project. Only after
 that does the `github-release` job create the GitHub prerelease with the
 artifacts attached.
@@ -124,7 +122,8 @@ exact commit + workflow run.
 1. **Deprecate immediately**: `npm deprecate @git-agentic/sentinel-<p>@<version>
    "SECURITY: compromised — do not install"` for every affected package.
 2. Point the dist-tag at the last known-good version (`npm dist-tag add
-   @git-agentic/sentinel-<p>@<good> alpha`).
+   @git-agentic/sentinel-<p>@<good> latest`; interactive login, one 2FA
+   approval per package).
 3. Request npm unpublish/security takedown through npm support if within
    policy; do not rely on it.
 4. Rotate every credential the pipeline touched (npm token, corpus/policy
@@ -145,11 +144,9 @@ path.
 
 1. Land fixes on `main`; bump all workspaces + internal pins +
    `ENGINE_VERSION`/CLI/MCP versions to `0.1.0` (no prerelease suffix).
-2. Run the same two-stage pipeline with tag `v0.1.0`, publishing with
-   `--tag latest` (the workflow's dist-tag is the one alpha-specific knob to
-   change — everything else is identical).
-3. Keep `alpha` pointing at the last alpha until `latest` exists, then move
-   `alpha` forward to `0.1.0` as well so `@alpha` installs never resolve
-   older than stable.
+2. Run the same two-stage pipeline with tag `v0.1.0`. It already publishes
+   with `--tag latest`, so nothing in the workflow changes.
+3. Once stable releases exist, publish later prereleases under a channel tag
+   (`--tag next` or `--tag beta`) so they stop replacing stable on `latest`.
 4. The GitHub release loses the `--prerelease` flag; SECURITY.md's supported
    versions section starts naming the stable line.

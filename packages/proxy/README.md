@@ -10,7 +10,7 @@ npm compatibility surface (packuments, dist-tags, unpublish-as-retraction).
 > without notice. Not production-ready.
 
 ```bash
-npm install -g @git-agentic/sentinel-proxy@alpha
+npm install -g @git-agentic/sentinel-proxy
 sentinel-proxy            # starts the proxy on 127.0.0.1:4873
 ```
 

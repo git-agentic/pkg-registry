@@ -10,7 +10,7 @@ with a fail-closed contract on any other platform.
 > without notice. Not production-ready.
 
 ```bash
-npm install @git-agentic/sentinel-sandbox@alpha
+npm install @git-agentic/sentinel-sandbox
 ```
 
 ## Platform behavior in this alpha
