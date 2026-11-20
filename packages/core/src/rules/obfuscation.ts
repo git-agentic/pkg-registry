@@ -23,7 +23,8 @@ const DECODED_ASSIGNMENT_BUFFER = /\b(?:const|let|var)\s+([$A-Z_a-z][$\w]*)\s*=\
 const FUNCTION_ATOB = /new\s+Function\s*\(\s*atob\s*\(/gi;
 const FUNCTION_BUFFER = /new\s+Function\s*\(\s*Buffer\.from\s*\(/gi;
 const FUNCTION_ON_NAME = /new\s+Function\s*\(\s*([$\w]+)/g;
-const BASE64 = /['"]base64['"]/g;
+// Node accepts any case and `base64url` as an encoding name.
+const BASE64 = /['"]base64(?:url)?['"]/gi;
 const STATEMENT_END = "[;\\n]";
 const MAX_EVIDENCE = 2;
 

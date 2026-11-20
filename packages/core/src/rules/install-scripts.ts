@@ -34,6 +34,7 @@ export const installScriptsRule: Rule = {
     const findings: Finding[] = [];
     const code = codeFiles(input);
     const byPath = new Map(input.files.map((f) => [f.path, f] as const));
+    const bySuffix = suffixIndex(code);
 
     for (const hook of LIFECYCLE) {
       const cmd = scripts[hook];
@@ -43,7 +44,7 @@ export const installScriptsRule: Rule = {
       const inlineDangers = DANGER_IN_SCRIPT.filter((d) => d.re.test(cmd));
 
       // If it runs a local script file, inspect that file's contents too.
-      const referenced = referencedFiles(cmd, code, byPath);
+      const referenced = referencedFiles(cmd, byPath, bySuffix);
       const fileDangers = referenced.flatMap((f) =>
         DANGER_IN_SCRIPT.flatMap((d) =>
           scanLines(f, d.re, 2).map((ev) => ({ why: d.why, ev })),
@@ -87,27 +88,38 @@ export const installScriptsRule: Rule = {
   },
 };
 
-const MAX_TOKENS = 64;
-const MAX_TOKEN_LEN = 256;
 // Docs/data named as an argument (`cat README`, `node -p package.json`) are not executed; scanning them is noise.
 const NOT_SCRIPT = /(?:\.(?:md|markdown|json|txt|ya?ml|lock|map)|(?:^|\/)(?:readme|licen[cs]e|changelog|notice))$/i;
 const JS_REF = /\.(?:c?js|mjs|cjs|ts)$/;
+// Shell separators and expansion characters. No token-count or length cap: a cap lets padding push a real script name out.
+const TOKEN_SPLIT = /[\s;&|<>()"'`=,${}\\]+/;
+
+/** Every `/`-suffix of each code path (`a/b.js` → `b.js`), first file wins, so a suffix match is one lookup. */
+function suffixIndex(code: PackageFile[]): Map<string, PackageFile> {
+  const m = new Map<string, PackageFile>();
+  for (const f of code) {
+    for (let i = f.path.indexOf("/"); i !== -1; i = f.path.indexOf("/", i + 1)) {
+      const suffix = f.path.slice(i + 1);
+      if (!m.has(suffix)) m.set(suffix, f);
+    }
+  }
+  return m;
+}
 
 /**
  * Resolve local script files referenced by a lifecycle command. Every
- * whitespace/shell-separated token that names a retained package file counts
- * (`node setup`, `sh build.sh`, `node scripts/x.js`); JS names also match by
- * path suffix. Tokens are bounded so a huge command stays linear.
+ * shell-separated token that names a retained package file counts (`node setup`,
+ * `sh build.sh`, `node scripts/x.js`); JS names also match by path suffix.
+ * One linear pass plus Map lookups, whatever the command length.
  */
-function referencedFiles(cmd: string, code: PackageFile[], byPath: Map<string, PackageFile>): PackageFile[] {
+function referencedFiles(cmd: string, byPath: Map<string, PackageFile>, bySuffix: Map<string, PackageFile>): PackageFile[] {
   const out = new Set<PackageFile>();
-  const tokens = new Set<string>();
-  for (const t of cmd.split(/[\s;&|<>()"'`=,]+/)) {
-    if (t && t.length <= MAX_TOKEN_LEN) tokens.add(t.replace(/^\.\//, ""));
-    if (tokens.size >= MAX_TOKENS) break;
-  }
-  for (const ref of tokens) {
-    const hit = byPath.get(`package/${ref}`) ?? (JS_REF.test(ref) ? code.find((f) => f.path.endsWith(`/${ref}`)) : undefined);
+  const seen = new Set<string>();
+  for (const t of cmd.split(TOKEN_SPLIT)) {
+    const ref = t.replace(/^\.\//, "");
+    if (!ref || seen.has(ref)) continue;
+    seen.add(ref);
+    const hit = byPath.get(`package/${ref}`) ?? (JS_REF.test(ref) ? bySuffix.get(ref) : undefined);
     if (hit && !NOT_SCRIPT.test(hit.path)) out.add(hit);
   }
   return [...out];
