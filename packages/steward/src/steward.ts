@@ -423,7 +423,7 @@ export class ClaimSteward {
     let decoded: unknown;
     try { decoded = JSON.parse(readFileSync(this.stateFile, "utf8")); }
     catch { throw new Error("invalid steward state: expected JSON"); }
-    const state = decoded as { schema?: unknown; applications?: unknown; claims?: unknown; pendingGrants?: unknown; retractions?: unknown; releases?: unknown };
+    const state = decoded as { schema?: unknown; proofsTracked?: unknown; applications?: unknown; claims?: unknown; pendingGrants?: unknown; retractions?: unknown; releases?: unknown };
     if (state?.schema !== 1 || !Array.isArray(state.applications) || !Array.isArray(state.claims) || !Array.isArray(state.pendingGrants)) {
       throw new Error("invalid steward state: expected schema 1 arrays");
     }
@@ -445,11 +445,9 @@ export class ClaimSteward {
       this.applications.set(application.id, application);
     }
     for (const claim of parsedClaims) this.claims.set(claim.namespace, claim);
-    // State written before `consumed` existed: every proof a claim holds or announced is already spent.
-    for (const claim of parsedClaims) for (const proof of [claim.challenge, claim.pending?.challenge]) {
-      const spent = proof && this.applications.get(proof.id);
-      if (spent) spent.consumed = true;
-    }
+    // State written before proof tracking cannot show that a verified challenge was never used (a superseded
+    // proof may still be inside its TTL), so every verified application is spent: new flows need a fresh challenge.
+    if (state.proofsTracked !== true) for (const application of this.applications.values()) if (application.verifiedAt) application.consumed = true;
     for (const candidate of state.pendingGrants as PendingGrant[]) {
       const pending = candidate as PendingGrant;
       if (!pending?.claim || !isCanonicalInstant(pending.announcedAt) || !isCanonicalInstant(pending.effectiveAt) ||
@@ -464,8 +462,6 @@ export class ClaimSteward {
         throw new Error("invalid steward state: overlapping pending grant");
       }
       this.pendingGrants.set(parsed.namespace, { ...pending, claim: parsed });
-      const spent = this.applications.get(parsed.challenge.id);
-      if (spent) spent.consumed = true;
     }
     const retractions = state.retractions ?? [];
     if (!Array.isArray(retractions)) throw new Error("invalid steward state: retractions must be an array");
@@ -495,6 +491,7 @@ export class ClaimSteward {
     mkdirSync(dirname(this.stateFile), { recursive: true });
     const raw = JSON.stringify({
       schema: 1,
+      proofsTracked: true,
       applications: [...this.applications.values()],
       claims: [...this.claims.values()],
       pendingGrants: [...this.pendingGrants.values()],

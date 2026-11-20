@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createPrivateKey, sign as edSign } from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import type { Server } from "node:http";
 import { connect, type AddressInfo } from "node:net";
 import { networkInterfaces, tmpdir } from "node:os";
@@ -321,6 +321,66 @@ describe("review round 1: proofs are single-use and freshness holds across await
     slow = true;
     await assert.rejects(async () => steward.approve(app.id), /expired/i);
     assert.equal(steward.release("none").corpus.claims.length, 0);
+  });
+});
+
+describe("review round 2: legacy state without proof tracking", () => {
+  test("every already-verified application is spent on load; only a freshly issued challenge works", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "sentinel-steward-legacy-"));
+    const stateFile = join(dir, "state.json");
+    const c = clock();
+    const oldKey = generateKeypair();
+    const newKey = generateKeypair();
+    const before = new ClaimSteward({ ...c.options, stateFile, lookupUpstream: absent });
+    const c1 = await verified(before, { namespace: "pkg", domain: "old.example", claimantPublicKey: oldKey.publicKey });
+    await before.approve(c1.id);
+    c.state.now += DAY;
+    const c2 = await verified(before, { namespace: "pkg", domain: "old.example", claimantPublicKey: oldKey.publicKey });
+    before.renew("pkg", c2.id); // C1 is now superseded but still inside its 30-day TTL
+    const target = await verified(before, { namespace: "pkg", domain: "new.example", claimantPublicKey: newKey.publicKey });
+
+    // Rewrite the file as a pre-upgrade steward would have left it.
+    const legacy = JSON.parse(readFileSync(stateFile, "utf8")) as { proofsTracked?: unknown; applications: { consumed?: unknown }[] };
+    delete legacy.proofsTracked;
+    for (const application of legacy.applications) delete application.consumed;
+    writeFileSync(stateFile, JSON.stringify(legacy));
+
+    c.state.now += DAY;
+    const after = new ClaimSteward({ ...c.options, stateFile, lookupUpstream: absent });
+    const sig = signTransferRequest({ namespace: "pkg", targetDomain: "old.example", targetChallengeId: c1.id,
+      targetClaimantPublicKey: oldKey.publicKey, currentChallengeId: c2.id }, oldKey.privateKey);
+    assert.throws(() => after.renew("pkg", c1.id), /already used|fresh/i);
+    assert.throws(() => after.renew("pkg", c2.id), /already used|fresh/i);
+    assert.throws(() => after.requestTransfer("pkg", c1.id, sig), /already used/i);
+    assert.throws(() => after.requestTransfer("pkg", target.id, "x"), /already used/i);
+    after.contest("pkg");
+    assert.throws(() => after.ruleDispute("pkg", c1.id, "case/1"), /already used/i);
+    assert.throws(() => after.ruleDispute("pkg", c2.id, "case/1"), /already used/i);
+    assert.throws(() => after.ruleDispute("pkg", target.id, "case/1"), /already used/i);
+
+  });
+
+  test("a freshly issued challenge renews after a legacy load", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "sentinel-steward-legacy-"));
+    const stateFile = join(dir, "state.json");
+    const c = clock();
+    const before = new ClaimSteward({ ...c.options, stateFile, lookupUpstream: absent });
+    const c1 = await verified(before, { namespace: "pkg", domain: "old.example", claimantPublicKey: claimant.publicKey });
+    await before.approve(c1.id);
+    const legacy = JSON.parse(readFileSync(stateFile, "utf8")) as { proofsTracked?: unknown; applications: { consumed?: unknown }[] };
+    delete legacy.proofsTracked;
+    for (const application of legacy.applications) delete application.consumed;
+    writeFileSync(stateFile, JSON.stringify(legacy));
+    c.state.now += DAY;
+    const after = new ClaimSteward({ ...c.options, stateFile, lookupUpstream: absent });
+    const c3 = await verified(after, { namespace: "pkg", domain: "old.example", claimantPublicKey: claimant.publicKey });
+    after.renew("pkg", c3.id);
+    assert.equal(after.release("renewed").corpus.claims[0]?.challenge.id, c3.id);
+    // Once the file has been rewritten by the new code the flag is set, so a restart does not re-spend C3's successors.
+    const restarted = new ClaimSteward({ ...c.options, stateFile, lookupUpstream: absent });
+    c.state.now += DAY;
+    const c4 = await verified(restarted, { namespace: "pkg", domain: "old.example", claimantPublicKey: claimant.publicKey });
+    restarted.renew("pkg", c4.id);
   });
 });
 
