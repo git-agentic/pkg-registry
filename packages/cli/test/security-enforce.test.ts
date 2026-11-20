@@ -18,6 +18,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const SHELL = join(HERE, "..", "src", "script-shell.ts");
 const TSX = import.meta.resolve("tsx");
 
+const NPM10 = "npm/10.8.2 node/v24.0.0 darwin arm64 workspaces/false";
 const SERVED = "sha512-SERVEDSERVEDSERVEDSERVEDSERVEDSERVEDSERVEDSERVEDSERVEDSERVEDSERVEDSERVEDSERVEDSERVEDSERVEDSERVEDSERVED==";
 const OTHER = "sha512-OTHEROTHEROTHEROTHEROTHEROTHEROTHEROTHEROTHEROTHEROTHEROTHEROTHEROTHEROTHEROTHEROTHEROTHEROTHEROTHER==";
 const mk = (integrity: string): Manifest => ({
@@ -65,6 +66,18 @@ describe("F11 assertIntegrityBinding", () => {
   });
 });
 
+describe("npm >= 7 gate (npm 6 exports every package.json field as npm_package_*)", () => {
+  const gate = (ua: string | undefined) => (enforce as any).assertNpmTrustsIntegrity(ua);
+  test("accepts npm 7 and later", () => {
+    for (const ua of ["npm/7.0.0 node/v16", "npm/10.8.2 node/v24 darwin arm64", "npm/11.20.0 node/v24"]) assert.doesNotThrow(() => gate(ua), ua);
+  });
+  test("refuses npm 6 and earlier, other clients, and a missing or malformed user agent", () => {
+    for (const ua of ["npm/6.14.18 node/v14", "npm/5.0.0", "yarn/1.22.19 npm/? node/v20", "pnpm/9.0.0 npm/? node/v20", "", undefined, "npm/x", "mynpm/10.0.0", " npm/10.0.0"]) {
+      assert.throws(() => gate(ua), EnforceError, String(ua));
+    }
+  });
+});
+
 describe("F11 enforceNpmEnv pins SENTINEL_ROOT to the realpath of the install cwd", () => {
   test("sets SENTINEL_ROOT and overrides a pre-set value", () => {
     const env = enforceNpmEnv({ SENTINEL_ROOT: "/attacker" }, { proxy: "p", wrapperPath: "w", approve: [] });
@@ -85,6 +98,7 @@ describe("F11 script-shell (e2e, real wrapper)", () => {
   let server: Server; let proxy: string;
   before(async () => {
     server = createServer((req, res) => {
+      if (req.url?.includes("evil")) { res.statusCode = 404; res.end("no"); return; }
       res.setHeader("content-type", "application/json");
       res.end(JSON.stringify(mk(SERVED)));
     });
@@ -95,7 +109,7 @@ describe("F11 script-shell (e2e, real wrapper)", () => {
 
   const runShell = (cwd: string, env: NodeJS.ProcessEnv) => new Promise<{ code: number | null; out: string }>((resolve) => {
     const child = spawn("node", ["--import", TSX, SHELL, "-c", "echo ran > marker.txt"], {
-      cwd, env: { ...process.env, SENTINEL_ENFORCE: "1", ...env },
+      cwd, env: { ...process.env, SENTINEL_ENFORCE: "1", npm_config_user_agent: NPM10, ...env },
     });
     let out = "";
     child.stdout.on("data", (d) => { out += d; });
@@ -134,6 +148,28 @@ describe("F11 script-shell (e2e, real wrapper)", () => {
     const r = await runShell(gitDep, { INIT_CWD: gitDep });
     assert.equal(r.code, 70, r.out);
     assert.ok(!existsSync(join(gitDep, "marker.txt")));
+  });
+  const depEnv = (root: string) => ({ SENTINEL_ROOT: root, SENTINEL_PROXY: proxy, npm_package_name: "dep", npm_package_version: "1.0.0", npm_package_integrity: SERVED });
+  for (const ua of ["npm/6.14.18 node/v14.0.0", "", "yarn/1.22.19 npm/? node/v20.0.0"]) {
+    test(`dependency script under user agent ${JSON.stringify(ua)} is refused even with a matching integrity`, async () => {
+      const { root, dep } = project();
+      const r = await runShell(dep, { ...depEnv(root), npm_config_user_agent: ua });
+      assert.equal(r.code, 70, r.out);
+      assert.match(r.out, /npm >= 7/i);
+      assert.ok(!existsSync(join(dep, "marker.txt")));
+    });
+  }
+  test("the root project's own script does not depend on the user agent", { skip: sandboxWorks ? false : "requires a working sandbox" }, async () => {
+    const { root } = project();
+    const r = await runShell(root, { SENTINEL_ROOT: root, npm_config_user_agent: "" });
+    assert.equal(r.code, 0, r.out);
+  });
+  test("error output never carries package-controlled terminal escapes", async () => {
+    const { root, dep } = project();
+    const r = await runShell(dep, { SENTINEL_ROOT: root, SENTINEL_PROXY: proxy, npm_package_name: "evil\x1b]0;pwned\x07\x1b[2J", npm_package_version: "1.0.0\x1b[31m", npm_package_integrity: SERVED });
+    assert.equal(r.code, 70, r.out);
+    assert.match(r.out, /evil/, "the (sanitized) name is still shown");
+    for (const bad of ["\x07", "\x1b]", "[2J", "1.0.0\x1b"]) assert.ok(!r.out.includes(bad), JSON.stringify(bad));
   });
   test("positive control: matching integrity runs the script under the sandbox", { skip: sandboxWorks ? false : "requires a working sandbox" }, async () => {
     const { root, dep } = project();
