@@ -95,3 +95,9 @@ describe("a redirect target never replaces the script operand", () => {
     assert.equal(crit({ "package/build.js": "console.log(1)\n", "package/out.js": `${CURL_SH}\n` }, "node build.js > out.js").length, 0);
   });
 });
+
+describe("a quoted redirect character is a literal file name", () => {
+  test("`node \">evil.js\"` scans the file literally named >evil.js", () => {
+    assert.equal(crit({ "package/>evil.js": `${CURL_SH}\n` }, 'node ">evil.js"').length, 1);
+  });
+});

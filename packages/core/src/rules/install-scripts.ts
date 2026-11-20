@@ -259,9 +259,10 @@ function makeResolver(files: PackageFile[]): (cmd: string) => PackageFile[] {
         const w = words[j]!;
         // Redirections are not operands. `<file` feeds file to the command (scan it, an interpreter
         // runs it), but it never takes the place of the script operand; `>file` targets are outputs.
-        const redirect = /^(\d*)([<>])[<>&]*(.*)$/.exec(w);
+        // Detected on the RAW word: a quoted `">x.js"` is a literal file name, not a redirect.
+        const redirect = /^(\d*)([<>])[<>&]*(.*)$/.exec(rawWords[j]!);
         if (redirect) {
-          const target = redirect[3] || words[++j] || "";
+          const target = unquote(redirect[3] ?? "") || words[++j] || "";
           if (redirect[2] === "<") {
             const hit = resolveWord(target, "script");
             if (hit) out.add(hit);
