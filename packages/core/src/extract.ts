@@ -7,9 +7,9 @@ import type { PackageFile, ContentMismatchEntry } from "./types.js";
 import { classifyContent, MAGIC_PREFIX_BYTES } from "./detect/magic.js";
 
 const MAX_FILE_BYTES = 2 * 1024 * 1024; // skip very large files from text scanning
-const TEXT_EXT = /\.(c?js|mjs|cjs|ts|mts|cts|jsx|tsx|json|map|sh|txt|md|yml|yaml)$/i;
+const TEXT_EXT = /\.(c?js|mjs|cjs|ts|mts|cts|jsx|tsx|json|map|sh|py|pl|rb|txt|md|yml|yaml)$/i;
 /** Executable code extensions (subset of TEXT_EXT); flagged as unscanned when over MAX_FILE_BYTES. */
-const CODE_EXT = /\.(c?js|mjs|cjs|ts|mts|cts|jsx|tsx)$/i;
+const CODE_EXT = /\.(c?js|mjs|cjs|ts|mts|cts|jsx|tsx|py|pl|rb)$/i;
 /** Native / binary executable extensions; never scanned, flagged as unscanned when present. */
 const NATIVE_EXT = /\.(node|wasm|so|dll|dylib|exe)$/i;
 /** Cap on the unscanned list to bound memory on a pathological many-binary tarball. */
@@ -91,10 +91,11 @@ export async function extractTarball(
   let packageManifestEntryCount = 0;
   let manifestVariant = false;
   let manifestOversized = false;
-  // Paths retained under the POSIX reading vs the Windows reading of an entry name: a Windows copy
-  // landing on any other retained path means one client installs a different file than the other.
-  const posixPaths = new Set<string>();
-  const winPaths = new Set<string>();
+  // Case-folded paths of EVERY file entry under the POSIX and the Windows reading of its name. A
+  // Windows-only path landing on any other entry (retained or not) means one client installs a
+  // different file than the other. POSIX-only pairs are an ordinary, separate matter.
+  const posixSeen = new Set<string>();
+  const winSeen = new Set<string>();
   let pathCollision = false;
   const unscanned: UnscannedEntry[] = [];
   const unscannedTotals = { count: 0, native: 0, bytes: 0 };
@@ -135,7 +136,19 @@ export async function extractTarball(
     }
     // node-tar reports typeflag 7 as "ContiguousFile" and 0/NUL as "File"/"OldFile"; npm installs all as files.
     const isFile = /File$/.test(entry.type);
-    if (isFile) fileCount += 1;
+    if (isFile) {
+      fileCount += 1;
+      const posixKey = normalizedPath?.toLowerCase() ?? null;
+      const winKey = winPath !== null && winPath !== normalizedPath ? winPath.toLowerCase() : null;
+      if (posixKey !== null) {
+        if (winSeen.has(posixKey)) pathCollision = true;
+        posixSeen.add(posixKey);
+      }
+      if (winKey !== null) {
+        if (posixSeen.has(winKey) && winKey !== posixKey || winSeen.has(winKey)) pathCollision = true;
+        winSeen.add(winKey);
+      }
+    }
     const chunks: Buffer[] = [];
     let bytes = 0;
     const prefixChunks: Buffer[] = [];
@@ -160,9 +173,8 @@ export async function extractTarball(
       if (isManifest && bytes > MAX_FILE_BYTES) manifestOversized = true;
       const cls = classifyContent(Buffer.concat(prefixChunks));
       const declaredExt = extOf(path);
-      const textLooking = TEXT_EXT.test(path);
       const buf = bytes <= MAX_FILE_BYTES ? Buffer.concat(chunks) : null;
-      if (cls.class !== "text" && textLooking) {
+      if (cls.class !== "text" && TEXT_EXT.test(path)) {
         // Binary/compressed/archive/ambiguous signature behind a text-looking
         // extension → mismatch, always reported.
         contentMismatchTotals.count += 1;
@@ -170,30 +182,28 @@ export async function extractTarball(
         if (contentMismatch.length < MAX_UNSCANNED) {
           contentMismatch.push({ path, declaredExt, detectedKind: cls.kind, size: bytes });
         }
-        // `MZ:` and `BZh:` are valid JS labels: valid UTF-8 without NUL is still source
-        // Node will run, so it must stay visible to the rules. Real binaries are tracked only above.
-        if (!buf || !isUtf8(buf) || buf.includes(0)) return;
       }
-      // Extension-less text (`setup`, `bin/run`, `Makefile`) can be named by a script hook; retain it.
-      const extensionless = !posix.basename(path).includes(".") && cls.class === "text" && buf !== null && !buf.includes(0);
-      if (buf && (textLooking || extensionless)) {
-        const content = buf.toString("utf8");
-        const prev = baseline?.get(path);
-        files.push({ path, content, size: bytes, changed: baseline ? prev !== content : false });
-        if (normalizedPath === null) {
-          if (posixPaths.has(path) || winPaths.has(path)) pathCollision = true;
-          winPaths.add(path);
-        } else {
-          if (winPaths.has(path)) pathCollision = true;
-          posixPaths.add(path);
-        }
-        if (normalizedPath !== null && winPath !== null && winPath !== path) {
-          files.push({ path: winPath, content, size: bytes, changed: baseline ? baseline.get(winPath) !== content : false });
-          if (posixPaths.has(winPath) || winPaths.has(winPath)) pathCollision = true;
-          winPaths.add(winPath);
-        }
-        return;
+      // Retention is decided under EACH reading: `assets.v1\setup` is extension-less to a Windows
+      // client but has a dotted basename to POSIX.
+      const retainable = (p: string): boolean => {
+        if (!buf) return false;
+        const textLooking = TEXT_EXT.test(p);
+        // `MZ:` and `BZh:` are valid JS labels: valid UTF-8 without NUL is still source Node will
+        // run, so it must stay visible to the rules. Real binaries are tracked as mismatches above.
+        if (cls.class !== "text" && textLooking) return isUtf8(buf) && !buf.includes(0);
+        // Extension-less text (`setup`, `bin/run`, `Makefile`) can be named by a script hook; retain it.
+        const extensionless = !posix.basename(p).includes(".") && cls.class === "text" && !buf.includes(0);
+        return textLooking || extensionless;
+      };
+      let retained = false;
+      for (const p of new Set([normalizedPath, winPath])) {
+        if (p === null || !retainable(p)) continue;
+        const content = buf!.toString("utf8");
+        files.push({ path: p, content, size: bytes, changed: baseline ? baseline.get(p) !== content : false });
+        retained = true;
       }
+      if (retained) return;
+      if (cls.class !== "text" && TEXT_EXT.test(path)) return; // a real binary behind a text extension: mismatch only
       // Not scanned — record executable-looking content so the blind spot isn't silent (#11).
       const isLargeCode = bytes > MAX_FILE_BYTES && CODE_EXT.test(path);
       const isNative = NATIVE_EXT.test(path);

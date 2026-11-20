@@ -16,8 +16,8 @@ const JS_PARSEABLE = /\.(c?js|mjs)$/i;
 
 const GUNZIP_LIKE = /\b(gunzip|inflate|brotliDecompress|unzip)\w*\s*\(/;
 const BUFFER_FROM = /Buffer\.from\(/g;
-/** `require(<non-literal>)` or a template literal with `${`: loads a computed path, the launch form for a just-written native addon. */
-const REQUIRE_OF_PATH = /\brequire\s*\(\s*(?:[^'"`\s)]|`[^`]*\$\{)/;
+/** `require(<non-literal>)`, a template literal with `${`, or a literal `*.node` addon: loads a computed path, the launch form for a just-written native addon. */
+const REQUIRE_OF_PATH = /\brequire\s*\(\s*(?:[^'"`\s)]|`[^`]*\$\{|(['"`])[^'"`\n]*\.node\1)/;
 // Node accepts any case and `base64url` as an encoding name.
 const BASE64 = /['"]base64(?:url)?['"]/gi;
 
