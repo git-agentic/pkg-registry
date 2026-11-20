@@ -360,6 +360,22 @@ describe("review round 2: legacy state without proof tracking", () => {
 
   });
 
+  test("a verified but never-approved challenge cannot be approved after a legacy load", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "sentinel-steward-legacy-"));
+    const stateFile = join(dir, "state.json");
+    const c = clock();
+    const before = new ClaimSteward({ ...c.options, stateFile, lookupUpstream: absent });
+    const pending = await verified(before, { namespace: "other", domain: "old.example", claimantPublicKey: claimant.publicKey });
+    const legacy = JSON.parse(readFileSync(stateFile, "utf8")) as { proofsTracked?: unknown; applications: { consumed?: unknown }[] };
+    delete legacy.proofsTracked;
+    for (const application of legacy.applications) delete application.consumed;
+    writeFileSync(stateFile, JSON.stringify(legacy));
+    const after = new ClaimSteward({ ...c.options, stateFile, lookupUpstream: absent });
+    await assert.rejects(() => after.approve(pending.id), /already used/i);
+    const fresh = await verified(after, { namespace: "other", domain: "old.example", claimantPublicKey: claimant.publicKey });
+    await after.approve(fresh.id);
+  });
+
   test("a freshly issued challenge renews after a legacy load", async () => {
     const dir = mkdtempSync(join(tmpdir(), "sentinel-steward-legacy-"));
     const stateFile = join(dir, "state.json");

@@ -203,6 +203,7 @@ export class ClaimSteward {
     const application = this.application(id);
     this.assertFresh(application);
     if (!application.verifiedAt) throw new Error("claim cannot be approved without a passed challenge");
+    if (application.consumed) throw new Error("approval requires a fresh challenge: this one was already used as a proof");
     const { evidenceRef } = options;
     if (evidenceRef !== undefined && (typeof evidenceRef !== "string" || !evidenceRef)) throw new Error("evidenceRef must be a non-empty string");
     // The tier fixed at issuance can be stale (the name may have been taken since): recompute from fresh upstream evidence.
